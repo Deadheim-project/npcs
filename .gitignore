@@ -12,3 +12,9 @@ installer/Output/
 
 # Dump do indice da Thunderstore (153 MB, gerado)
 ts_valheim.json
+
+# Fora deste repo: so o mod de NPCs mora aqui
+DeadheimLauncher/
+installer/
+.build-plugins/
+.server-test/
