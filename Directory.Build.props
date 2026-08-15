@@ -1,0 +1,11 @@
+<Project>
+  <PropertyGroup>
+    <!-- Override by setting the VALHEIM_PATH environment variable if your install lives elsewhere -->
+    <ValheimPath Condition="'$(ValheimPath)' == '' AND '$(VALHEIM_PATH)' != ''">$(VALHEIM_PATH)</ValheimPath>
+    <ValheimPath Condition="'$(ValheimPath)' == ''">C:\Program Files (x86)\Steam\steamapps\common\Valheim</ValheimPath>
+    <ValheimManaged>$(ValheimPath)\valheim_Data\Managed</ValheimManaged>
+    <ValheimPublicized>$(ValheimManaged)\publicized_assemblies</ValheimPublicized>
+    <BepInExCore>$(ValheimPath)\BepInEx\core</BepInExCore>
+    <BepInExPlugins>$(ValheimPath)\BepInEx\plugins</BepInExPlugins>
+  </PropertyGroup>
+</Project>

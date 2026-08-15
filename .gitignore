@@ -1,0 +1,14 @@
+bin/
+obj/
+*.user
+.vs/
+
+# Saída do build do launcher e do instalador
+publish/
+installer/Output/
+
+# Cache local de pacotes NuGet (usado quando o C: está sem espaço)
+.nuget-cache/
+
+# Dump do indice da Thunderstore (153 MB, gerado)
+ts_valheim.json
