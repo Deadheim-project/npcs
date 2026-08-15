@@ -1,0 +1,456 @@
+{
+  "_comment": "Gerado por installer/generate-manifest.py a partir de Deadheimmods/Deadheim v15.0.5. Não edite à mão: publique a nova versão do pack e rode o script de novo.",
+  "packVersion": "15.0.5",
+  "ownMods": [
+    {
+      "id": "npcs",
+      "name": "NPCs",
+      "description": "Mercador, Teleportador, Correio e Missões.",
+      "required": true,
+      "source": "GitHub",
+      "gitHubOwner": "Deadheim-project",
+      "gitHubRepo": "npcs",
+      "assetPattern": ".zip"
+    },
+    {
+      "id": "deadheim",
+      "name": "Deadheim",
+      "description": "Mod base do servidor.",
+      "required": true,
+      "source": "GitHub",
+      "gitHubOwner": "Deadheim-project",
+      "gitHubRepo": "Deadheim",
+      "assetPattern": ".zip"
+    },
+    {
+      "id": "raidsystem",
+      "name": "Raid System",
+      "description": "Sistema de raides.",
+      "required": true,
+      "source": "GitHub",
+      "gitHubOwner": "Deadheim-project",
+      "gitHubRepo": "RaidSystem",
+      "assetPattern": ".zip"
+    },
+    {
+      "id": "hearthstone",
+      "name": "Hearthstone",
+      "description": "Pedra de retorno.",
+      "required": true,
+      "source": "GitHub",
+      "gitHubOwner": "Deadheim-project",
+      "gitHubRepo": "Hearthstone",
+      "assetPattern": ".zip"
+    },
+    {
+      "id": "donationshop",
+      "name": "Donation Shop",
+      "description": "Loja de doações.",
+      "required": true,
+      "source": "GitHub",
+      "gitHubOwner": "Deadheim-project",
+      "gitHubRepo": "donationshop",
+      "assetPattern": ".zip"
+    }
+  ],
+  "thunderstoreMods": [
+    {
+      "id": "bepinexpack-valheim",
+      "name": "BepInExPack Valheim",
+      "description": "Carregador de mods do Valheim. Instalado na raiz do jogo.",
+      "required": true,
+      "source": "Thunderstore",
+      "thunderstoreNamespace": "denikson",
+      "thunderstoreName": "BepInExPack_Valheim",
+      "version": "5.4.2333",
+      "target": "GameRoot"
+    },
+    {
+      "id": "massfarming",
+      "name": "MassFarming",
+      "description": "Do modpack Deadheim 15.0.5.",
+      "required": true,
+      "source": "Thunderstore",
+      "thunderstoreNamespace": "MainStreetGaming",
+      "thunderstoreName": "MassFarming",
+      "version": "1.12.0"
+    },
+    {
+      "id": "justnoroof",
+      "name": "JustNoRoof",
+      "description": "Do modpack Deadheim 15.0.5.",
+      "required": true,
+      "source": "Thunderstore",
+      "thunderstoreNamespace": "Frogger",
+      "thunderstoreName": "JustNoRoof",
+      "version": "1.1.0"
+    },
+    {
+      "id": "more-and-modified-player-cloth-colliders",
+      "name": "More and Modified Player Cloth Colliders",
+      "description": "Do modpack Deadheim 15.0.5.",
+      "required": true,
+      "source": "Thunderstore",
+      "thunderstoreNamespace": "HugotheDwarf",
+      "thunderstoreName": "More_and_Modified_Player_Cloth_Colliders",
+      "version": "3.1.0"
+    },
+    {
+      "id": "historical-heritage",
+      "name": "Historical Heritage",
+      "description": "Do modpack Deadheim 15.0.5.",
+      "required": true,
+      "source": "Thunderstore",
+      "thunderstoreNamespace": "Dreanegade",
+      "thunderstoreName": "Historical_Heritage",
+      "version": "2.1.1"
+    },
+    {
+      "id": "hunter-legacy",
+      "name": "Hunter Legacy",
+      "description": "Do modpack Deadheim 15.0.5.",
+      "required": true,
+      "source": "Thunderstore",
+      "thunderstoreNamespace": "Dreanegade",
+      "thunderstoreName": "Hunter_Legacy",
+      "version": "1.0.8"
+    },
+    {
+      "id": "magic-supremacy",
+      "name": "Magic Supremacy",
+      "description": "Do modpack Deadheim 15.0.5.",
+      "required": true,
+      "source": "Thunderstore",
+      "thunderstoreNamespace": "Dreanegade",
+      "thunderstoreName": "Magic_Supremacy",
+      "version": "3.0.6"
+    },
+    {
+      "id": "azuextendedplayerinventory",
+      "name": "AzuExtendedPlayerInventory",
+      "description": "Do modpack Deadheim 15.0.5.",
+      "required": true,
+      "source": "Thunderstore",
+      "thunderstoreNamespace": "Azumatt",
+      "thunderstoreName": "AzuExtendedPlayerInventory",
+      "version": "2.4.1"
+    },
+    {
+      "id": "maxplayercount",
+      "name": "MaxPlayerCount",
+      "description": "Do modpack Deadheim 15.0.5.",
+      "required": true,
+      "source": "Thunderstore",
+      "thunderstoreNamespace": "Azumatt",
+      "thunderstoreName": "MaxPlayerCount",
+      "version": "1.2.4"
+    },
+    {
+      "id": "azuanticheat",
+      "name": "AzuAntiCheat",
+      "description": "Do modpack Deadheim 15.0.5.",
+      "required": true,
+      "source": "Thunderstore",
+      "thunderstoreNamespace": "Azumatt",
+      "thunderstoreName": "AzuAntiCheat",
+      "version": "4.3.11"
+    },
+    {
+      "id": "azuclock",
+      "name": "AzuClock",
+      "description": "Do modpack Deadheim 15.0.5.",
+      "required": true,
+      "source": "Thunderstore",
+      "thunderstoreNamespace": "Azumatt",
+      "thunderstoreName": "AzuClock",
+      "version": "1.0.5"
+    },
+    {
+      "id": "wackyepicmmosystem",
+      "name": "WackyEpicMMOSystem",
+      "description": "Do modpack Deadheim 15.0.5.",
+      "required": true,
+      "source": "Thunderstore",
+      "thunderstoreNamespace": "WackyMole",
+      "thunderstoreName": "WackyEpicMMOSystem",
+      "version": "1.9.60"
+    },
+    {
+      "id": "guilds",
+      "name": "Guilds",
+      "description": "Do modpack Deadheim 15.0.5.",
+      "required": true,
+      "source": "Thunderstore",
+      "thunderstoreNamespace": "Smoothbrain",
+      "thunderstoreName": "Guilds",
+      "version": "1.1.13"
+    },
+    {
+      "id": "groups",
+      "name": "Groups",
+      "description": "Do modpack Deadheim 15.0.5.",
+      "required": true,
+      "source": "Thunderstore",
+      "thunderstoreNamespace": "Smoothbrain",
+      "thunderstoreName": "Groups",
+      "version": "1.2.10"
+    },
+    {
+      "id": "vbnettweaks",
+      "name": "VBNetTweaks",
+      "description": "Do modpack Deadheim 15.0.5.",
+      "required": true,
+      "source": "Thunderstore",
+      "thunderstoreNamespace": "VitByr",
+      "thunderstoreName": "VBNetTweaks",
+      "version": "0.2.0"
+    },
+    {
+      "id": "servercharacters",
+      "name": "ServerCharacters",
+      "description": "Do modpack Deadheim 15.0.5.",
+      "required": true,
+      "source": "Thunderstore",
+      "thunderstoreNamespace": "Smoothbrain",
+      "thunderstoreName": "ServerCharacters",
+      "version": "1.4.16"
+    },
+    {
+      "id": "tombstonelock",
+      "name": "TombstoneLock",
+      "description": "Do modpack Deadheim 15.0.5.",
+      "required": true,
+      "source": "Thunderstore",
+      "thunderstoreNamespace": "Smoothbrain",
+      "thunderstoreName": "TombstoneLock",
+      "version": "1.0.7"
+    },
+    {
+      "id": "protectyourseed",
+      "name": "ProtectYourSeed",
+      "description": "Do modpack Deadheim 15.0.5.",
+      "required": true,
+      "source": "Thunderstore",
+      "thunderstoreNamespace": "coemt",
+      "thunderstoreName": "ProtectYourSeed",
+      "version": "0.0.7"
+    },
+    {
+      "id": "trashitems",
+      "name": "TrashItems",
+      "description": "Do modpack Deadheim 15.0.5.",
+      "required": true,
+      "source": "Thunderstore",
+      "thunderstoreNamespace": "virtuaCode",
+      "thunderstoreName": "TrashItems",
+      "version": "1.2.8"
+    },
+    {
+      "id": "creaturelevelandlootcontrol",
+      "name": "CreatureLevelAndLootControl",
+      "description": "Do modpack Deadheim 15.0.5.",
+      "required": true,
+      "source": "Thunderstore",
+      "thunderstoreNamespace": "Smoothbrain",
+      "thunderstoreName": "CreatureLevelAndLootControl",
+      "version": "4.6.4"
+    },
+    {
+      "id": "jewelcrafting",
+      "name": "Jewelcrafting",
+      "description": "Do modpack Deadheim 15.0.5.",
+      "required": true,
+      "source": "Thunderstore",
+      "thunderstoreNamespace": "Smoothbrain",
+      "thunderstoreName": "Jewelcrafting",
+      "version": "2.0.1"
+    },
+    {
+      "id": "fastercrafting",
+      "name": "fastercrafting",
+      "description": "Do modpack Deadheim 15.0.5.",
+      "required": true,
+      "source": "Thunderstore",
+      "thunderstoreNamespace": "1010101110",
+      "thunderstoreName": "fastercrafting",
+      "version": "0.0.3"
+    },
+    {
+      "id": "multiplayerboatdamage",
+      "name": "multiplayerboatdamage",
+      "description": "Do modpack Deadheim 15.0.5.",
+      "required": true,
+      "source": "Thunderstore",
+      "thunderstoreNamespace": "1010101110",
+      "thunderstoreName": "multiplayerboatdamage",
+      "version": "0.0.1"
+    },
+    {
+      "id": "spawn-that",
+      "name": "Spawn That",
+      "description": "Do modpack Deadheim 15.0.5.",
+      "required": true,
+      "source": "Thunderstore",
+      "thunderstoreNamespace": "ASharpPen",
+      "thunderstoreName": "Spawn_That",
+      "version": "1.2.18"
+    },
+    {
+      "id": "azucontainersizes",
+      "name": "AzuContainerSizes",
+      "description": "Do modpack Deadheim 15.0.5.",
+      "required": true,
+      "source": "Thunderstore",
+      "thunderstoreNamespace": "Azumatt",
+      "thunderstoreName": "AzuContainerSizes",
+      "version": "1.1.4"
+    },
+    {
+      "id": "speedypaths",
+      "name": "SpeedyPaths",
+      "description": "Do modpack Deadheim 15.0.5.",
+      "required": true,
+      "source": "Thunderstore",
+      "thunderstoreNamespace": "Nextek",
+      "thunderstoreName": "SpeedyPaths",
+      "version": "1.0.9"
+    },
+    {
+      "id": "yamldotnet",
+      "name": "YamlDotNet",
+      "description": "Do modpack Deadheim 15.0.5.",
+      "required": true,
+      "source": "Thunderstore",
+      "thunderstoreNamespace": "ValheimModding",
+      "thunderstoreName": "YamlDotNet",
+      "version": "16.3.1"
+    },
+    {
+      "id": "jotunn",
+      "name": "Jotunn",
+      "description": "Do modpack Deadheim 15.0.5.",
+      "required": true,
+      "source": "Thunderstore",
+      "thunderstoreNamespace": "ValheimModding",
+      "thunderstoreName": "Jotunn",
+      "version": "2.29.0"
+    },
+    {
+      "id": "hookgenpatcher",
+      "name": "HookGenPatcher",
+      "description": "Do modpack Deadheim 15.0.5.",
+      "required": true,
+      "source": "Thunderstore",
+      "thunderstoreNamespace": "ValheimModding",
+      "thunderstoreName": "HookGenPatcher",
+      "version": "0.0.4"
+    },
+    {
+      "id": "fastlink",
+      "name": "FastLink",
+      "description": "Do modpack Deadheim 15.0.5.",
+      "required": true,
+      "source": "Thunderstore",
+      "thunderstoreNamespace": "Azumatt",
+      "thunderstoreName": "FastLink",
+      "version": "1.4.8"
+    },
+    {
+      "id": "marketplace-and-server-npcs-revamped",
+      "name": "Marketplace And Server NPCs Revamped",
+      "description": "Do modpack Deadheim 15.0.5.",
+      "required": true,
+      "source": "Thunderstore",
+      "thunderstoreNamespace": "KGvalheim",
+      "thunderstoreName": "Marketplace_And_Server_NPCs_Revamped",
+      "version": "9.7.6"
+    },
+    {
+      "id": "valheiminfinitefire",
+      "name": "ValheimInfiniteFire",
+      "description": "Do modpack Deadheim 15.0.5.",
+      "required": true,
+      "source": "Thunderstore",
+      "thunderstoreNamespace": "MidnightMods",
+      "thunderstoreName": "ValheimInfiniteFire",
+      "version": "1.1.0"
+    },
+    {
+      "id": "timeditemdestruction",
+      "name": "TimedItemDestruction",
+      "description": "Do modpack Deadheim 15.0.5.",
+      "required": true,
+      "source": "Thunderstore",
+      "thunderstoreNamespace": "Smoothbrain",
+      "thunderstoreName": "TimedItemDestruction",
+      "version": "1.0.3"
+    },
+    {
+      "id": "timeoutlimit",
+      "name": "TimeoutLimit",
+      "description": "Do modpack Deadheim 15.0.5.",
+      "required": true,
+      "source": "Thunderstore",
+      "thunderstoreNamespace": "MSchmoecker",
+      "thunderstoreName": "TimeoutLimit",
+      "version": "0.2.0"
+    },
+    {
+      "id": "spearfishing",
+      "name": "Spearfishing",
+      "description": "Do modpack Deadheim 15.0.5.",
+      "required": true,
+      "source": "Thunderstore",
+      "thunderstoreNamespace": "Korppis",
+      "thunderstoreName": "Spearfishing",
+      "version": "1.0.4"
+    },
+    {
+      "id": "arcane-ward",
+      "name": "Arcane Ward",
+      "description": "Do modpack Deadheim 15.0.5.",
+      "required": true,
+      "source": "Thunderstore",
+      "thunderstoreNamespace": "KGvalheim",
+      "thunderstoreName": "Arcane_Ward",
+      "version": "0.7.0"
+    },
+    {
+      "id": "comfyautorepair",
+      "name": "ComfyAutoRepair",
+      "description": "Do modpack Deadheim 15.0.5.",
+      "required": true,
+      "source": "Thunderstore",
+      "thunderstoreNamespace": "ComfyMods",
+      "thunderstoreName": "ComfyAutoRepair",
+      "version": "1.0.0"
+    },
+    {
+      "id": "server-devcommands",
+      "name": "Server devcommands",
+      "description": "Comandos de admin/debug no servidor. Opcional.",
+      "required": false,
+      "source": "Thunderstore",
+      "thunderstoreNamespace": "JereKuusela",
+      "thunderstoreName": "Server_devcommands"
+    },
+    {
+      "id": "devtoggle",
+      "name": "DevToggle",
+      "description": "Atalho para alternar o modo dev. Opcional.",
+      "required": false,
+      "source": "Thunderstore",
+      "thunderstoreNamespace": "YouDied",
+      "thunderstoreName": "DevToggle"
+    },
+    {
+      "id": "azus-unofficial-configmanager",
+      "name": "Azus UnOfficial ConfigManager",
+      "description": "Menu in-game para editar as configs dos mods. Opcional.",
+      "required": false,
+      "source": "Thunderstore",
+      "thunderstoreNamespace": "Azumatt",
+      "thunderstoreName": "Azus_UnOfficial_ConfigManager"
+    }
+  ]
+}

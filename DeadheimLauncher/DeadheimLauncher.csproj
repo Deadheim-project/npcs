@@ -1,0 +1,45 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>DeadheimLauncher</AssemblyName>
+    <RootNamespace>DeadheimLauncher</RootNamespace>
+    <ApplicationIcon></ApplicationIcon>
+
+    <!-- asInvoker + DPI. Ver app.manifest. -->
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+
+    <!-- Metadados do executável: um binário sem autor/descrição parece mais
+         suspeito para heurística de antivírus (e para o jogador que abre
+         Propriedades do arquivo). -->
+    <Company>Deadheim</Company>
+    <Product>Deadheim Launcher</Product>
+    <Authors>Deadheim</Authors>
+    <Description>Gerenciador de mods e perfis do servidor Deadheim de Valheim.</Description>
+    <Version>1.0.0</Version>
+    <FileVersion>1.0.0.0</FileVersion>
+    <AssemblyVersion>1.0.0.0</AssemblyVersion>
+    <Copyright>Deadheim</Copyright>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="CommunityToolkit.Mvvm" Version="8.3.2" />
+    <PackageReference Include="Microsoft.Win32.Registry" Version="5.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="System.IO" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Update="manifest.sample.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+</Project>
