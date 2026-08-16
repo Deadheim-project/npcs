@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using LiteDB;
@@ -52,24 +52,26 @@ namespace NpcValheim.Persistence
     /// </summary>
     public static class MarketDatabase
     {
-        private static LiteDatabase _db;
-
-        private static ILiteCollection<Listing> Listings => _db.GetCollection<Listing>("listings");
+        // One connection per operation -- see LiteDbFile for why holding one open is what
+        // broke quest progress.
+        private static LiteDbFile _file;
 
         public static void Init(string path)
         {
-            _db = new LiteDatabase(path);
-            Listings.EnsureIndex(x => x.NpcId);
+            _file = new LiteDbFile(path);
+            _file.Write(db => db.GetCollection<Listing>("listings").EnsureIndex(x => x.NpcId));
         }
 
-        public static void Shutdown()
-        {
-            _db?.Dispose();
-            _db = null;
-        }
+        public static void Shutdown() => _file = null;
+
+        private static T Read<T>(Func<ILiteCollection<Listing>, T> body) =>
+            _file.Read(db => body(db.GetCollection<Listing>("listings")));
+
+        private static void Write(Action<ILiteCollection<Listing>> body) =>
+            _file.Write(db => body(db.GetCollection<Listing>("listings")));
 
         public static List<Listing> GetListings(string npcId) =>
-            Listings.Find(x => x.NpcId == npcId).ToList();
+            Read(listings => listings.Find(x => x.NpcId == npcId).ToList());
 
         public static Listing AddListing(string npcId, long ownerId, string ownerName, string itemName, int quality, int amount, int pricePerUnit, TimeSpan? duration = null)
         {
@@ -85,7 +87,7 @@ namespace NpcValheim.Persistence
                 PricePerUnit = pricePerUnit,
                 ExpiresUtc = duration.HasValue ? DateTime.UtcNow + duration.Value : DateTime.MaxValue,
             };
-            Listings.Insert(listing);
+            Write(listings => listings.Insert(listing));
             return listing;
         }
 
@@ -93,9 +95,9 @@ namespace NpcValheim.Persistence
         /// caller can mail that stack back to the owner.</summary>
         public static int CancelListing(string listingId, string npcId, long requesterId)
         {
-            var listing = Listings.FindById(listingId);
+            var listing = Read(listings => listings.FindById(listingId));
             if (listing == null || listing.NpcId != npcId || listing.OwnerId != requesterId) return 0;
-            Listings.Delete(listingId);
+            Write(listings => listings.Delete(listingId));
             return listing.Amount;
         }
 
@@ -107,13 +109,13 @@ namespace NpcValheim.Persistence
             // Filtered in memory rather than in the query: ExpiresUtc is a computed
             // property over the stored ticks, so LiteDB cannot translate it to a filter.
             long nowTicks = DateTime.UtcNow.Ticks;
-            var expired = Listings.FindAll()
+            var expired = Read(listings => listings.FindAll().ToList())
                 .Where(x => x.ExpiresUtcTicks != 0L && x.ExpiresUtcTicks < nowTicks).ToList();
             foreach (var listing in expired)
             {
                 if (listing.Amount > 0)
-                    MailDatabase.SendItem(listing.OwnerId, "Anúncio expirado", listing.ItemName, listing.Quality, listing.Amount);
-                Listings.Delete(listing.Id);
+                    MailDatabase.SendItem(listing.OwnerId, "AnÃºncio expirado", listing.ItemName, listing.Quality, listing.Amount);
+                Write(listings => listings.Delete(listing.Id));
             }
             return expired.Count;
         }
@@ -135,14 +137,14 @@ namespace NpcValheim.Persistence
             refund = paid;   // nothing changes hands unless the trade goes through
             error = null;
 
-            var listing = Listings.FindById(listingId);
+            var listing = Read(listings => listings.FindById(listingId));
             if (listing != null && listing.NpcId != npcId) { error = "Listing belongs to another marketplace"; return false; }
-            if (listing == null) { error = "Listagem não existe mais"; return false; }
-            if (amount <= 0 || amount > listing.Amount) { error = "Quantidade inválida"; return false; }
-            if (listing.OwnerId == buyerId) { error = "Você não pode comprar do próprio anúncio"; return false; }
+            if (listing == null) { error = "Listagem nÃ£o existe mais"; return false; }
+            if (amount <= 0 || amount > listing.Amount) { error = "Quantidade invÃ¡lida"; return false; }
+            if (listing.OwnerId == buyerId) { error = "VocÃª nÃ£o pode comprar do prÃ³prio anÃºncio"; return false; }
 
             long longCost = (long)amount * listing.PricePerUnit;
-            if (longCost <= 0 || longCost > int.MaxValue) { error = "Valor da compra inválido"; return false; }
+            if (longCost <= 0 || longCost > int.MaxValue) { error = "Valor da compra invÃ¡lido"; return false; }
             int cost = (int)longCost;
             taxPercent = Math.Max(0, Math.Min(100, taxPercent));
             int sellerCredit = cost - (int)((long)cost * taxPercent / 100L);
@@ -155,38 +157,49 @@ namespace NpcValheim.Persistence
                 return false;
             }
 
-            if (listing.ExpiresUtc < DateTime.UtcNow) { error = "Anúncio expirado"; return false; }
+            if (listing.ExpiresUtc < DateTime.UtcNow) { error = "AnÃºncio expirado"; return false; }
 
-            // LiteDB 5 cannot commit while a query cursor opened in the explicit
-            // transaction is still alive. Resolve and validate every document first; the
-            // server processes market RPCs on one Unity thread, so the following write-only
-            // transaction still has a consistent snapshot for our single writer.
-            _db.BeginTrans();
-            try
+            refund = paid - cost;
+
+            // The stock change is the only thing that needs to be atomic here, and it is a
+            // single document write. The mail that pays the seller and delivers to the buyer
+            // lives in a different file, so it was never covered by this transaction anyway --
+            // wrapping it only made the connection hold a transaction open across two
+            // databases, which is exactly the habit that exhausted LiteDB's limit.
+            listing.Amount -= amount;
+            bool soldOut = listing.Amount <= 0;
+
+            // LiteDB 5 cannot commit while a query cursor opened in the same transaction is
+            // still alive, so the document was already resolved and validated above.
+            _file.Write(db =>
             {
-                refund = paid - cost;
+                var listings = db.GetCollection<Listing>("listings");
+                db.BeginTrans();
+                try
+                {
+                    if (soldOut) listings.Delete(listingId);
+                    else listings.Update(listing);
+                    db.Commit();
+                }
+                catch
+                {
+                    db.Rollback();
+                    throw;
+                }
+            });
 
-                // Auction-house semantics: neither side is handed anything directly. The
-                // seller is paid by mail and the buyer's goods are mailed too, which is what
-                // lets a sale complete while either party is offline -- the whole point of
-                // an auction house over a face-to-face trade.
-                MailDatabase.SendCoins(listing.OwnerId, $"Venda: {listing.ItemName} x{amount}", sellerCredit);
-                MailDatabase.SendItem(buyerId, $"Compra: {listing.ItemName}", listing.ItemName, listing.Quality, amount);
+            boughtFrom = listing;
 
-                listing.Amount -= amount;
-                boughtFrom = listing;
-                if (listing.Amount <= 0) Listings.Delete(listingId);
-                else Listings.Update(listing);
+            // Auction-house semantics: neither side is handed anything directly. The seller is
+            // paid by mail and the buyer's goods are mailed too, which is what lets a sale
+            // complete while either party is offline -- the whole point of an auction house
+            // over a face-to-face trade.
+            MailDatabase.SendCoins(listing.OwnerId, $"Venda: {listing.ItemName} x{amount}", sellerCredit);
+            MailDatabase.SendItem(buyerId, $"Compra: {listing.ItemName}", listing.ItemName, listing.Quality, amount);
 
-                _db.Commit();
-                return true;
-            }
-            catch
-            {
-                _db.Rollback();
-                throw;
-            }
+            return true;
         }
 
     }
 }
+

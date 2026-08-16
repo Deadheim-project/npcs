@@ -51,9 +51,12 @@ namespace NpcValheim.UI
             amountLayout.childForceExpandWidth = false;
             amountLayout.childAlignment = TextAnchor.MiddleCenter;
 
-            var amountLabel = ValheimUi.CreateLabel(amountRow, "Quantidade", 15, ValheimUi.Beige,
+            // "Quantidade" sitting directly under "Suas moedas" read as a control for editing
+            // your money -- which is exactly what somebody would fear after the balance bug.
+            // Name what it counts.
+            var amountLabel = ValheimUi.CreateLabel(amountRow, "Itens por operação", 15, ValheimUi.Beige,
                 TextAlignmentOptions.Right);
-            ValheimUi.SetWidth(amountLabel.gameObject, 100f);
+            ValheimUi.SetWidth(amountLabel.gameObject, 150f);
 
             var minus = ValheimUi.CreateButton(amountRow, "−", 38f, 34f, 18);
             minus.onClick.AddListener(() => Nudge(-1));
@@ -107,7 +110,7 @@ namespace NpcValheim.UI
             // Read straight off the player's own inventory. There is no round trip and no
             // second wallet to disagree with it -- what the panel says is what you are
             // carrying.
-            _balance.text = $"Suas moedas: {MarketplaceNpc.CoinsOf(Player)}";
+            _balance.text = $"<color=#9a9188>Na sua bolsa:</color> {MarketplaceNpc.CoinsOf(Player)} moedas";
 
             var sells = market.GetSellPrices();
             var sellSignature = string.Join("|", sells.Select(kv => $"{kv.Key}:{kv.Value}"));

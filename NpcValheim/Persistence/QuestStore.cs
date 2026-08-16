@@ -45,6 +45,62 @@ namespace NpcValheim.Persistence
 
         public static void Reload() => _cache = null;
 
+        private static readonly ISerializer Serializer = new SerializerBuilder()
+            .WithNamingConvention(CamelCaseNamingConvention.Instance)
+            .Build();
+
+        /// <summary>
+        /// Writes a quest to disk and makes it live.
+        ///
+        /// The same YAML an admin would hand-write, produced from the in-game form -- so a
+        /// quest made through the menu is not a second-class thing living in a database
+        /// somewhere: it is a file that can afterwards be opened, edited, copied to another
+        /// server or put in version control, exactly like the examples.
+        /// </summary>
+        public static bool Save(QuestDefinition quest, out string error)
+        {
+            error = null;
+
+            if (quest == null) { error = "Quest vazia"; return false; }
+            if (string.IsNullOrWhiteSpace(quest.Id)) { error = "Id obrigatório"; return false; }
+            if (string.IsNullOrWhiteSpace(quest.Name)) quest.Name = quest.Id;
+            if (string.IsNullOrWhiteSpace(quest.Target)) { error = "Alvo obrigatório"; return false; }
+            if (quest.Amount < 1) { error = "Quantidade tem de ser ao menos 1"; return false; }
+
+            var id = Slug(quest.Id);
+            if (id.Length == 0) { error = "Id inválido"; return false; }
+            quest.Id = id;
+
+            try
+            {
+                Directory.CreateDirectory(QuestsDir);
+                File.WriteAllText(Path.Combine(QuestsDir, id + ".yaml"), Serializer.Serialize(quest));
+                Reload();
+                Plugin.Log.LogInfo($"NpcValheim: quest '{id}' written from the admin panel");
+                return true;
+            }
+            catch (Exception e)
+            {
+                error = e.Message;
+                Plugin.Log.LogError($"NpcValheim: could not write quest '{id}': {e.Message}");
+                return false;
+            }
+        }
+
+        /// <summary>A file-name-safe id. Accepts what an admin types in a text field without
+        /// letting it become a path.</summary>
+        private static string Slug(string raw)
+        {
+            var sb = new System.Text.StringBuilder();
+            foreach (char c in raw.Trim().ToLowerInvariant())
+            {
+                if (c >= 'a' && c <= 'z' || c >= '0' && c <= '9') sb.Append(c);
+                else if ((c == ' ' || c == '-' || c == '_') && sb.Length > 0 && sb[sb.Length - 1] != '-')
+                    sb.Append('-');
+            }
+            return sb.ToString().Trim('-');
+        }
+
         private static void EnsureLoaded()
         {
             if (_cache != null) return;

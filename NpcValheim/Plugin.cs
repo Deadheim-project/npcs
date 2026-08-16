@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using BepInEx;
 using BepInEx.Configuration;
 using BepInEx.Logging;
@@ -34,6 +34,13 @@ namespace NpcValheim
         internal static ConfigEntry<int> ListingDurationHours;
         internal static ConfigEntry<UnityEngine.KeyCode> MarkWaypointKey;
         internal static ConfigEntry<UnityEngine.KeyCode> QuestJournalKey;
+        internal static ConfigEntry<bool> ShowQuestButton;
+        internal static ConfigEntry<bool> ShowQuestTracker;
+        internal static ConfigEntry<float> QuestTrackerX;
+        internal static ConfigEntry<float> QuestTrackerY;
+        internal static ConfigEntry<int> QuestTrackerMax;
+        internal static ConfigEntry<float> QuestButtonX;
+        internal static ConfigEntry<float> QuestButtonY;
 
         // Not synced -- purely a local dev toggle, flip it in the .cfg file before launching
         // to get an automated pass/fail report in LogOutput.log with zero manual interaction
@@ -78,6 +85,22 @@ namespace NpcValheim
             QuestJournalKey = Config.Bind("Quests", "JournalKey", UnityEngine.KeyCode.J,
                 "Opens the player's quest journal from anywhere in the world.");
 
+            ShowQuestTracker = Config.Bind("Quests", "ShowTracker", true,
+                "Shows the on-screen objective tracker: what you are doing and how far along, without opening a menu.");
+            QuestTrackerX = Config.Bind("Quests", "TrackerX", 24f,
+                "Distance in pixels from the right edge of the screen to the tracker.");
+            QuestTrackerY = Config.Bind("Quests", "TrackerY", 200f,
+                "Distance in pixels from the top edge of the screen to the tracker.");
+            QuestTrackerMax = Config.Bind("Quests", "TrackerMaxQuests", 5,
+                "How many quests the tracker shows at once. A tracker that fills the screen has stopped being a glance.");
+
+            ShowQuestButton = Config.Bind("Quests", "ShowJournalButton", true,
+                "Shows a button on the HUD that opens the quest journal and counts what is in progress.");
+            QuestButtonX = Config.Bind("Quests", "JournalButtonX", 16f,
+                "Distance in pixels from the left edge of the screen to the journal button.");
+            QuestButtonY = Config.Bind("Quests", "JournalButtonY", 260f,
+                "Distance in pixels from the top edge of the screen to the journal button. Raise it to clear another mod's bar.");
+
             ListingDurationHours = Config.Bind("Marketplace", "ListingDurationHours", 48,
                 "How long a listing stays up before it expires and the unsold stock is mailed back to the seller.");
 
@@ -116,6 +139,9 @@ namespace NpcValheim
             {
                 Npc.WaypointMarker.EnsureCreated();
                 QuestJournal.EnsureCreated();
+                UI.QuestMapPins.EnsureCreated();
+                UI.QuestHudButton.EnsureCreated();
+                UI.QuestTracker.EnsureCreated();
             }
             if (EnableSelfTest.Value)
             {
@@ -155,3 +181,5 @@ namespace NpcValheim
         }
     }
 }
+
+

@@ -173,9 +173,25 @@ namespace NpcValheim.UI
             if (_selectedId == null && quests.Count > 0) _selectedId = quests[0].Id;
         }
 
-        private static string ShortState(QuestEntry quest) => quest.Status switch
+        /// <summary>
+        /// How far along the player actually is.
+        ///
+        /// The two objectives are counted in different places and the panel used to show only
+        /// one of them: a Kill quest accumulates a counter on the server, but a Collect quest
+        /// has no counter at all -- the items sit in the player's bag until hand-in. Reading
+        /// Counter for both meant a Collect quest showed 0/20 with twenty planks in the bag,
+        /// which reads as "the mod is broken" even though hand-in worked.
+        /// </summary>
+        private int Progress(QuestEntry quest)
         {
-            QuestStatus.Active => $"em andamento — {quest.Counter}/{quest.Goal}",
+            if (quest.Objective == QuestObjectiveKind.Kill) return quest.Counter;
+            var player = Player;
+            return player != null ? ItemNames.Count(player.GetInventory(), quest.Target, -1) : 0;
+        }
+
+        private string ShortState(QuestEntry quest) => quest.Status switch
+        {
+            QuestStatus.Active => $"em andamento — {Progress(quest)}/{quest.Goal}",
             QuestStatus.Completed => "concluída",
             _ => quest.Locked ? quest.LockReason : "disponível",
         };
@@ -305,7 +321,7 @@ namespace NpcValheim.UI
             }
 
             Giver.RequestTurnIn(quest.Id);
-            Say("Missão entregue; a recompensa vai para o correio.");
+            Say("Missão entregue; a recompensa vai para a sua bolsa.");
         }
 
         private QuestEntry Selected()

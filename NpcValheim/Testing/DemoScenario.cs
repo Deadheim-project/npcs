@@ -68,7 +68,54 @@ namespace NpcValheim.Testing
                 button.onClick.Invoke();
                 return true;
             }
-            Plugin.Log.LogWarning($"DEMO: no clickable button matching '{labelContains}'");
+            // Say what *is* on screen. "Button not found" alone cannot distinguish "the panel
+            // never opened", "the wrong tab is showing" and "the row exists but is disabled",
+            // and those have nothing to do with each other.
+            var visible = FindObjectsByType<UnityEngine.UI.Button>(FindObjectsSortMode.None)
+                .Where(b => b.gameObject.activeInHierarchy)
+                .Select(b =>
+                {
+                    var label = b.GetComponentInChildren<TMPro.TextMeshProUGUI>();
+                    string text = label != null ? label.text.Replace("\n", " ") : "(no label)";
+                    return b.interactable ? text : text + "[disabled]";
+                })
+                .ToArray();
+
+            Plugin.Log.LogWarning($"DEMO: no clickable button matching '{labelContains}'. " +
+                $"On screen ({visible.Length}): {string.Join(" | ", visible)}");
+            return false;
+        }
+
+        /// <summary>Clicks a button on the row that mentions a given item.
+        ///
+        /// Both counter columns have a button per row with the same word on it, so "click
+        /// Vender" clicked whichever row happened to be first -- it sold wood while the check
+        /// was watching the deer hides, and reported a bug that was not there. The row has to
+        /// be part of what is being asked for.</summary>
+        private static bool ClickRowButton(string rowContains, string buttonLabel)
+        {
+            foreach (var button in FindObjectsByType<UnityEngine.UI.Button>(FindObjectsSortMode.None))
+            {
+                if (!button.gameObject.activeInHierarchy || !button.interactable) continue;
+
+                var label = button.GetComponentInChildren<TMPro.TextMeshProUGUI>();
+                if (label == null || label.text.IndexOf(buttonLabel, System.StringComparison.OrdinalIgnoreCase) < 0)
+                    continue;
+
+                // The row is the button's parent; its other labels say which item it is.
+                var row = button.transform.parent;
+                if (row == null) continue;
+                bool matchesRow = row.GetComponentsInChildren<TMPro.TextMeshProUGUI>()
+                    .Any(t => t.text != null &&
+                              t.text.IndexOf(rowContains, System.StringComparison.OrdinalIgnoreCase) >= 0);
+                if (!matchesRow) continue;
+
+                Plugin.Log.LogInfo($"DEMO: clicking '{buttonLabel}' on the '{rowContains}' row");
+                button.onClick.Invoke();
+                return true;
+            }
+
+            Plugin.Log.LogWarning($"DEMO: no '{buttonLabel}' button on a row mentioning '{rowContains}'");
             return false;
         }
 
@@ -158,6 +205,7 @@ namespace NpcValheim.Testing
                  "and the crosshair prompt on whoever is under it");
             yield return new WaitForSeconds(14f);
 
+            yield return PlacementScene(player);
             yield return GiveStartingGoods(player);
             yield return MarketScene(player);
             yield return MailScene();
@@ -197,6 +245,79 @@ namespace NpcValheim.Testing
                 MailDatabase.Claim(mail.Id, OtherPlayerId);
 
             Step($"reset: removed {removed} NPC(s) and cleared quest/mail state from earlier runs");
+        }
+
+        // ---- 0. the hammer: the path a real admin actually uses ----
+
+        /// <summary>
+        /// Places an NPC the way the Hammer does, through the placer stub.
+        ///
+        /// Every other scene here spawns the real NPC prefab directly, which skips the stub
+        /// entirely -- so a placement bug could not possibly show up, and one did: a freshly
+        /// built NPC came out unusable while pre-spawned ones were fine. This drives the same
+        /// OnPlaced hook the game invokes on a committed piece.
+        /// </summary>
+        private IEnumerator PlacementScene(Player player)
+        {
+            Step("SHOWCASE placement -- building a Mercador through the placer stub");
+
+            var stubPrefab = ZNetScene.instance.GetPrefab("NpcValheim_Marketplace_Placer");
+            if (stubPrefab == null)
+            {
+                Check(false, "the placer stub prefab exists");
+                yield break;
+            }
+
+            var spot = player.transform.position + player.transform.forward * 3f;
+            var stub = Instantiate(stubPrefab, spot, Quaternion.identity);
+
+            var piece = stub.GetComponent<Piece>();
+            if (piece != null) piece.SetCreator(player.GetPlayerID());
+
+            // SendMessage is what the game itself uses to notify a placed piece.
+            stub.SendMessage("OnPlaced", SendMessageOptions.DontRequireReceiver);
+            yield return new WaitForSeconds(5f);
+
+            // Find what actually came out of it, near where it was placed.
+            MarketplaceNpc placed = null;
+            foreach (var npc in FindObjectsByType<MarketplaceNpc>(FindObjectsSortMode.None))
+                if (Vector3.Distance(npc.transform.position, spot) < 4f) { placed = npc; break; }
+
+            Check(placed != null, "the stub produced a real NPC");
+            if (placed == null) yield break;
+
+            var nview = placed.GetComponent<ZNetView>();
+            Check(nview != null && nview.IsValid(), "the placed NPC has a live ZNetView");
+            Check(!string.IsNullOrEmpty(placed.GetHoverText()),
+                $"it answers the crosshair: '{placed.GetHoverText()?.Replace("\n", " / ")}'");
+            Check(placed.OwnerId == player.GetPlayerID(),
+                $"it belongs to whoever built it (owner={placed.OwnerId})");
+
+            // Measured against the terrain rather than against Character.IsOnGround(): that
+            // flag is computed inside the update methods this mod skips for NPCs, so it stays
+            // false however correctly the NPC is standing. Where its feet actually are is the
+            // thing that matters -- and "flying NPCs" is what the wrong answer looks like.
+            float groundY = ZoneSystem.instance != null &&
+                            ZoneSystem.instance.GetSolidHeight(placed.transform.position, out float h)
+                ? h : placed.transform.position.y;
+            float aboveGround = placed.transform.position.y - groundY;
+            Check(Mathf.Abs(aboveGround) < 0.6f,
+                $"it stands on the ground, not above it ({aboveGround:0.00}m off)");
+
+            var body = placed.GetComponent<Rigidbody>();
+            Check(body != null && body.constraints == RigidbodyConstraints.FreezeAll,
+                $"and got anchored afterwards (constraints={body?.constraints})");
+
+            // The real test of "usable": open its panel the way pressing E does.
+            placed.Interact(player, false, false);
+            yield return new WaitForSeconds(1f);
+            Check(placed.PanelOpenRequested || UiRoot.IsOpen, "pressing E on it asks for the panel");
+
+            UiRoot.Open(placed, player);
+            yield return new WaitForSeconds(4f);
+            Check(UiRoot.IsOpen, "and the panel actually opens");
+            UiRoot.RequestClose();
+            yield return new WaitForSeconds(1f);
         }
 
         // ---- 1. stock the player so there is something to trade ----
@@ -295,7 +416,8 @@ namespace NpcValheim.Testing
             // gets exercised, and it is exactly where a UI-only bug would hide.
             Step("clicking 'Vender' on the Deer hide row of the Loja tab");
             SetInputField("5");
-            Check(ClickButton("Vender"), "the Vender button on the shop counter");
+            Check(ClickRowButton(ItemNames.Display("DeerHide"), "Vender"),
+                "the Vender button on the deer hide row");
             yield return new WaitForSeconds(3f);
 
             int hidesAfter = ItemNames.Count(inventory, "DeerHide", -1);
@@ -306,7 +428,8 @@ namespace NpcValheim.Testing
 
             Step("clicking 'Comprar' on the Coal row -- buying from the merchant");
             int beforeBuy = MarketplaceNpc.CoinsOf(player);
-            Check(ClickButton("Comprar"), "the Comprar button on the shop counter");
+            Check(ClickRowButton(ItemNames.Display("Coal"), "Comprar"),
+                "the Comprar button on the coal row");
             yield return new WaitForSeconds(3f);
             int afterBuy = MarketplaceNpc.CoinsOf(player);
             Check(beforeBuy - afterBuy == 20,
@@ -356,12 +479,19 @@ namespace NpcValheim.Testing
             _quests.RequestQuests();
             yield return new WaitForSeconds(5f);
 
-            var quest = _quests.CachedQuests.FirstOrDefault(q => q.Status == QuestStatus.NotStarted);
+            // A Collect quest by preference: it is the one with the reported bugs (progress
+            // counted from the bag, reward landing in the bag), and picking whichever quest
+            // happened to be first meant those checks silently skipped.
+            var quest = _quests.CachedQuests.FirstOrDefault(q =>
+                            q.Status == QuestStatus.NotStarted && q.Objective == QuestObjectiveKind.Collect)
+                        ?? _quests.CachedQuests.FirstOrDefault(q => q.Status == QuestStatus.NotStarted);
             if (quest != null)
             {
                 Step($"accepting '{quest.Name}' -- the ! marker should become a ? once it can be handed in");
                 _quests.RequestAccept(quest.Id);
                 yield return new WaitForSeconds(4f);
+
+                yield return CollectQuestScene(quest.Id);
 
                 // Close the panel and hold, so the marker flip is actually visible instead of
                 // being hidden behind the window it was triggered from.
@@ -369,6 +499,67 @@ namespace NpcValheim.Testing
                 Step("quest accepted -- holding on Sigrún so the ? marker is visible");
                 yield return new WaitForSeconds(12f);
             }
+        }
+
+        /// <summary>
+        /// The two things a player reported as broken about Collect quests: the counter on
+        /// screen staying at zero with the items in the bag, and the reward not arriving in
+        /// the bag. Both are checked here against the real panel and the real inventory.
+        /// </summary>
+        private IEnumerator CollectQuestScene(string questId)
+        {
+            var player = Player.m_localPlayer;
+            var quest = _quests.CachedQuests.FirstOrDefault(q => q.Id == questId);
+            if (player == null || quest == null || quest.Objective != QuestObjectiveKind.Collect)
+            {
+                Step("no Collect quest on offer, skipping the collect checks");
+                yield break;
+            }
+
+            var inventory = player.GetInventory();
+            int needed = quest.Goal;
+
+            // Deliberately short first: the panel must say 0-of-N and refuse, not pretend.
+            ItemNames.Remove(inventory, quest.Target, ItemNames.Count(inventory, quest.Target, -1), -1);
+            _quests.RequestQuests();
+            yield return new WaitForSeconds(2f);
+            Check(!QuestGiverNpc.CanCompleteNow(quest, player),
+                "with an empty bag the quest cannot be handed in");
+
+            Step($"putting {needed}x {quest.Target} in the bag");
+            AddItem(inventory, quest.Target, needed);
+            yield return new WaitForSeconds(2f);
+
+            int carried = ItemNames.Count(inventory, quest.Target, -1);
+            Check(carried >= needed, $"the bag really holds them ({carried}/{needed})");
+
+            // This is the bug that was reported: the panel read a server counter that a
+            // Collect quest never fills, so it showed 0 with a full bag.
+            Check(QuestGiverNpc.CanCompleteNow(quest, player),
+                "and the quest now reads as ready, counted from the bag");
+
+            int coinsBefore = MarketplaceNpc.CoinsOf(player);
+            int mailBefore = MailDatabase.CountMail(player.GetPlayerID());
+
+            // Select the row first. The panel shows the buttons of whichever quest is
+            // selected, and this scene accepted its quest over RPC rather than by clicking --
+            // so the selection was still sitting on a different quest and Entregar was not on
+            // screen at all. A player would have clicked the row to get here.
+            Check(ClickButton(quest.Name), $"selecting '{quest.Name}' in the list");
+            yield return new WaitForSeconds(2f);
+
+            Step("clicking 'Entregar' on the real panel");
+            Check(ClickButton("Entregar"), "the Entregar button");
+            yield return new WaitForSeconds(4f);
+
+            int carriedAfter = ItemNames.Count(inventory, quest.Target, -1);
+            Check(carried - carriedAfter == needed,
+                $"the quest items left the bag: {carried} -> {carriedAfter}");
+
+            int coinsAfter = MarketplaceNpc.CoinsOf(player);
+            Check(coinsAfter > coinsBefore,
+                $"the reward arrived in the bag, not only in the post: {coinsBefore} -> {coinsAfter} coins " +
+                $"(mail parcels {mailBefore} -> {MailDatabase.CountMail(player.GetPlayerID())})");
         }
 
         // ---- 4b. the journal, opened away from any NPC ----
