@@ -66,8 +66,66 @@ namespace NpcValheim.Prefabs
             RegisterNpcType(scene, source, "NpcValheim_Teleporter", typeof(TeleporterNpc), "Teleportador");
             RegisterNpcType(scene, source, "NpcValheim_Marketplace", typeof(MarketplaceNpc), "Mercador");
             RegisterNpcType(scene, source, "NpcValheim_Auction", typeof(AuctionNpc), "Leilão");
-            RegisterNpcType(scene, source, "NpcValheim_Mailbox", typeof(MailboxNpc), "Correio");
+            RegisterMailbox(scene);
             RegisterNpcType(scene, source, "NpcValheim_QuestGiver", typeof(QuestGiverNpc), "Missões");
+        }
+
+        /// <summary>
+        /// The mailbox is furniture, not a person. A Player clone would inherit hair, a health
+        /// bar and a broken ghost preview; the WoW box is a static piece with the PECA mesh,
+        /// so the hammer can place it the same way it places a chest.
+        /// </summary>
+        private static void RegisterMailbox(ZNetScene scene)
+        {
+            const string prefabName = "NpcValheim_Mailbox";
+            if (scene.m_prefabs.Any(p => p != null && p.name == prefabName))
+                return;
+
+            var box = new GameObject(prefabName);
+            box.transform.SetParent(HiddenContainer, false);
+
+            if (!PecaMesh.TryAttach(box, scene, PecaMesh.MailboxFolder, targetHeight: 1.6f))
+            {
+                var primitive = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                box.AddComponent<MeshFilter>().sharedMesh = primitive.GetComponent<MeshFilter>().sharedMesh;
+                var renderer = box.AddComponent<MeshRenderer>();
+                renderer.sharedMaterial = FindGameMaterial(scene);
+                UnityEngine.Object.DestroyImmediate(primitive);
+                var collider = box.AddComponent<BoxCollider>();
+                collider.size = new Vector3(0.7f, 1.4f, 0.7f);
+                collider.center = new Vector3(0f, 0.7f, 0f);
+            }
+
+            // MailboxNpc is Hoverable/Interactable -- add it before Piece so the use prompt
+            // is "Abrir" rather than the hammer's build text.
+            box.AddComponent<MailboxNpc>();
+
+            var nview = box.AddComponent<ZNetView>();
+            nview.m_persistent = true;
+
+            var piece = box.AddComponent<Piece>();
+            piece.m_name = "Caixa Postal";
+            piece.m_description = "Envia mensagens a qualquer jogador ou casa, e recebe encomendas.";
+            piece.m_category = Piece.PieceCategory.Misc;
+            piece.m_resources = Array.Empty<Piece.Requirement>();
+            piece.m_groundOnly = false;
+            piece.m_groundPiece = false;
+            piece.m_cultivatedGroundOnly = false;
+            piece.m_vegetationGroundOnly = false;
+            piece.m_notOnWood = false;
+            piece.m_noInWater = false;
+            piece.m_allowedInDungeons = true;
+            piece.m_canBeRemoved = true;
+            piece.m_icon = PecaMesh.LoadIcon(PecaMesh.MailboxFolder);
+
+            var wear = box.AddComponent<WearNTear>();
+            wear.m_health = 400f;
+            wear.m_noSupportWear = true;
+            wear.m_supports = false;
+
+            scene.m_prefabs.Add(box);
+            CustomPrefabs.Add(box);
+            Plugin.Log.LogInfo($"NpcValheim: registered mailbox piece '{prefabName}'");
         }
 
         private static void RegisterNpcType(ZNetScene scene, GameObject source, string npcPrefabName, Type npcComponentType, string displayName)
