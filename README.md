@@ -77,11 +77,22 @@ offline — o motivo de existir uma AH em vez de uma troca cara a cara.
 - **Sacar** o próprio saldo continua imediato — você está ali e o dinheiro já é
   seu, não há nada pelo que esperar.
 
-O **Correio** (`MailboxNpc`) é o terceiro tipo de NPC colocável. Lista suas
-encomendas com "Receber" e "Receber tudo"; os itens caem no chão ao lado, já
-que não há como escrever no inventário de outro jogador. Só o destinatário
-retira: o servidor responde por remetente do RPC e a retirada confere o dono,
-então pedir a encomenda alheia adivinhando um id não funciona.
+O **Correio** é uma **caixa postal** colocável (modelo WoW em
+`Assets/Mailbox`, formato PECA), não um NPC-personagem. Três abas:
+
+- **Correio** — encomendas do leilão/missões e cartas escritas. Itens caem no
+  chão ao lado; cartas só se excluem. Só o destinatário retira: o servidor
+  responde por remetente do RPC e a retirada confere o dono.
+- **Enviar** — mensagem para **qualquer jogador** (pelo nome; vale offline se
+  ele já entrou no servidor) ou para uma **casa**.
+- **Casa** — cria uma casa/clã, convida membros. Enviar para a casa posta uma
+  cópia da carta em cada membro, para ninguém "roubar" a carta do outro.
+
+O selo **Valheim Post** fica ao lado do minimapa. Cartas de jogador e de casa
+acendem o badge **+1**, **+2**, **+3**… Clique no ícone (ou a tecla `P`,
+`Mail/HudKey`) avisa para ir à Caixa Postal; a leitura e o “marcar como lida”
+acontecem na aba **Correio**. O fundo branco do ícone é tratado como
+transparente.
 
 ## Integração opcional com EpicMMO
 

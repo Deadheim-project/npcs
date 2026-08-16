@@ -119,6 +119,7 @@ namespace NpcValheim.Testing
             RunPermissionChecks(teleporterPrefab);
             RunMarketChecks();
             RunMailChecks();
+            RunPlayerMailChecks();
             RunConservationChecks();
             RunQuestChecks();
             Report();
@@ -957,6 +958,73 @@ namespace NpcValheim.Testing
             catch (System.Exception error)
             {
                 Check("mail checks run without throwing", false, error.ToString());
+            }
+        }
+
+        private void RunPlayerMailChecks()
+        {
+            try
+            {
+                const long alice = 900000301L;
+                const long bob = 900000302L;
+                const long cara = 900000303L;
+
+                foreach (var id in new[] { alice, bob, cara })
+                    foreach (var mail in MailDatabase.GetMail(id))
+                        MailDatabase.Claim(mail.Id, id);
+
+                PlayerDirectory.Remember(alice, "Alice");
+                PlayerDirectory.Remember(bob, "Bob");
+                PlayerDirectory.Remember(cara, "Cara");
+
+                Check("directory finds a player by name, ignoring case",
+                    PlayerDirectory.FindByName("alice")?.Id == alice);
+
+                var letter = MailDatabase.SendMessage(bob, alice, "Alice", "Olá", "Te vejo no porto.");
+                Check("a written letter is stored as a message, not an item",
+                    letter != null && letter.IsMessage && letter.Body.Contains("porto"));
+
+                var bobMail = MailDatabase.GetMail(bob);
+                Check("only the recipient sees the letter",
+                    bobMail.Any(m => m.Id == letter.Id) && !MailDatabase.GetMail(alice).Any(m => m.Id == letter.Id));
+                Check("a stranger cannot claim someone else's letter",
+                    MailDatabase.Claim(letter.Id, alice) == null);
+                Check("the recipient can delete their letter",
+                    MailDatabase.Claim(letter.Id, bob) != null);
+
+                const string houseName = "LoboSelfTest";
+                HouseDatabase.Delete(houseName);
+                var house = HouseDatabase.Create(houseName, alice, "Alice");
+                Check("a house is created for its leader", house != null && house.OwnerId == alice);
+                Check("duplicate house names are rejected",
+                    HouseDatabase.Create(houseName, bob, "Bob") == null);
+                Check("the leader can invite a known player",
+                    HouseDatabase.AddMember(houseName, alice, bob));
+                Check("a non-leader cannot invite",
+                    !HouseDatabase.AddMember(houseName, bob, cara));
+
+                int sent = MailDatabase.SendToHouse(houseName, cara, "Cara", "Raid", "Hoje à noite.");
+                Check("house mail is copied to every member", sent == 2,
+                    $"sent={sent}");
+                Check("each member has their own copy",
+                    MailDatabase.GetMail(alice).Count(m => m.HouseName == houseName) == 1 &&
+                    MailDatabase.GetMail(bob).Count(m => m.HouseName == houseName) == 1);
+                Check("a non-member does not receive house mail",
+                    !MailDatabase.GetMail(cara).Any(m => m.HouseName == houseName));
+
+                var aliceCopy = MailDatabase.GetMail(alice).First(m => m.HouseName == houseName);
+                Check("claiming your house copy does not take your housemate's",
+                    MailDatabase.Claim(aliceCopy.Id, alice) != null &&
+                    MailDatabase.GetMail(bob).Any(m => m.HouseName == houseName));
+
+                HouseDatabase.Delete(houseName);
+                foreach (var id in new[] { alice, bob, cara })
+                    foreach (var mail in MailDatabase.GetMail(id))
+                        MailDatabase.Claim(mail.Id, id);
+            }
+            catch (System.Exception error)
+            {
+                Check("player mail checks run without throwing", false, error.ToString());
             }
         }
 

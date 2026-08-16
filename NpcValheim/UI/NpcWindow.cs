@@ -93,6 +93,8 @@ namespace NpcValheim.UI
                     break;
                 case MailboxNpc _:
                     AddTab("Correio", new MailView(), npc, player);
+                    AddTab("Enviar", new MailComposeView(), npc, player);
+                    AddTab("Casa", new HouseView(), npc, player);
                     break;
                 case QuestGiverNpc _:
                     AddTab("Missões", new QuestView(), npc, player);
@@ -111,7 +113,8 @@ namespace NpcValheim.UI
 
             if (npc.CanLocalPlayerAdminister())
             {
-                AddTab("Aparência", new AppearanceView(), npc, player);
+                if (npc.ShowsAppearanceTab)
+                    AddTab("Aparência", new AppearanceView(), npc, player);
                 AddTab("Admin", new AdminView(), npc, player);
             }
         }
