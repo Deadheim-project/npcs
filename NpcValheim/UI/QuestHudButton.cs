@@ -96,9 +96,13 @@ namespace NpcValheim.UI
             _mark = ValheimUi.CreateLabel(rect, "!", 44, ValheimUi.QuestGold,
                 TextAlignmentOptions.Center, display: true);
             _mark.fontStyle = FontStyles.Bold;
+
+            // 0.12, not 0.3. A TMP outline grows inward as well as outward, so on a glyph this
+            // size a thick one closes over the face and the whole thing renders as a black
+            // blob -- which is exactly what it looked like.
             _mark.fontMaterial.EnableKeyword("OUTLINE_ON");
             _mark.outlineColor = new Color32(0, 0, 0, 255);
-            _mark.outlineWidth = 0.3f;
+            _mark.outlineWidth = 0.12f;
             ValheimUi.Stretch((RectTransform)_mark.transform, 0f, 0f);
 
             _count = ValheimUi.CreateLabel(rect, "", 17, ValheimUi.QuestGold, TextAlignmentOptions.BottomRight);

@@ -25,6 +25,9 @@ namespace NpcValheim.UI
 
         private TMP_InputField _destinationName;
         private TMP_InputField _destinationCost;
+        private TMP_InputField _destinationX;
+        private TMP_InputField _destinationY;
+        private TMP_InputField _destinationZ;
         private TextMeshProUGUI _waypointHint;
 
         private RectTransform _templates;
@@ -89,9 +92,33 @@ namespace NpcValheim.UI
             {
                 Heading(column, "Novo destino");
                 var addRow = Row(column, 40f);
+                ValheimUi.CreateLabel(addRow, "Nome", 14, ValheimUi.Beige, TextAlignmentOptions.Left);
                 _destinationName = ValheimUi.CreateInputField(addRow, "", 170f, 38f);
                 Flexible(_destinationName.gameObject);
+                ValheimUi.CreateLabel(addRow, "Custo", 14, ValheimUi.Beige, TextAlignmentOptions.Right);
                 _destinationCost = ValheimUi.CreateInputField(addRow, "0", 60f, 38f);
+
+                // Typed coordinates, because the other two ways of naming a place both need
+                // you to physically go there. An admin building a travel network from a map
+                // wants to enter the numbers, and `pos` in the console prints exactly these.
+                var coordRow = Row(column, 40f);
+                ValheimUi.CreateLabel(coordRow, "X", 14, ValheimUi.Beige, TextAlignmentOptions.Right);
+                _destinationX = ValheimUi.CreateInputField(coordRow, "", 90f, 38f);
+                ValheimUi.CreateLabel(coordRow, "Y", 14, ValheimUi.Beige, TextAlignmentOptions.Right);
+                _destinationY = ValheimUi.CreateInputField(coordRow, "", 90f, 38f);
+                ValheimUi.CreateLabel(coordRow, "Z", 14, ValheimUi.Beige, TextAlignmentOptions.Right);
+                _destinationZ = ValheimUi.CreateInputField(coordRow, "", 90f, 38f);
+
+                var here = ValheimUi.CreateButton(coordRow, "Onde estou", 130f, 38f, 14);
+                here.onClick.AddListener(() =>
+                {
+                    var at = Player.transform.position;
+                    _destinationX.text = at.x.ToString("0.0", CultureInfo.InvariantCulture);
+                    _destinationY.text = at.y.ToString("0.0", CultureInfo.InvariantCulture);
+                    _destinationZ.text = at.z.ToString("0.0", CultureInfo.InvariantCulture);
+                    Say($"Coordenadas preenchidas com a sua posição ({at.x:0}, {at.y:0}, {at.z:0}).");
+                });
+
                 var add = ValheimUi.CreateButton(addRow, "Adicionar", 160f, 38f, 15);
                 add.onClick.AddListener(() =>
                 {
@@ -106,9 +133,20 @@ namespace NpcValheim.UI
                         return;
                     }
 
-                    // The marked point wins when there is one. Without this the button can
-                    // only ever record the teleporter's own feet -- the panel blocks
-                    // movement, so the admin is standing right here by definition.
+                    // Three ways to name a place, in order of how explicit they are: typed
+                    // coordinates beat a marked point, which beats "wherever I am standing".
+                    // Whatever the admin said most deliberately is what wins.
+                    if (TryReadCoordinates(out var typed))
+                    {
+                        teleporter.RequestAddDestination(Player, _destinationName.text, cost,
+                            typed, Player.transform.rotation.eulerAngles.y);
+                        Say($"Destino '{_destinationName.text}' gravado em " +
+                            $"({typed.x:0}, {typed.y:0}, {typed.z:0}), custo {cost}.");
+                        _destinationName.text = "";
+                        _destinationSignature = null;
+                        return;
+                    }
+
                     if (WaypointMarker.TryGetBindPoint(out var point, out float pointYaw))
                     {
                         teleporter.RequestAddDestination(Player, _destinationName.text, cost, point, pointYaw);
@@ -469,9 +507,46 @@ namespace NpcValheim.UI
             }
         }
 
+        /// <summary>Reads the three coordinate boxes. All three have to be filled and valid --
+        /// a half-typed coordinate is a mistake, not an instruction, and falling back to the
+        /// admin's position on a typo would bind a destination somewhere they never meant.</summary>
+        private bool TryReadCoordinates(out Vector3 position)
+        {
+            position = Vector3.zero;
+            if (_destinationX == null || _destinationY == null || _destinationZ == null) return false;
+
+            var culture = CultureInfo.InvariantCulture;
+            var style = NumberStyles.Float;
+
+            // Comma accepted as a decimal point: the game's own console prints coordinates
+            // one way and a Brazilian keyboard types them another.
+            string x = (_destinationX.text ?? "").Trim().Replace(',', '.');
+            string y = (_destinationY.text ?? "").Trim().Replace(',', '.');
+            string z = (_destinationZ.text ?? "").Trim().Replace(',', '.');
+            if (x.Length == 0 && y.Length == 0 && z.Length == 0) return false;
+
+            if (!float.TryParse(x, style, culture, out float px) ||
+                !float.TryParse(y, style, culture, out float py) ||
+                !float.TryParse(z, style, culture, out float pz))
+            {
+                Say("Coordenadas incompletas: preencha X, Y e Z, ou deixe os três vazios.");
+                return false;
+            }
+
+            position = new Vector3(px, py, pz);
+            return true;
+        }
+
         private void RefreshWaypointHint()
         {
             if (_waypointHint == null) return;
+
+            if (_destinationX != null && (_destinationX.text ?? "").Trim().Length > 0)
+            {
+                _waypointHint.text = "<color=#ffd24a>Usando as coordenadas digitadas.</color> " +
+                                     "Limpe X/Y/Z para voltar ao ponto marcado ou à sua posição.";
+                return;
+            }
 
             _waypointHint.text = WaypointMarker.HasWaypoint
                 ? $"<color=#ffd24a>Ponto marcado em ({WaypointMarker.Position.x:0}, " +

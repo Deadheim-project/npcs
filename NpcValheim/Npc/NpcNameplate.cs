@@ -187,7 +187,9 @@ namespace NpcValheim.Npc
             var markerRect = (RectTransform)_marker.transform;
             markerRect.anchorMin = markerRect.anchorMax = new Vector2(0.5f, 0.5f);
             markerRect.sizeDelta = new Vector2(160f, 120f);
-            AddOutline(_marker, 0.35f);
+            // Thin: an outline eats into the glyph's face as it grows, and past ~0.2 a "!"
+            // fills in solid black instead of reading as gold with a dark edge.
+            AddOutline(_marker, 0.16f);
             _marker.gameObject.SetActive(false);
 
             _root = go.transform;
