@@ -42,6 +42,10 @@ namespace NpcValheim
         internal static ConfigEntry<float> QuestButtonX;
         internal static ConfigEntry<float> QuestButtonY;
         internal static ConfigEntry<UnityEngine.KeyCode> MailHudKey;
+        internal static ConfigEntry<bool> CitiesEnabled;
+        internal static ConfigEntry<bool> CityLevelTerrain;
+        internal static ConfigEntry<bool> CityProtectPieces;
+        internal static ConfigEntry<bool> CityMapPins;
 
         // Not synced -- purely a local dev toggle, flip it in the .cfg file before launching
         // to get an automated pass/fail report in LogOutput.log with zero manual interaction
@@ -56,6 +60,7 @@ namespace NpcValheim
         internal static ConfigEntry<bool> ShowcaseMode;
         internal static ConfigEntry<bool> SimulateNonAdmin;
         internal static ConfigEntry<string> WorldName;
+        internal static ConfigEntry<bool> AutoStartWorld;
         internal static ConfigEntry<bool> DemoScenarioMode;
 
         /// <summary>Runtime switch behind SimulateNonAdmin, rather than reading the config
@@ -108,6 +113,15 @@ namespace NpcValheim
             ListingDurationHours = Config.Bind("Marketplace", "ListingDurationHours", 48,
                 "How long a listing stays up before it expires and the unsold stock is mailed back to the seller.");
 
+            CitiesEnabled = Config.Bind("Cities", "Enabled", true,
+                "Sites and builds three NPC cities -- a large one in the meadows, one in the swamp and one in the mountains. Each is placed once per world and raised the first time a player gets near it.");
+            CityLevelTerrain = Config.Bind("Cities", "LevelTerrain", true,
+                "Flattens the ground under a city as it is built. Sites are already chosen for being flat, so turning this off costs tidiness, not a working town.");
+            CityMapPins = Config.Bind("Cities", "MapPins", true,
+                "Pins each city on the player's map. A town can sit kilometres from spawn, and without a pin 'there are three cities' and 'there are none' look the same.");
+            CityProtectPieces = Config.Bind("Cities", "ProtectPieces", true,
+                "Makes city buildings immune to damage and impossible to remove with the hammer. Turn off on a server where players are meant to be able to rebuild the towns themselves.");
+
             EnableSelfTest = Config.Bind("Testing", "EnableSelfTest", false,
                 "Runs an automated smoke test shortly after spawning into a world and logs SELFTEST PASS/FAIL lines. Dev use only.");
 
@@ -116,6 +130,9 @@ namespace NpcValheim
 
             DemoScenarioMode = Config.Bind("Testing", "DemoScenarioMode", false,
                 "With ShowcaseMode on, runs the scripted end-to-end demo (buy from another player, mail, quests, teleport) instead of the static showcase. Dev use only.");
+
+            AutoStartWorld = Config.Bind("Testing", "AutoStartWorld", false,
+                "Loads the world named by WorldName straight from launch, in singleplayer, skipping the menu. Independent of EnableSelfTest, so a local world can be opened hands-off without also spawning the test NPCs. Dev use only.");
 
             WorldName = Config.Bind("Testing", "WorldName", "",
                 "Which world the dev auto-start loads. Empty picks the first world that is already generated, because loading an ungenerated one costs minutes of world generation before a test can start. Dev use only.");
@@ -137,6 +154,16 @@ namespace NpcValheim
             MarketDatabase.Init(dbPath);
             MailDatabase.Init(Path.Combine(Path.GetDirectoryName(dbPath)!, "mail.db"));
             QuestDatabase.Init(Path.Combine(Path.GetDirectoryName(dbPath)!, "quests.db"));
+            CityDatabase.Init(Path.Combine(Path.GetDirectoryName(dbPath)!, "cities.db"));
+
+            // Runs on clients too, but no-ops there: only the authoritative peer sites or
+            // builds anything, and a client cannot tell whether it is one until ZNet is up.
+            if (CitiesEnabled.Value)
+            {
+                Cities.CityManager.EnsureCreated();
+                // Runs on the server too: it is the half that answers the clients' request.
+                Cities.CityDirectory.EnsureCreated();
+            }
 
             UiRoot.EnsureCreated();
             // Mail HUD RPCs must exist on a dedicated server too. The stamp UI itself is
@@ -172,6 +199,13 @@ namespace NpcValheim
                 if (DemoScenarioMode.Value) DemoScenario.EnsureCreated();
                 else DemoShowcase.EnsureCreated();
             }
+            // Standalone menu skip. Guarded against double-creation because EnableSelfTest and
+            // ShowcaseMode above already create one, and two AutoStarts race each other through
+            // the same menu.
+            if (AutoStartWorld.Value && !EnableSelfTest.Value && !ShowcaseMode.Value &&
+                !UnityEngine.Application.isBatchMode)
+                AutoStart.EnsureCreated();
+
             if (AutoConfirmCharacterOnJoin.Value)
                 AutoConfirmCharacter.EnsureCreated(AutoJoinPassword.Value);
 

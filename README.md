@@ -225,6 +225,61 @@ server remoto de verdade, aplicar um modelo pelo nome funciona igual (o
 servidor sempre resolve do próprio disco), mas listar os nomes disponíveis
 exigiria mais uma RPC de consulta que não foi implementada ainda.
 
+## Cidades: três povoados que o servidor levanta sozinho
+
+O mod escolhe um lugar e constrói **três cidades por mundo** — uma grande no
+prado (a capital), uma no pântano e uma na montanha —, cada uma com muralha,
+casas, praça e os cinco NPCs do mod (mercador, leilão, missões, teleportador e
+caixa postal) em volta da fogueira.
+
+**Terreno plano é requisito, não resultado.** O `CitySiteFinder` pergunta ao
+`WorldGenerator`, que responde por qualquer coordenada do mundo mesmo sem
+ninguém nunca ter ido lá — é a única forma de escolher o lugar antes da
+exploração. Ele amostra anéis concêntricos (não só a borda, senão uma bacia e um
+morro passam pelo mesmo teste) e roda três passadas afrouxando a tolerância de
+1,5 m para 6 m, porque um mundo pode genuinamente não ter platô de montanha
+plano, e cidade em chão meio torto é melhor que cidade nenhuma. O nivelamento
+com a operação da enxada (`TerrainLeveler`) roda depois e só tem centímetros
+para corrigir — daí ele ser todo por reflexão e dentro de `try`: se um patch do
+Valheim renomear um campo, a cidade perde o gramado aparado e nada mais.
+
+**A construção espera o chão existir.** O Valheim só tem terreno e física nas
+zonas dentro da área ativa de alguém, então instanciar numa zona não carregada
+gravaria as peças na altura que a gente *chutou* — e elas apareceriam
+flutuando ou enterradas. O `CityManager` verifica `OutsideActiveArea` e levanta
+a cidade na primeira vez que alguém chega perto, 40 peças por quadro para não
+travar o servidor.
+
+**Nomes de prefab são o risco real**, e o compilador não vê nenhum deles. Por
+isso nada é escrito direto: o `PieceCatalog` mapeia *papéis* (parede, telhado,
+paliçada) para uma **lista de candidatos**, e vence o primeiro que existir na
+build — a parede é `woodwall` e o piso é `wood_floor`, o que faz de um chute
+único cara ou coroa. Um papel que não resolve é registrado pelo nome no log e a
+peça some da cidade, em vez de derrubar tudo. E a suíte headless confere os três
+layouts peça por peça contra o `ZNetScene` antes de qualquer coisa ser
+construída.
+
+**Peças de cidade são indestrutíveis** via uma flag no ZDO, não no componente:
+valor de componente é reconstruído do prefab a cada recarga de zona, então
+proteção só em memória caducaria silenciosamente na primeira vez que o jogador
+se afastasse e voltasse. Os patches em `WearNTear.ApplyDamage` e
+`Piece.CanBeRemoved` leem o ZDO.
+
+**Trocar por uma cidade feita à mão**: exporte no PlanBuild e salve como
+`plugins/NpcValheim/cities/meadows.blueprint`. O `CityBlueprint` lê o formato
+texto do PlanBuild direto (`nome;categoria;pos;rot;info;escala`, separado por
+`;`), então **nem o servidor nem os clientes precisam do PlanBuild instalado** —
+e ele não está entre as 35 dependências do pack Deadheim. Os NPCs herdam as
+posições do layout gerado, para a cidade importada não nascer vazia.
+
+Nada disso vem de blueprint baixada: as cidades boas do Valheimians e do Nexus
+têm autor com nome, e redistribuir uma dentro do modpack precisaria da
+permissão de cada construtor. Gerar o layout mantém o mod autocontido.
+
+O banco (`cities.db`) é **por mundo**: o arquivo fica junto do plugin, não dentro
+do save, então sem essa chave um servidor que hospeda o mundo de produção e um
+mundo de teste construiria as coordenadas de um dentro do outro.
+
 ## Teleportador: rede de destinos
 
 Um teleportador guarda **vários destinos nomeados**, não um só. O admin fica onde

@@ -1,5 +1,6 @@
 using System.Linq;
 using System.Collections;
+using System.Collections.Generic;
 using UnityEngine;
 using NpcValheim.Npc;
 using NpcValheim.Persistence;
@@ -88,6 +89,12 @@ namespace NpcValheim.Testing
                 yield break;
             }
             Check("world and NPC prefabs become ready", true);
+
+            // Ahead of the player gate, unlike everything below it: the city checks spawn
+            // nothing and write to no database, they only read prefab names and do arithmetic.
+            // Putting them here means a bad prefab name is caught by starting a headless
+            // server and reading the log, with nobody having to connect and go look.
+            RunCityChecks();
 
             yield return WaitForFirstPlayer();
             if (ConnectedPlayers() == 0)
@@ -191,6 +198,166 @@ namespace NpcValheim.Testing
                 }
 
                 yield return null;
+            }
+        }
+
+        // ---------- cities ----------
+
+        /// <summary>
+        /// Checks the three cities without building one.
+        ///
+        /// The thing that can actually be wrong here is not the geometry -- it is the prefab
+        /// names, which are strings the compiler never sees. A wrong name does not throw; it
+        /// produces a town missing its walls, and nobody finds out until they walk 3 km to look
+        /// at it. So the assertions are: every role resolves, every generated piece names a
+        /// prefab this build has, and every biome has somewhere to put a city. All of it is
+        /// arithmetic and dictionary lookups, so the suite stays fast and leaves nothing
+        /// standing in the world.
+        /// </summary>
+        private void RunCityChecks()
+        {
+            var scene = ZNetScene.instance;
+            if (scene == null)
+            {
+                Check("city: ZNetScene available", false, "no scene, skipping the city checks");
+                return;
+            }
+
+            Cities.PieceCatalog.Reset();
+
+            var unresolved = new List<string>();
+            foreach (Cities.PieceRole role in System.Enum.GetValues(typeof(Cities.PieceRole)))
+                if (Cities.PieceCatalog.Name(role) == null) unresolved.Add(role.ToString());
+
+            Check("city: every building role resolves to a real prefab", unresolved.Count == 0,
+                unresolved.Count == 0 ? "" : "unresolved: " + string.Join(", ", unresolved));
+
+            var layouts = new (string Id, Cities.CityBlueprint Blueprint)[]
+            {
+                ("meadows", Cities.CityLayout.Meadows()),
+                ("swamp", Cities.CityLayout.Swamp()),
+                ("mountain", Cities.CityLayout.Mountain()),
+            };
+
+            foreach (var (id, blueprint) in layouts)
+            {
+                Check($"city {id}: generates pieces", blueprint.Pieces.Count > 0,
+                    $"{blueprint.Pieces.Count} pieces");
+
+                var missing = new HashSet<string>();
+                foreach (var piece in blueprint.Pieces)
+                    if (scene.GetPrefab(piece.Name) == null) missing.Add(piece.Name);
+
+                Check($"city {id}: every piece names a prefab in this build", missing.Count == 0,
+                    missing.Count == 0 ? "" : "missing: " + string.Join(", ", missing.Take(10)));
+
+                var missingNpcs = new List<string>();
+                foreach (var npc in blueprint.Npcs)
+                    if (scene.GetPrefab(npc.Name) == null) missingNpcs.Add(npc.Name);
+
+                Check($"city {id}: every staff NPC prefab exists", blueprint.Npcs.Count > 0 && missingNpcs.Count == 0,
+                    missingNpcs.Count == 0 ? $"{blueprint.Npcs.Count} NPCs" : "missing: " + string.Join(", ", missingNpcs));
+
+                Plugin.Log.LogInfo($"SERVER SELFTEST: city '{id}' = {blueprint.Pieces.Count} pieces, " +
+                    $"radius {blueprint.Radius:0}m, {blueprint.Npcs.Count} NPCs");
+            }
+
+            // The meadows city is meant to be the biggest of the three, and that is a claim
+            // the layout could quietly stop honouring after any tweak to the ring sizes.
+            Check("city: the meadows city is the largest",
+                layouts[0].Blueprint.Pieces.Count > layouts[1].Blueprint.Pieces.Count &&
+                layouts[0].Blueprint.Pieces.Count > layouts[2].Blueprint.Pieces.Count,
+                $"meadows {layouts[0].Blueprint.Pieces.Count}, swamp {layouts[1].Blueprint.Pieces.Count}, " +
+                $"mountain {layouts[2].Blueprint.Pieces.Count}");
+
+            RunBlueprintParserChecks();
+            RunCityDirectoryChecks();
+            RunCitySiteChecks();
+        }
+
+        /// <summary>Reads a blueprint the way PlanBuild writes one, including a broken line, so
+        /// the "skip the line, keep the file" behaviour is exercised rather than assumed.</summary>
+        private void RunBlueprintParserChecks()
+        {
+            const string text =
+                "#Name:Testtown\n" +
+                "#SnapPoints\n" +
+                "0;0;0\n" +
+                "#Pieces\n" +
+                "wood_floor;Building;1.5;2.5;3.5;0;0;0;1;{};1;1;1\n" +
+                "this line is broken\n" +
+                "woodwall;Building;-2;0;4;0;0.7071;0;0.7071;{};2;2;2\n";
+
+            var parsed = Cities.CityBlueprint.Parse(text, "fallback");
+
+            Check("city blueprint: reads the name header", parsed.Name == "Testtown", parsed.Name);
+            Check("city blueprint: keeps the good lines and drops the bad one", parsed.Pieces.Count == 2,
+                $"{parsed.Pieces.Count} pieces");
+
+            if (parsed.Pieces.Count != 2) return;
+
+            var first = parsed.Pieces[0];
+            Check("city blueprint: reads position", (first.Position - new UnityEngine.Vector3(1.5f, 2.5f, 3.5f)).magnitude < 0.001f,
+                first.Position.ToString());
+            Check("city blueprint: defaults scale when the line carries none or one",
+                (parsed.Pieces[1].Scale - new UnityEngine.Vector3(2f, 2f, 2f)).magnitude < 0.001f,
+                parsed.Pieces[1].Scale.ToString());
+            Check("city blueprint: ignores the snap point section", first.Name == "wood_floor", first.Name);
+        }
+
+        /// <summary>
+        /// Round-trips the city coordinates through the wire format.
+        ///
+        /// Worth a check of its own because the failure is silent and remote: a client that
+        /// mis-parses a coordinate does not error, it pins a town in the wrong place, and the
+        /// person who notices is a player who walked to an empty field. Decimals are the thing
+        /// being defended -- this runs on a machine whose culture writes "3,5", and a
+        /// culture-sensitive parse on either end would land the pin kilometres out.
+        /// </summary>
+        private void RunCityDirectoryChecks()
+        {
+            var records = new List<CityRecord>
+            {
+                new CityRecord { Id = "World:meadows", Name = "Fasthold", X = -3145.5f, Y = 32.25f, Z = -2830.75f },
+                new CityRecord { Id = "World:swamp", Name = "Myrhold", X = 4735f, Y = 30.5f, Z = -2480f },
+            };
+
+            var back = Cities.CityDirectory.Unpack(Cities.CityDirectory.Pack(records));
+
+            Check("city directory: every city survives the round trip", back.Count == 2, $"{back.Count} came back");
+            if (back.Count != 2) return;
+
+            Check("city directory: keeps the id and the name",
+                back[0].Id == "World:meadows" && back[0].Name == "Fasthold", $"{back[0].Id} / {back[0].Name}");
+            Check("city directory: keeps fractional coordinates exactly",
+                (back[0].Position - new UnityEngine.Vector3(-3145.5f, 32.25f, -2830.75f)).magnitude < 0.0001f,
+                back[0].Position.ToString());
+        }
+
+        /// <summary>Confirms this world can actually host all three cities. A seed with no flat
+        /// mountain is a real possibility, and the failure mode without this check is a city
+        /// that silently never exists.</summary>
+        private void RunCitySiteChecks()
+        {
+            if (WorldGenerator.instance == null || ZoneSystem.instance == null)
+            {
+                Check("city siting: world generator available", false, "not ready, skipping");
+                return;
+            }
+
+            var taken = new List<UnityEngine.Vector3>();
+            foreach (var pair in new[]
+                     {
+                         ("meadows", Heightmap.Biome.Meadows, 40f),
+                         ("swamp", Heightmap.Biome.Swamp, 16f),
+                         ("mountain", Heightmap.Biome.Mountain, 26f),
+                     })
+            {
+                bool found = Cities.CitySiteFinder.TryFind(pair.Item2, pair.Item3, 600f, taken, out var position);
+                if (found) taken.Add(position);
+
+                Check($"city siting: this world has room for the {pair.Item1} city", found,
+                    found ? $"({position.x:0}, {position.z:0})" : "no flat ground found in that biome");
             }
         }
 

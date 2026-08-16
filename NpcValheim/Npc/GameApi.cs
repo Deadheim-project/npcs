@@ -29,6 +29,39 @@ namespace NpcValheim.Npc
         private static FieldInfo _peerSocket;
         private static MethodInfo _socketGetHostName;
         private static MethodInfo _znetIsAdmin;
+        private static MethodInfo _routedGetServerPeerId;
+
+        /// <summary>
+        /// The peer id a host addresses its own server half with, or 0.
+        ///
+        /// Belongs here for the same reason as everything else in this file: calling
+        /// ZRoutedRpc.GetServerPeerID() directly compiles and then throws MethodAccessException
+        /// at runtime, because the publicizer used on this install did not cover it. That
+        /// failure is quiet in the worst way -- it only happens on the branch taken when you
+        /// ARE the server, so a feature can work perfectly against a dedicated server and be
+        /// dead in singleplayer, which is exactly what happened to the mail HUD and then to the
+        /// city directory.
+        ///
+        /// Zero is a safe fallback rather than a sentinel: it is already the correct target for
+        /// a client addressing the host, so a lookup that fails degrades to "talk to whoever is
+        /// in charge" instead of to nothing.
+        /// </summary>
+        public static long GetServerPeerId()
+        {
+            try
+            {
+                if (ZRoutedRpc.instance == null) return 0L;
+
+                _routedGetServerPeerId ??= typeof(ZRoutedRpc).GetMethod("GetServerPeerID", AnyInstance);
+                var value = _routedGetServerPeerId?.Invoke(ZRoutedRpc.instance, null);
+                return value is long id ? id : 0L;
+            }
+            catch (Exception e)
+            {
+                Plugin.Log.LogWarning($"NpcValheim: could not read the server peer id: {e.Message}");
+                return 0L;
+            }
+        }
 
         /// <summary>Display name of the player behind an RPC sender id, or "???".</summary>
         public static string GetPlayerName(long senderId)

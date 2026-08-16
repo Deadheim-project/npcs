@@ -107,8 +107,11 @@ namespace NpcValheim.UI
             if (Time.time >= _nextRefresh)
             {
                 _nextRefresh = Time.time + 3f;
+                // Target read through GameApi: the direct GetServerPeerID() call throws
+                // MethodAccessException at runtime on this install, so in a host/solo game the
+                // journal's refresh threw every three seconds and the list never filled.
                 if (ZRoutedRpc.instance != null)
-                    ZRoutedRpc.instance.InvokeRoutedRPC(ZRoutedRpc.instance.GetServerPeerID(),
+                    ZRoutedRpc.instance.InvokeRoutedRPC(Npc.GameApi.GetServerPeerId(),
                         RpcRequest, new object[0]);
             }
 

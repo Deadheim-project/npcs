@@ -142,8 +142,11 @@ namespace NpcValheim.UI
         /// </summary>
         private static long ServerRpcTarget()
         {
+            // Through GameApi, not directly: the direct call compiles and then throws
+            // MethodAccessException at runtime on this install, which silently killed the
+            // inbox in host/solo games while working fine against a dedicated server.
             if (ZNet.instance != null && ZNet.instance.IsServer())
-                return ZRoutedRpc.instance != null ? ZRoutedRpc.instance.GetServerPeerID() : 0L;
+                return Npc.GameApi.GetServerPeerId();
             return 0L;
         }
 
