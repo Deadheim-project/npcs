@@ -41,6 +41,7 @@ namespace NpcValheim
         internal static ConfigEntry<int> QuestTrackerMax;
         internal static ConfigEntry<float> QuestButtonX;
         internal static ConfigEntry<float> QuestButtonY;
+        internal static ConfigEntry<UnityEngine.KeyCode> MailHudKey;
 
         // Not synced -- purely a local dev toggle, flip it in the .cfg file before launching
         // to get an automated pass/fail report in LogOutput.log with zero manual interaction
@@ -101,6 +102,9 @@ namespace NpcValheim
             QuestButtonY = Config.Bind("Quests", "JournalButtonY", 260f,
                 "Distance in pixels from the top edge of the screen to the journal button. Raise it to clear another mod's bar.");
 
+            MailHudKey = Config.Bind("Mail", "HudKey", UnityEngine.KeyCode.P,
+                "Opens the mail inbox from the top-right stamp. Letters from players and houses land on that icon.");
+
             ListingDurationHours = Config.Bind("Marketplace", "ListingDurationHours", 48,
                 "How long a listing stays up before it expires and the unsold stock is mailed back to the seller.");
 
@@ -135,6 +139,10 @@ namespace NpcValheim
             QuestDatabase.Init(Path.Combine(Path.GetDirectoryName(dbPath)!, "quests.db"));
 
             UiRoot.EnsureCreated();
+            // Mail HUD RPCs must exist on a dedicated server too. The stamp UI itself is
+            // client-only (Update no-ops without a local player), but without this the
+            // client's P-key inbox stays empty while the mailbox piece still shows mail.
+            MailHud.EnsureCreated();
             if (!UnityEngine.Application.isBatchMode)
             {
                 Npc.WaypointMarker.EnsureCreated();

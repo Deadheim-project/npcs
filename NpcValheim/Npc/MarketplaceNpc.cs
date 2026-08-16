@@ -388,14 +388,30 @@ namespace NpcValheim.Npc
             Nview.InvokeRPC(target, "RPC_MarketData", PackMarketData(playerId));
         }
 
+        /// <summary>
+        /// Which board this NPC's listings belong to.
+        ///
+        /// An auction house answers with a single shared id, so every one of them in the world
+        /// shows the same listings -- the WoW model, and the only one that works: a per-NPC
+        /// board means a seller's stock is invisible to anyone standing at a different
+        /// auctioneer, which is the opposite of what a market is for. The first thing that
+        /// makes an auction house useful is that everyone is looking at the same one.
+        ///
+        /// A merchant keeps a board of its own, because its stock genuinely is its own.
+        /// </summary>
         private string NpcId
         {
             get
             {
+                if (HasAuction) return SharedAuctionBoard;
+
                 var zdoid = Nview.GetZDO().m_uid;
                 return zdoid.UserID + "_" + zdoid.ID;
             }
         }
+
+        /// <summary>The one board every auction house in the world reads and writes.</summary>
+        internal const string SharedAuctionBoard = "npcvalheim_auction_house";
 
         /// <summary>Player wants to buy `amount` units from `listingId`, having already paid.
         /// `packed` = "amount;paid".</summary>

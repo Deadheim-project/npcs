@@ -288,7 +288,7 @@ namespace NpcValheim.UI
         }
 
         public static TMP_InputField CreateInputField(Transform parent, string value, float width,
-            float height, int fontSize = 15)
+            float height, int fontSize = 15, bool multiline = false)
         {
             // Inactive while assembling, for the same reason CreateLabel is: TMP_InputField
             // resolves its font in Awake too.
@@ -311,9 +311,10 @@ namespace NpcValheim.UI
             Stretch(viewport, 8f, 4f);
             viewport.gameObject.AddComponent<RectMask2D>();
 
-            var text = CreateLabel(viewport, value ?? "", fontSize, Beige, TextAlignmentOptions.Left);
+            var text = CreateLabel(viewport, value ?? "", fontSize, Beige,
+                multiline ? TextAlignmentOptions.TopLeft : TextAlignmentOptions.Left);
             Stretch((RectTransform)text.transform, 0f, 0f);
-            text.textWrappingMode = TextWrappingModes.NoWrap;
+            text.textWrappingMode = multiline ? TextWrappingModes.Normal : TextWrappingModes.NoWrap;
 
             var field = rect.gameObject.AddComponent<TMP_InputField>();
             field.textViewport = viewport;
@@ -321,6 +322,9 @@ namespace NpcValheim.UI
             field.text = value ?? "";
             field.fontAsset = FontBody;
             field.pointSize = fontSize;
+            field.lineType = multiline
+                ? TMP_InputField.LineType.MultiLineNewline
+                : TMP_InputField.LineType.SingleLine;
             field.caretColor = Orange;
             field.selectionColor = new Color(1f, 0.631f, 0.235f, 0.35f);
 

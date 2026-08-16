@@ -190,6 +190,16 @@ namespace NpcValheim.Npc
 
         public string GetHoverName() => GetNpcName();
 
+        /// <summary>Fallback when the ZDO has no name yet (and for leftover "NPC" defaults).</summary>
+        protected virtual string DefaultNpcName => "NPC";
+
+        /// <summary>How high the floating name sits. Player-clone NPCs keep the default
+        /// (about head height); a mailbox is furniture and wants it just above the box.</summary>
+        public virtual float NameplateHeight => 2.15f;
+
+        /// <summary>The Appearance tab only makes sense on a Player body. A mailbox has none.</summary>
+        public virtual bool ShowsAppearanceTab => true;
+
         public virtual string GetHoverText() =>
             $"{GetNpcName()}\n[<color=yellow><b>E</b></color>] Abrir";
 
@@ -255,8 +265,11 @@ namespace NpcValheim.Npc
 
         protected string GetNpcName()
         {
-            if (Nview == null || !Nview.IsValid()) return "NPC";
-            return Nview.GetZDO().GetString(ZdoKeys.Name, "NPC");
+            if (Nview == null || !Nview.IsValid()) return DefaultNpcName;
+            var name = Nview.GetZDO().GetString(ZdoKeys.Name, "");
+            if (string.IsNullOrWhiteSpace(name) || name == "NPC")
+                return DefaultNpcName;
+            return name;
         }
 
         public void RequestSetName(Player requester, string name)
