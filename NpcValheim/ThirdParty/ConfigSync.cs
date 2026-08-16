@@ -33,10 +33,15 @@ public abstract class OwnConfigEntryBase
 }
 
 [PublicAPI]
-public class SyncedConfigEntry<T>(ConfigEntry<T> sourceConfig) : OwnConfigEntryBase
+public class SyncedConfigEntry<T> : OwnConfigEntryBase
 {
 	public override ConfigEntryBase BaseConfig => SourceConfig;
-	public readonly ConfigEntry<T> SourceConfig = sourceConfig;
+	public readonly ConfigEntry<T> SourceConfig;
+
+	public SyncedConfigEntry(ConfigEntry<T> sourceConfig)
+	{
+		SourceConfig = sourceConfig;
+	}
 
 	public T Value
 	{
@@ -758,12 +763,17 @@ public class ConfigSync
 	[HarmonyPatch(typeof(ZNet), "RPC_PeerInfo")]
 	private class SendConfigsAfterLogin
 	{
-		private class BufferingSocket(ISocket original) : ZPlayFabSocket, ISocket
+		private class BufferingSocket : ZPlayFabSocket, ISocket
 		{
 			public volatile bool finished = false;
 			public volatile int versionMatchQueued = -1;
 			public readonly List<ZPackage> Package = new();
-			public readonly ISocket Original = original;
+			public readonly ISocket Original;
+
+			public BufferingSocket(ISocket original)
+			{
+				Original = original;
+			}
 
 			public new bool IsConnected() => Original.IsConnected();
 			public new ZPackage Recv() => Original.Recv();

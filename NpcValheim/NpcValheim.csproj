@@ -109,11 +109,19 @@
          ships PublicAPI/UsedImplicitly in that same namespace, which ConfigSync.cs uses. -->
   </ItemGroup>
 
+  <ItemGroup>
+    <None Include="Assets\Mailbox\**\*" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
   <!-- Drop the built plugin straight into the game's plugin folder for quick in-game testing -->
   <Target Name="CopyToPlugins" AfterTargets="Build">
     <MakeDir Directories="$(BepInExPlugins)\NpcValheim" Condition="!Exists('$(BepInExPlugins)\NpcValheim')" />
+    <MakeDir Directories="$(BepInExPlugins)\NpcValheim\Assets\Mailbox" Condition="!Exists('$(BepInExPlugins)\NpcValheim\Assets\Mailbox')" />
     <Copy SourceFiles="$(TargetDir)$(AssemblyName).dll" DestinationFolder="$(BepInExPlugins)\NpcValheim" />
     <Copy SourceFiles="$(TargetDir)LiteDB.dll" DestinationFolder="$(BepInExPlugins)\NpcValheim" Condition="Exists('$(TargetDir)LiteDB.dll')" />
+    <Copy SourceFiles="$(ProjectDir)Assets\Mailbox\model.bin;$(ProjectDir)Assets\Mailbox\basecolor.png;$(ProjectDir)Assets\Mailbox\normal.png;$(ProjectDir)Assets\Mailbox\hud-icon.png;$(ProjectDir)Assets\Mailbox\Selo_Png.png;$(ProjectDir)Assets\Mailbox\Selo_Icon.png;$(ProjectDir)Assets\Mailbox\Selo_Icon.jpeg"
+          DestinationFolder="$(BepInExPlugins)\NpcValheim\Assets\Mailbox"
+          Condition="Exists('$(ProjectDir)Assets\Mailbox\model.bin')" />
     <!-- YamlDotNet de propósito não entra aqui: vem do modpack (ValheimModding-YamlDotNet). -->
   </Target>
 

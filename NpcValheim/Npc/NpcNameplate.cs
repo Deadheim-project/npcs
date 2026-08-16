@@ -64,7 +64,8 @@ namespace NpcValheim.Npc
             // Keep the plate the same size on screen no matter what scale the admin gave the
             // body -- a 2x NPC should not get 2x lettering.
             float bodyScale = Mathf.Max(0.01f, transform.localScale.y);
-            _root.position = transform.position + Vector3.up * (HeadHeight * bodyScale);
+            float height = _npc != null ? _npc.NameplateHeight : HeadHeight;
+            _root.position = transform.position + Vector3.up * (height * bodyScale);
             _root.rotation = camera.transform.rotation;
 
             // WorldScale is in world units per canvas unit. The canvas is 600 units wide, so
