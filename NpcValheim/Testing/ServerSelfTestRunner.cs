@@ -378,7 +378,14 @@ namespace NpcValheim.Testing
         /// </summary>
         private IEnumerator RunAnchorChecks(GameObject prefab)
         {
-            var start = new Vector3(64f, 45f, 64f);
+            // Next to the player when there is one. Spawning at a fixed far-away coordinate
+            // works headless but not in a live game: that zone is not loaded, so the game
+            // destroys the object mid-test and the next line reading its transform throws.
+            var player = Player.m_localPlayer;
+            var start = player != null
+                ? player.transform.position + Vector3.up * 12f
+                : new Vector3(64f, 45f, 64f);
+
             GameObject npcGo = null;
             try
             {
@@ -391,9 +398,13 @@ namespace NpcValheim.Testing
                 Check("the NPC has a body to anchor", body != null);
                 if (body == null) yield break;
 
-                Check("that body is kinematic", body.isKinematic);
-                Check("and frozen on every axis",
+                // Frozen, not kinematic: a kinematic Character breaks the game's own grounding
+                // code and makes Unity warn on every velocity write -- 83,709 log lines in one
+                // session. Constraints stop the movement without stopping the simulation.
+                Check("the body is frozen on every axis",
                     body.constraints == RigidbodyConstraints.FreezeAll, $"got {body.constraints}");
+                Check("and stays a normal simulated body",
+                    !body.isKinematic, "kinematic breaks Character grounding");
 
                 var before = npcGo.transform.position;
 
@@ -405,6 +416,16 @@ namespace NpcValheim.Testing
                 float deadline = Time.realtimeSinceStartup + 2f;
                 while (Time.realtimeSinceStartup < deadline) yield return null;
 
+                // The world can take the object away underneath us (unloaded zone, a cleanup
+                // pass). Say so instead of dereferencing a destroyed object -- an NRE here
+                // kills the coroutine and every check queued behind it.
+                if (npcGo == null)
+                {
+                    Check("the test NPC survives long enough to be measured", false,
+                        "the game destroyed it mid-check");
+                    yield break;
+                }
+
                 float moved = Vector3.Distance(npcGo.transform.position, before);
                 Check("the NPC does not drift once placed", moved < 0.05f, $"moved {moved:0.000}m");
                 Check("and gravity does not pull it down",
@@ -414,7 +435,7 @@ namespace NpcValheim.Testing
                 // The flags are what other bodies actually consult when they hit it, so they
                 // are the mechanism behind "the player can't shove him".
                 Check("a colliding body cannot move it",
-                    body.isKinematic && body.constraints == RigidbodyConstraints.FreezeAll);
+                    body.constraints == RigidbodyConstraints.FreezeAll);
             }
             finally
             {

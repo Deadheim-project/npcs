@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using LiteDB;
@@ -31,21 +31,23 @@ namespace NpcValheim.Persistence
     /// </summary>
     public static class MailDatabase
     {
-        private static LiteDatabase _db;
-
-        private static ILiteCollection<MailEntry> Mail => _db.GetCollection<MailEntry>("mail");
+        // One connection per operation -- see LiteDbFile for why holding one open is what
+        // broke quest progress.
+        private static LiteDbFile _file;
 
         public static void Init(string path)
         {
-            _db = new LiteDatabase(path);
-            Mail.EnsureIndex(x => x.PlayerId);
+            _file = new LiteDbFile(path);
+            _file.Write(db => db.GetCollection<MailEntry>("mail").EnsureIndex(x => x.PlayerId));
         }
 
-        public static void Shutdown()
-        {
-            _db?.Dispose();
-            _db = null;
-        }
+        public static void Shutdown() => _file = null;
+
+        private static T Read<T>(System.Func<ILiteCollection<MailEntry>, T> body) =>
+            _file.Read(db => body(db.GetCollection<MailEntry>("mail")));
+
+        private static void Write(System.Action<ILiteCollection<MailEntry>> body) =>
+            _file.Write(db => body(db.GetCollection<MailEntry>("mail")));
 
         public static MailEntry SendItem(long playerId, string subject, string itemName, int quality, int amount)
         {
@@ -61,7 +63,7 @@ namespace NpcValheim.Persistence
                 Coins = 0,
                 CreatedUtc = DateTime.UtcNow,
             };
-            Mail.Insert(entry);
+            Write(mail => mail.Insert(entry));
             return entry;
         }
 
@@ -79,24 +81,25 @@ namespace NpcValheim.Persistence
                 Coins = coins,
                 CreatedUtc = DateTime.UtcNow,
             };
-            Mail.Insert(entry);
+            Write(mail => mail.Insert(entry));
             return entry;
         }
 
         public static List<MailEntry> GetMail(long playerId) =>
-            Mail.Find(x => x.PlayerId == playerId).OrderBy(x => x.CreatedUtc).ToList();
+            Read(mail => mail.Find(x => x.PlayerId == playerId).OrderBy(x => x.CreatedUtc).ToList());
 
-        public static int CountMail(long playerId) => Mail.Count(x => x.PlayerId == playerId);
+        public static int CountMail(long playerId) => Read(mail => mail.Count(x => x.PlayerId == playerId));
 
         /// <summary>Removes and returns one parcel, but only for its rightful recipient --
         /// the id check is what stops a client asking for someone else's mail by guessing an
         /// id. Returns null if it isn't theirs or is already gone.</summary>
         public static MailEntry Claim(string mailId, long playerId)
         {
-            var entry = Mail.FindById(mailId);
+            var entry = Read(mail => mail.FindById(mailId));
             if (entry == null || entry.PlayerId != playerId) return null;
-            Mail.Delete(mailId);
+            Write(mail => mail.Delete(mailId));
             return entry;
         }
     }
 }
+

@@ -14,6 +14,16 @@ namespace NpcValheim.Persistence
     {
         public string Name { get; set; } = "NPC";
 
+        /// <summary>
+        /// Which kind of NPC this profile was made for -- "Marketplace", "Auction",
+        /// "Teleporter", "Mailbox", "QuestGiver", or empty for one that suits any of them.
+        ///
+        /// Without it the admin panel offered every saved template to every NPC, so applying
+        /// a travel network to a merchant was one wrong click away. A look can be shared; a
+        /// merchant's price list on a teleporter is nonsense.
+        /// </summary>
+        public string ForType { get; set; } = "";
+
         /// <summary>Slot name (ArmorSlot.ToString()) -> item prefab name. Missing/empty means
         /// nothing equipped in that slot.</summary>
         public Dictionary<string, string> Armor { get; set; } = new Dictionary<string, string>();
@@ -36,6 +46,22 @@ namespace NpcValheim.Persistence
         // marketplace noise and vice versa.
         public TeleporterSettings Teleporter { get; set; }
         public MarketplaceSettings Marketplace { get; set; }
+        public QuestGiverSettings QuestGiver { get; set; }
+    }
+
+    /// <summary>
+    /// Which quests one quest giver offers.
+    ///
+    /// Every giver used to offer every quest in the folder, so two NPCs standing in different
+    /// villages were interchangeable. Putting the list in the profile makes a giver a
+    /// character with something of their own to ask for -- and because it lives in the
+    /// profile, that whole set is saved and re-applied as one reusable template.
+    /// </summary>
+    public class QuestGiverSettings
+    {
+        /// <summary>Quest ids (the yaml file names). An empty list means "everything in the
+        /// folder", which is what an NPC does before anyone has configured it.</summary>
+        public List<string> Quests { get; set; } = new List<string>();
     }
 
     public class RgbColor

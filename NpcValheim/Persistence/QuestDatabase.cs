@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using LiteDB;
@@ -54,27 +54,29 @@ namespace NpcValheim.Persistence
     /// </summary>
     public static class QuestDatabase
     {
-        private static LiteDatabase _db;
-
-        private static ILiteCollection<QuestProgress> Progress => _db.GetCollection<QuestProgress>("quests");
+        private static LiteDbFile _file;
 
         public static void Init(string path)
         {
-            _db = new LiteDatabase(path);
-            Progress.EnsureIndex(x => x.PlayerId);
+            _file = new LiteDbFile(path);
+            _file.Write(db => db.GetCollection<QuestProgress>("quests").EnsureIndex(x => x.PlayerId));
         }
 
-        public static void Shutdown()
-        {
-            _db?.Dispose();
-            _db = null;
-        }
+        /// <summary>Nothing to close: every operation opens and closes its own connection.
+        /// Kept so the plugin's shutdown path stays symmetrical with Init.</summary>
+        public static void Shutdown() => _file = null;
+
+        private static T Read<T>(Func<ILiteCollection<QuestProgress>, T> body) =>
+            _file.Read(db => body(db.GetCollection<QuestProgress>("quests")));
+
+        private static void Write(Action<ILiteCollection<QuestProgress>> body) =>
+            _file.Write(db => body(db.GetCollection<QuestProgress>("quests")));
 
         public static QuestProgress Get(long playerId, string questId) =>
-            Progress.FindById(QuestProgress.MakeKey(playerId, questId));
+            Read(quests => quests.FindById(QuestProgress.MakeKey(playerId, questId)));
 
         public static List<QuestProgress> GetAll(long playerId) =>
-            Progress.Find(x => x.PlayerId == playerId).ToList();
+            Read(quests => quests.Find(x => x.PlayerId == playerId).ToList());
 
         public static QuestStatus GetStatus(long playerId, string questId) =>
             Get(playerId, questId)?.Status ?? QuestStatus.NotStarted;
@@ -98,7 +100,7 @@ namespace NpcValheim.Persistence
             entry.Status = QuestStatus.NotStarted;
             entry.Counter = 0;
             entry.UpdatedUtc = DateTime.UtcNow;
-            Progress.Update(entry);
+            Write(quests => quests.Update(entry));
             return QuestStatus.NotStarted;
         }
 
@@ -108,7 +110,7 @@ namespace NpcValheim.Persistence
         internal static void SaveForSelfTest(QuestProgress entry)
         {
             if (Plugin.EnableSelfTest?.Value != true || entry == null) return;
-            Progress.Update(entry);
+            Write(quests => quests.Update(entry));
         }
 
         /// <summary>How long until a timed quest comes back, or zero when it is available or
@@ -138,7 +140,7 @@ namespace NpcValheim.Persistence
                 Status = QuestStatus.Active,
                 UpdatedUtc = DateTime.UtcNow,
             };
-            Progress.Upsert(entry);
+            Write(quests => quests.Upsert(entry));
             return entry;
         }
 
@@ -151,7 +153,7 @@ namespace NpcValheim.Persistence
 
             entry.Counter = Math.Min(goal, entry.Counter + Math.Max(0, delta));
             entry.UpdatedUtc = DateTime.UtcNow;
-            Progress.Update(entry);
+            Write(quests => quests.Update(entry));
             return entry.Counter;
         }
 
@@ -170,7 +172,7 @@ namespace NpcValheim.Persistence
             // A repeatable quest goes back on offer, but the record is kept rather than
             // deleted so its completion still counts towards anything chained off it.
             entry.Status = repeatable ? QuestStatus.NotStarted : QuestStatus.Completed;
-            Progress.Update(entry);
+            Write(quests => quests.Update(entry));
         }
 
         /// <summary>True once this player has handed the quest in at least once. Accepts a
@@ -182,26 +184,54 @@ namespace NpcValheim.Persistence
             return entry != null && (entry.TimesCompleted > 0 || entry.Status == QuestStatus.Completed);
         }
 
-        /// <summary>Which of a quest's prerequisites this player still owes.</summary>
+        /// <summary>Which of a quest's prerequisites are still unmet -- earlier quests this
+        /// player has not finished, and world progress that has not happened yet.</summary>
         public static List<string> MissingPrerequisites(long playerId, QuestDefinition quest)
         {
             var missing = new List<string>();
-            if (quest?.RequiresQuests == null) return missing;
+            if (quest == null) return missing;
 
-            foreach (var requiredId in quest.RequiresQuests)
+            foreach (var requiredId in quest.RequiresQuests ?? new List<string>())
             {
                 if (string.IsNullOrEmpty(requiredId) || HasEverCompleted(playerId, requiredId)) continue;
                 var required = QuestStore.Get(requiredId);
                 missing.Add(required != null ? required.Name : requiredId);
             }
+
+            foreach (var key in quest.RequiresGlobalKeys ?? new List<string>())
+            {
+                if (string.IsNullOrEmpty(key)) continue;
+                if (ZoneSystem.instance != null && ZoneSystem.instance.GetGlobalKey(key)) continue;
+                missing.Add(DescribeGlobalKey(key));
+            }
+
             return missing;
+        }
+
+        /// <summary>Turns a global key into something a player would recognise. Unknown keys
+        /// are shown as they are rather than hidden, so a typo in a quest yaml is visible
+        /// instead of silently locking the quest forever.</summary>
+        private static string DescribeGlobalKey(string key)
+        {
+            switch (key.ToLowerInvariant())
+            {
+                case "defeated_eikthyr": return "derrotar Eikthyr";
+                case "defeated_gdking": return "derrotar o Ancião";
+                case "defeated_bonemass": return "derrotar Bonemass";
+                case "defeated_dragon": return "derrotar Moder";
+                case "defeated_goblinking": return "derrotar Yagluth";
+                case "defeated_queen": return "derrotar a Rainha";
+                case "defeated_fader": return "derrotar Fader";
+                default: return key;
+            }
         }
 
         public static void Abandon(long playerId, string questId)
         {
             var entry = Get(playerId, questId);
             if (entry != null && entry.Status == QuestStatus.Active)
-                Progress.Delete(entry.Key);
+                Write(quests => quests.Delete(entry.Key));
         }
     }
 }
+

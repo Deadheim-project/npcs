@@ -31,6 +31,15 @@ namespace NpcValheim.UI
         public static readonly Color Orange = new Color(1f, 0.631f, 0.235f, 1f);
         public static readonly Color Beige = new Color(0.8529f, 0.725f, 0.5331f, 1f);
         public static readonly Color Yellow = new Color(1f, 0.889f, 0f, 1f);
+
+        /// <summary>The gold an MMO marks a quest with -- WoW's #FFD100. Bright enough to
+        /// carry an outline at distance, which the mod's orange was not.</summary>
+        public static readonly Color QuestGold = new Color(1f, 0.82f, 0f, 1f);
+
+        /// <summary>Blue for a quest that comes back on a timer, grey for one that is here but
+        /// not yet takeable. Same meanings the same colours carry in WoW.</summary>
+        public static readonly Color QuestBlue = new Color(0.2f, 0.73f, 1f, 1f);
+        public static readonly Color QuestLocked = new Color(0.58f, 0.56f, 0.53f, 1f);
         public static readonly Color Muted = new Color(0.62f, 0.58f, 0.50f, 1f);
         public static readonly Color Danger = new Color(0.93f, 0.42f, 0.34f, 1f);
 

@@ -41,6 +41,12 @@
       <HintPath>$(ValheimManaged)\assembly_guiutils.dll</HintPath>
       <Private>false</Private>
     </Reference>
+    <!-- Minimap.AddPin's signature mentions PlatformUserID, which lives here. Needed to
+         reference the type even though the mod never names it. -->
+    <Reference Include="Splatform">
+      <HintPath>$(ValheimManaged)\Splatform.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
 
     <!-- Unity engine modules used by NPC / UI / interaction code -->
     <Reference Include="UnityEngine">

@@ -93,21 +93,89 @@ namespace NpcValheim.Npc
         ///
         /// It is a Player clone, so it arrives with the player's dynamic Rigidbody: walking
         /// into a shopkeeper shoved him across the square, and over a session an NPC could
-        /// drift far from where the admin put him. A kinematic body still blocks the player
-        /// exactly like a solid object -- what it stops doing is *reacting* to being hit.
+        /// drift far from where the admin put him.
         ///
-        /// FreezeAll on top of that is not redundant: isKinematic is what other bodies
-        /// respect, the constraints are what survives anything that flips it back.
+        /// Constraints only -- deliberately NOT isKinematic. Making it kinematic looked
+        /// right and was wrong twice over: Character writes velocity every physics step, and
+        /// Unity refuses that on a kinematic body, so it logged a warning per NPC per step.
+        /// Measured at 83,709 lines in one session, 99.5% of the whole log. Worse, a
+        /// kinematic Character breaks the game's own grounding code, which is why a
+        /// freshly-placed NPC came out unusable.
+        ///
+        /// A frozen dynamic body keeps all of that working: the engine still simulates and
+        /// still lets Character write to it, the constraints just discard the resulting
+        /// motion. Being pushed is what stops; being a Character does not.
         /// </summary>
         private void Anchor()
         {
-            var body = GetComponent<Rigidbody>();
-            if (body == null) return;
+            if (GetComponent<Rigidbody>() == null) return;
+            StartCoroutine(FreezeOnceSettled());
+        }
 
-            body.isKinematic = true;
+        /// <summary>
+        /// Puts the NPC on the ground and pins it there.
+        ///
+        /// It cannot be left to fall on its own. Valheim's Character turns Rigidbody gravity
+        /// off and applies its own inside the update methods -- and those are exactly the
+        /// methods this mod skips for NPCs, because they also drive input and camera. The
+        /// result is an NPC with no gravity from either source: it hangs wherever it was
+        /// created, never reaches the ground, and never reports itself as grounded. That is
+        /// the "NPCs are flying" report, and waiting for physics to settle could never have
+        /// fixed it.
+        ///
+        /// So the ground is looked up rather than fallen to.
+        /// </summary>
+        private System.Collections.IEnumerator FreezeOnceSettled()
+        {
+            // A frame first: the zone this NPC sits in may still be loading, and terrain that
+            // does not exist yet cannot be measured.
+            yield return null;
+
+            var body = GetComponent<Rigidbody>();
+            var character = GetComponent<Character>();
+            if (body == null) yield break;
+
+            var before = transform.position;
+            if (TryFindGround(before, out float groundY))
+                transform.position = new Vector3(before.x, groundY, before.z);
+
             body.constraints = RigidbodyConstraints.FreezeAll;
-            body.velocity = Vector3.zero;
-            body.angularVelocity = Vector3.zero;
+
+            Plugin.Log.LogInfo($"NpcValheim: '{GetNpcName()}' anchored y {before.y:0.00} -> " +
+                               $"{transform.position.y:0.00} (gravity={body.useGravity} " +
+                               $"grounded={character?.IsOnGround()})");
+        }
+
+        /// <summary>
+        /// Surface height under a point, or false when it cannot be determined.
+        ///
+        /// Asks the game's own terrain first -- that is authoritative and works even where
+        /// nothing has a collider yet -- and falls back to a downward ray so an NPC placed on
+        /// a floor, a roof or a ship still lands on it rather than sinking to the terrain
+        /// underneath. Casting from well above the feet, because a ray started inside the
+        /// ground reports nothing.
+        /// </summary>
+        private static bool TryFindGround(Vector3 position, out float groundY)
+        {
+            groundY = position.y;
+            bool found = false;
+
+            if (ZoneSystem.instance != null &&
+                ZoneSystem.instance.GetSolidHeight(position, out float terrain) && terrain > -1000f)
+            {
+                groundY = terrain;
+                found = true;
+            }
+
+            int solid = LayerMask.GetMask("terrain", "static_solid", "Default", "piece", "vehicle");
+            if (Physics.Raycast(position + Vector3.up * 3f, Vector3.down, out var hit, 20f, solid))
+            {
+                // Whichever surface is higher is the one being stood on.
+                if (!found || hit.point.y > groundY) groundY = hit.point.y;
+                found = true;
+            }
+
+            return found;
         }
 
         private void Update()
@@ -136,6 +204,10 @@ namespace NpcValheim.Npc
             if (Nview == null || !Nview.IsValid()) return false;
 
             PanelOpenRequested = true;
+
+            // Talking to somebody is a quest objective in its own right ("take word to the
+            // smith"), and opening their panel is what talking to them means here.
+            QuestGiverNpc.AnyLoaded()?.ReportTalk(GetNpcName());
             return true;
         }
 
@@ -523,12 +595,27 @@ namespace NpcValheim.Npc
         /// <summary>Snapshot of everything about this NPC, in the shape saved to
         /// npcs/instances/&lt;id&gt;.yaml and npcs/templates/&lt;name&gt;.yaml. Override to add
         /// type-specific settings (see TeleporterNpc/MarketplaceNpc), calling base first.</summary>
+        /// <summary>
+        /// The key a template is filed under, so a saved preset is only ever offered to the
+        /// kind of NPC it came from. Derived from the class name rather than declared per
+        /// type: a new NPC type gets the right key without anyone remembering to add one.
+        /// </summary>
+        public string ProfileType
+        {
+            get
+            {
+                var name = GetType().Name;                     // e.g. "MarketplaceNpc"
+                return name.EndsWith("Npc") ? name.Substring(0, name.Length - 3) : name;
+            }
+        }
+
         public virtual NpcProfile BuildProfile()
         {
             var zdo = Nview.GetZDO();
             var profile = new NpcProfile
             {
                 Name = GetNpcName(),
+                ForType = ProfileType,
                 Hair = zdo.GetString(ZdoKeys.Hair, ""),
                 Beard = zdo.GetString(ZdoKeys.Beard, ""),
                 Model = zdo.GetInt(ZdoKeys.Model, 0),

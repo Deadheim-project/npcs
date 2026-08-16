@@ -92,22 +92,39 @@ namespace NpcValheim.Npc
 
             PollQuestsOccasionally();
 
+            // Marker semantics lifted from WoW, because they are already in everyone's hands:
+            //   ?  yellow  -- finished, go and hand it in
+            //   !  orange  -- available now
+            //   !  blue    -- available and repeats on a timer (their daily blue)
+            //   !  grey    -- exists here, but something is still in the way
+            // Priority runs top to bottom, so the marker always shows the most actionable
+            // thing this NPC has for you rather than whichever quest happened to be first.
             string glyph = null;
-            Color color = ValheimUi.Yellow;
+            Color color = ValheimUi.QuestGold;
+            int rank = 0;   // higher wins
 
             foreach (var quest in _questGiver.CachedQuests)
             {
-                // Ready-to-hand-in wins: it is the one that actually pays out.
                 if (QuestGiverNpc.CanCompleteNow(quest, Player.m_localPlayer))
                 {
                     glyph = "?";
-                    color = ValheimUi.Yellow;
-                    break;
+                    color = ValheimUi.QuestGold;
+                    break;                      // nothing outranks a payout
                 }
-                if (quest.Status == QuestStatus.NotStarted && !quest.Locked)
+
+                if (quest.Status == QuestStatus.NotStarted && !quest.Locked && rank < 3)
                 {
                     glyph = "!";
-                    color = ValheimUi.Orange;
+                    color = quest.Repeats ? ValheimUi.QuestBlue : ValheimUi.QuestGold;
+                    rank = 3;
+                }
+                else if (quest.Status == QuestStatus.NotStarted && quest.Locked && rank < 1)
+                {
+                    // Shown rather than hidden: "there is something here, come back later" is
+                    // information, and an NPC with no marker at all reads as having nothing.
+                    glyph = "!";
+                    color = ValheimUi.QuestLocked;
+                    rank = 1;
                 }
             }
 
@@ -160,12 +177,16 @@ namespace NpcValheim.Npc
             nameRect.anchoredPosition = Vector2.zero;
             AddOutline(_name);
 
-            _marker = ValheimUi.CreateLabel(rect, "!", 54, ValheimUi.Orange,
+            // Big and gold, the way an MMO marks a quest. The old 54pt orange glyph read as a
+            // dark speck from any distance -- and a marker you have to look for is a marker
+            // that is not doing its job.
+            _marker = ValheimUi.CreateLabel(rect, "!", 90, ValheimUi.QuestGold,
                 TextAlignmentOptions.Center, display: true);
+            _marker.fontStyle = FontStyles.Bold;
             var markerRect = (RectTransform)_marker.transform;
             markerRect.anchorMin = markerRect.anchorMax = new Vector2(0.5f, 0.5f);
-            markerRect.sizeDelta = new Vector2(120f, 80f);
-            AddOutline(_marker);
+            markerRect.sizeDelta = new Vector2(160f, 120f);
+            AddOutline(_marker, 0.35f);
             _marker.gameObject.SetActive(false);
 
             _root = go.transform;
@@ -174,11 +195,14 @@ namespace NpcValheim.Npc
 
         /// <summary>Names float over grass, snow and night sky in turn; without an outline
         /// they vanish against half of them.</summary>
-        private static void AddOutline(TextMeshProUGUI label)
+        /// <summary>A black outline so the glyph survives being drawn over snow, sky or fire.
+        /// The marker asks for a thicker one than the name does -- it is meant to be read at a
+        /// distance where the name is not.</summary>
+        private static void AddOutline(TextMeshProUGUI label, float width = 0.14f)
         {
             label.fontMaterial.EnableKeyword("OUTLINE_ON");
             label.outlineColor = new Color32(0, 0, 0, 255);
-            label.outlineWidth = 0.14f;
+            label.outlineWidth = width;
         }
 
         private void OnDestroy()

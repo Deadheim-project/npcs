@@ -6,8 +6,29 @@ namespace NpcValheim.Persistence
     {
         /// <summary>Kill N creatures whose prefab name matches Target.</summary>
         Kill,
-        /// <summary>Hand over N of the item prefab named in Target.</summary>
+
+        /// <summary>Hand over N of the item prefab named in Target. Checked against the bag at
+        /// hand-in, so buying the items is as valid as finding them.</summary>
         Collect,
+
+        /// <summary>
+        /// Pick up N of the item prefab named in Target, counted as they are picked up.
+        ///
+        /// Different from Collect on purpose: this one asks the player to actually go and
+        /// gather, and the counter only moves for items that pass through their hands. Buying
+        /// a stack from the merchant satisfies a Collect and does nothing for a Gather.
+        /// </summary>
+        Gather,
+
+        /// <summary>Speak to the NPC whose name is in Target. The errand-running objective:
+        /// "take this word to the smith".</summary>
+        Talk,
+
+        /// <summary>
+        /// Reach a place. Target is "x,z" and Amount is the radius in metres the player has to
+        /// come within -- so a vague "explore the swamp" becomes something the game can check.
+        /// </summary>
+        Explore,
     }
 
     /// <summary>
@@ -31,10 +52,23 @@ namespace NpcValheim.Persistence
         public int RequiredLevel { get; set; } = 0;
         public bool Repeatable { get; set; } = false;
 
-        /// <summary>Hours before a finished quest is offered again. 24 makes it a daily, 168
-        /// a weekly, 0 leaves it one-and-done. Measured from the moment it was handed in, not
-        /// from midnight, so it behaves the same on every server's clock and timezone.</summary>
+        /// <summary>Cooldown: hours before a finished quest is offered again. 24 makes it a
+        /// daily, 168 a weekly, 0 leaves it one-and-done. Measured from the moment it was
+        /// handed in, not from midnight, so it behaves the same on every server's clock and
+        /// timezone.</summary>
         public int ResetHours { get; set; } = 0;
+
+        /// <summary>
+        /// World progress this quest waits for, as Valheim's own global keys -- most usefully
+        /// the boss defeats: `defeated_eikthyr`, `defeated_gdking`, `defeated_bonemass`,
+        /// `defeated_dragon`, `defeated_goblinking`, `defeated_queen`, `defeated_fader`.
+        ///
+        /// Separate from RequiresQuests because it asks a different question: that one is
+        /// "have you done this errand", this is "has the world moved on". A quest that only
+        /// makes sense after the Elder falls should not be visible before he does, no matter
+        /// what else the player has finished.
+        /// </summary>
+        public List<string> RequiresGlobalKeys { get; set; } = new List<string>();
 
         /// <summary>Ids of quests that must be finished before this one is offered. This is
         /// what turns a folder of quests into a storyline: the second chapter simply lists

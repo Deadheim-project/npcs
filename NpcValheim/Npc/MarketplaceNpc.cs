@@ -101,6 +101,7 @@ namespace NpcValheim.Npc
             Nview.Register("RPC_SetPrice", (Action<long, string, int>)RPC_SetPrice);
             Nview.Register("RPC_BuyFromNpc", (Action<long, string, string>)RPC_BuyFromNpc);
             Nview.Register("RPC_Paid", (Action<long, int, string>)RPC_Paid);
+            Nview.Register("RPC_DeliverItem", (Action<long, string, int>)RPC_DeliverItem);
         }
 
         // ---- the merchant's own shop: two price lists, both admin-defined ----
@@ -211,8 +212,10 @@ namespace NpcValheim.Npc
                 return;
             }
 
-            ItemSpawner.TrySpawn(itemName, amount, 1,
-                transform.position + Vector3.up + UnityEngine.Random.insideUnitSphere * 0.5f);
+            // Handed to the buyer rather than dropped at the merchant's feet. Goods on the
+            // ground are goods somebody else can pick up, and they are easy to walk away from
+            // without noticing.
+            Nview.InvokeRPC(sender, "RPC_DeliverItem", itemName, amount);
 
             // Overpayment happens honestly: an admin can change the price between the client
             // reading it and this running.
@@ -230,6 +233,32 @@ namespace NpcValheim.Npc
             if (amount <= 0) return;
             Plugin.Log.LogInfo($"NpcValheim: refunding {amount} to {playerId} ({reason})");
             Nview.InvokeRPC(sender, "RPC_Paid", amount, reason);
+        }
+
+        /// <summary>
+        /// Client side: goods bought from the merchant, delivered into the bag.
+        ///
+        /// Run on the buyer's own machine because that is the only place their inventory can
+        /// be written -- the server cannot reach into a remote one. If the bag is full the
+        /// stack goes on the ground at the player's feet rather than being destroyed, and they
+        /// are told, which is the same rule the game itself uses.
+        /// </summary>
+        private void RPC_DeliverItem(long sender, string itemName, int amount)
+        {
+            var player = Player.m_localPlayer;
+            if (player == null || amount <= 0) return;
+
+            if (player.GetInventory().AddItem(itemName, amount, 1, 0, 0L, "") != null)
+            {
+                player.Message(MessageHud.MessageType.TopLeft,
+                    $"Recebido: {amount}x {ItemNames.Display(itemName)}", amount, null);
+                return;
+            }
+
+            ItemSpawner.TrySpawn(itemName, amount, 1,
+                player.transform.position + Vector3.up + UnityEngine.Random.insideUnitSphere * 0.5f);
+            player.Message(MessageHud.MessageType.Center,
+                $"Inventário cheio: {amount}x {ItemNames.Display(itemName)} caiu no chão", 0, null);
         }
 
         /// <summary>Client side: money owed to me has arrived. Either change from a refused

@@ -107,6 +107,28 @@ namespace NpcValheim.Persistence
 
         public static List<string> ListTemplates() => ListNames(TemplatesDir);
 
+        /// <summary>
+        /// Templates that suit a given kind of NPC: the ones saved from that kind, plus any
+        /// that declare no kind at all (a plain look, applicable to anybody).
+        ///
+        /// Reading every file to filter is fine here -- this runs when an admin opens a panel,
+        /// over a folder holding a handful of presets.
+        /// </summary>
+        public static List<string> ListTemplatesFor(string npcType)
+        {
+            var result = new List<string>();
+            foreach (var name in ListNames(TemplatesDir))
+            {
+                var profile = LoadTemplate(name);
+                if (profile == null) continue;
+
+                if (string.IsNullOrEmpty(profile.ForType) ||
+                    string.Equals(profile.ForType, npcType, System.StringComparison.OrdinalIgnoreCase))
+                    result.Add(name);
+            }
+            return result;
+        }
+
         /// <summary>Writes the mirror, renaming the file when the NPC has been renamed so the
         /// folder keeps telling the truth instead of accumulating stale names.</summary>
         public static void SaveInstance(string profileId, NpcProfile profile)
