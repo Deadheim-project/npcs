@@ -655,3 +655,7 @@ Ver plano completo em `C:\Users\Werner\.claude\plans\glowing-purring-reddy.md`.
 jogadores do servidor instalam uma vez e usam pra baixar/atualizar mods
 (inclusive o `NpcValheim` acima) e gerenciar perfis. Ver
 [DeadheimLauncher/README.md](DeadheimLauncher/README.md).
+
+---
+
+Desenvolvido com auxílio do Claude (Anthropic).

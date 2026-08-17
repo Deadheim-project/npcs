@@ -77,7 +77,6 @@ namespace NpcValheim.UI
                 : unread > 0
                     ? $"Correio — {mailbox.CachedMail.Count}  ·  {unread} nova(s)"
                     : $"Correio — {mailbox.CachedMail.Count} item(ns)";
-            MailHud.MirrorMailbox(mailbox);
         }
 
         private void Rebuild(MailboxNpc mailbox)
@@ -154,7 +153,6 @@ namespace NpcValheim.UI
             {
                 entry.Read = true;
                 mailbox.RequestMarkRead(mailId);
-                MailHud.MirrorMailbox(mailbox);
                 _signature = null;
             }
 
@@ -295,7 +293,6 @@ namespace NpcValheim.UI
             send.onClick.AddListener(() =>
             {
                 Mailbox.RequestSend(_toHouse, _target.text, _subject.text, _body.text);
-                MailHud.RefreshSoon();
                 Say(_toHouse ? "Enviando para a casa..." : "Enviando para o jogador...");
             });
 

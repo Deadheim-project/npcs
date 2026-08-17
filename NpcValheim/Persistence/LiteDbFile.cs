@@ -21,20 +21,20 @@ namespace NpcValheim.Persistence
     /// out. The cost is opening a file per operation, which is measured in a handful of
     /// milliseconds and happens a few times a minute, not a few times a frame.
     /// </summary>
-    internal sealed class LiteDbFile
+    public sealed class LiteDbFile
     {
         private readonly string _path;
 
-        internal LiteDbFile(string path) => _path = path;
+        public LiteDbFile(string path) => _path = path;
 
-        internal string Path => _path;
+        public string Path => _path;
 
-        internal T Read<T>(Func<LiteDatabase, T> body)
+        public T Read<T>(Func<LiteDatabase, T> body)
         {
             using (var db = new LiteDatabase(_path)) return body(db);
         }
 
-        internal void Write(Action<LiteDatabase> body)
+        public void Write(Action<LiteDatabase> body)
         {
             using (var db = new LiteDatabase(_path)) body(db);
         }

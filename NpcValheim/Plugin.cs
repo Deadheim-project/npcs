@@ -41,7 +41,6 @@ namespace NpcValheim
         internal static ConfigEntry<int> QuestTrackerMax;
         internal static ConfigEntry<float> QuestButtonX;
         internal static ConfigEntry<float> QuestButtonY;
-        internal static ConfigEntry<UnityEngine.KeyCode> MailHudKey;
 
         // Not synced -- purely a local dev toggle, flip it in the .cfg file before launching
         // to get an automated pass/fail report in LogOutput.log with zero manual interaction
@@ -56,6 +55,7 @@ namespace NpcValheim
         internal static ConfigEntry<bool> ShowcaseMode;
         internal static ConfigEntry<bool> SimulateNonAdmin;
         internal static ConfigEntry<string> WorldName;
+        internal static ConfigEntry<bool> AutoStartWorld;
         internal static ConfigEntry<bool> DemoScenarioMode;
 
         /// <summary>Runtime switch behind SimulateNonAdmin, rather than reading the config
@@ -102,9 +102,6 @@ namespace NpcValheim
             QuestButtonY = Config.Bind("Quests", "JournalButtonY", 260f,
                 "Distance in pixels from the top edge of the screen to the journal button. Raise it to clear another mod's bar.");
 
-            MailHudKey = Config.Bind("Mail", "HudKey", UnityEngine.KeyCode.P,
-                "Opens the mail inbox from the top-right stamp. Letters from players and houses land on that icon.");
-
             ListingDurationHours = Config.Bind("Marketplace", "ListingDurationHours", 48,
                 "How long a listing stays up before it expires and the unsold stock is mailed back to the seller.");
 
@@ -116,6 +113,11 @@ namespace NpcValheim
 
             DemoScenarioMode = Config.Bind("Testing", "DemoScenarioMode", false,
                 "With ShowcaseMode on, runs the scripted end-to-end demo (buy from another player, mail, quests, teleport) instead of the static showcase. Dev use only.");
+
+
+
+            AutoStartWorld = Config.Bind("Testing", "AutoStartWorld", false,
+                "Loads the world named by WorldName straight from launch, in singleplayer, skipping the menu. Independent of EnableSelfTest, so a local world can be opened hands-off without also spawning the test NPCs. Dev use only.");
 
             WorldName = Config.Bind("Testing", "WorldName", "",
                 "Which world the dev auto-start loads. Empty picks the first world that is already generated, because loading an ungenerated one costs minutes of world generation before a test can start. Dev use only.");
@@ -138,11 +140,12 @@ namespace NpcValheim
             MailDatabase.Init(Path.Combine(Path.GetDirectoryName(dbPath)!, "mail.db"));
             QuestDatabase.Init(Path.Combine(Path.GetDirectoryName(dbPath)!, "quests.db"));
 
+
             UiRoot.EnsureCreated();
-            // Mail HUD RPCs must exist on a dedicated server too. The stamp UI itself is
-            // client-only (Update no-ops without a local player), but without this the
-            // client's P-key inbox stays empty while the mailbox piece still shows mail.
-            MailHud.EnsureCreated();
+
+            // No mail HUD. Reading your post is something you go to the Caixa Postal for --
+            // an always-on stamp with a shortcut key turns a place in the world into a
+            // menu, and the mailbox stops being a reason to walk into town.
             if (!UnityEngine.Application.isBatchMode)
             {
                 Npc.WaypointMarker.EnsureCreated();
@@ -172,6 +175,14 @@ namespace NpcValheim
                 if (DemoScenarioMode.Value) DemoScenario.EnsureCreated();
                 else DemoShowcase.EnsureCreated();
             }
+            // Standalone menu skip. Guarded against double-creation because EnableSelfTest and
+            // ShowcaseMode above already create one, and two AutoStarts race each other through
+            // the same menu.
+            if (AutoStartWorld.Value && !EnableSelfTest.Value && !ShowcaseMode.Value &&
+                !UnityEngine.Application.isBatchMode)
+                AutoStart.EnsureCreated();
+
+
             if (AutoConfirmCharacterOnJoin.Value)
                 AutoConfirmCharacter.EnsureCreated(AutoJoinPassword.Value);
 

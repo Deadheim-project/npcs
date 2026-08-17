@@ -18,7 +18,7 @@ namespace NpcValheim.Npc
     /// degrades to a safe default instead of throwing, so a lookup failing can never take
     /// down an RPC handler mid-transaction.
     /// </summary>
-    internal static class GameApi
+    public static class GameApi
     {
         private const BindingFlags AnyInstance = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
 
@@ -29,6 +29,77 @@ namespace NpcValheim.Npc
         private static FieldInfo _peerSocket;
         private static MethodInfo _socketGetHostName;
         private static MethodInfo _znetIsAdmin;
+        private static MethodInfo _routedGetServerPeerId;
+        private static FieldInfo _minimapPins;
+        private static FieldInfo _pinName;
+
+        /// <summary>
+        /// The names of the pins currently on the minimap.
+        ///
+        /// Minimap.m_pins is another member this install's publicizer missed, and reading it
+        /// directly is worse than it looks: the CLR runs its accessibility check when it
+        /// compiles the enclosing method, so the FieldAccessException is raised at the *call*
+        /// to whatever method mentions the field -- before any try/catch inside that method can
+        /// run. A guarded direct read is therefore not guarded at all, which is how it killed
+        /// a coroutine that had a catch block right around the access. Reflection is the only
+        /// form that can be caught.
+        /// </summary>
+        public static List<string> GetMinimapPinNames()
+        {
+            var names = new List<string>();
+            try
+            {
+                if (Minimap.instance == null) return names;
+
+                _minimapPins ??= typeof(Minimap).GetField("m_pins", AnyInstance);
+                if (!(_minimapPins?.GetValue(Minimap.instance) is System.Collections.IEnumerable pins)) return names;
+
+                foreach (var pin in pins)
+                {
+                    if (pin == null) continue;
+                    _pinName ??= pin.GetType().GetField("m_name", AnyInstance);
+                    if (_pinName?.GetValue(pin) is string name && !string.IsNullOrEmpty(name))
+                        names.Add(name);
+                }
+            }
+            catch (Exception e)
+            {
+                Plugin.Log.LogWarning($"NpcValheim: could not read the minimap pins: {e.Message}");
+            }
+            return names;
+        }
+
+        /// <summary>
+        /// The peer id a host addresses its own server half with, or 0.
+        ///
+        /// Belongs here for the same reason as everything else in this file: calling
+        /// ZRoutedRpc.GetServerPeerID() directly compiles and then throws MethodAccessException
+        /// at runtime, because the publicizer used on this install did not cover it. That
+        /// failure is quiet in the worst way -- it only happens on the branch taken when you
+        /// ARE the server, so a feature can work perfectly against a dedicated server and be
+        /// dead in singleplayer, which is exactly what happened to the mail HUD and then to the
+        /// city directory.
+        ///
+        /// Zero is a safe fallback rather than a sentinel: it is already the correct target for
+        /// a client addressing the host, so a lookup that fails degrades to "talk to whoever is
+        /// in charge" instead of to nothing.
+        /// </summary>
+        public static long GetServerPeerId()
+        {
+            try
+            {
+                if (ZRoutedRpc.instance == null) return 0L;
+
+                _routedGetServerPeerId ??= typeof(ZRoutedRpc).GetMethod("GetServerPeerID", AnyInstance);
+                var value = _routedGetServerPeerId?.Invoke(ZRoutedRpc.instance, null);
+                return value is long id ? id : 0L;
+            }
+            catch (Exception e)
+            {
+                Plugin.Log.LogWarning($"NpcValheim: could not read the server peer id: {e.Message}");
+                return 0L;
+            }
+        }
 
         /// <summary>Display name of the player behind an RPC sender id, or "???".</summary>
         public static string GetPlayerName(long senderId)

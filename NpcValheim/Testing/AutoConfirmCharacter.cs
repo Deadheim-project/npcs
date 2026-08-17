@@ -99,7 +99,7 @@ namespace NpcValheim.Testing
                 }
                 catch (Exception e)
                 {
-                    Plugin.Log.LogWarning($"SELFTEST: AutoConfirmCharacter password attempt {attempt} threw (will retry): {e.Message}");
+                    Plugin.Log.LogWarning($"SELFTEST: AutoConfirmCharacter password attempt {attempt} threw (will retry): {Describe(e)}");
                 }
             }
 
@@ -123,9 +123,28 @@ namespace NpcValheim.Testing
                 }
                 catch (Exception e)
                 {
-                    Plugin.Log.LogWarning($"SELFTEST: AutoConfirmCharacter character-start attempt {attempt} threw (will retry): {e.Message}");
+                    Plugin.Log.LogWarning($"SELFTEST: AutoConfirmCharacter character-start attempt {attempt} threw (will retry): {Describe(e)}");
                 }
             }
+        }
+
+        /// <summary>
+        /// The message of the exception that actually went wrong.
+        ///
+        /// Everything here is invoked by reflection, so every failure arrives wrapped in a
+        /// TargetInvocationException whose own message is the immortal "Exception has been
+        /// thrown by the target of an invocation." -- six identical lines saying nothing, which
+        /// is exactly what the log showed while a join was failing for a completely unrelated
+        /// reason. Unwrapping costs one method and turns those lines back into evidence.
+        /// </summary>
+        private static string Describe(Exception e)
+        {
+            var inner = e;
+            while (inner.InnerException != null) inner = inner.InnerException;
+
+            return ReferenceEquals(inner, e)
+                ? e.Message
+                : $"{inner.GetType().Name}: {inner.Message}";
         }
     }
 }
