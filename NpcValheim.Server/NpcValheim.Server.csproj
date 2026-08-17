@@ -1,18 +1,38 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
+  <!--
+    A metade que nunca e distribuida.
+
+    O problema que isto resolve: nao da para manter secreto um mod que o jogador precisa
+    instalar. Qualquer pessoa com a dll do cliente pode ler o codigo dela. Entao o cliente
+    fica so com o que ele precisa mesmo ter - as telas e o envio das RPCs - e tudo que
+    decide alguma coisa (preco, imposto, validacao de quest, recompensa, os arquivos de
+    perfil) vive aqui, num assembly que so existe no servidor.
+
+    Hoje esta pasta carrega a suite de testes. O resto (Persistence e os corpos dos
+    handlers RPC) migra em seguida.
+  -->
   <PropertyGroup>
     <TargetFramework>net48</TargetFramework>
-    <AssemblyName>NpcValheim</AssemblyName>
+    <AssemblyName>NpcValheim.Server</AssemblyName>
     <RootNamespace>NpcValheim</RootNamespace>
     <LangVersion>latest</LangVersion>
     <Nullable>disable</Nullable>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
     <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
     <RestorePackagesWithLockFile>false</RestorePackagesWithLockFile>
+    <DefineConstants>$(DefineConstants);DEVTOOLS</DefineConstants>
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- BepInEx / Harmony -->
+    <ProjectReference Include="..\NpcValheim\NpcValheim.csproj">
+      <!-- O cliente ja esta na pasta de plugins; copiar de novo daria duas copias da
+           mesma assembly para o BepInEx carregar. -->
+      <Private>false</Private>
+    </ProjectReference>
+  </ItemGroup>
+
+  <ItemGroup>
     <Reference Include="BepInEx">
       <HintPath>$(BepInExCore)\BepInEx.dll</HintPath>
       <Private>false</Private>
@@ -21,8 +41,6 @@
       <HintPath>$(BepInExCore)\0Harmony.dll</HintPath>
       <Private>false</Private>
     </Reference>
-
-    <!-- Valheim game code (publicized so internal/private members are accessible) -->
     <Reference Include="assembly_valheim">
       <HintPath>$(ValheimPublicized)\assembly_valheim_publicized.dll</HintPath>
       <Private>false</Private>
@@ -35,20 +53,14 @@
       <HintPath>$(ValheimPublicized)\assembly_utils_publicized.dll</HintPath>
       <Private>false</Private>
     </Reference>
-    <!-- Localization lives here, not in assembly_valheim. It is what turns "$item_hammer"
-         into the name the player actually reads. -->
     <Reference Include="assembly_guiutils">
       <HintPath>$(ValheimManaged)\assembly_guiutils.dll</HintPath>
       <Private>false</Private>
     </Reference>
-    <!-- Minimap.AddPin's signature mentions PlatformUserID, which lives here. Needed to
-         reference the type even though the mod never names it. -->
     <Reference Include="Splatform">
       <HintPath>$(ValheimManaged)\Splatform.dll</HintPath>
       <Private>false</Private>
     </Reference>
-
-    <!-- Unity engine modules used by NPC / UI / interaction code -->
     <Reference Include="UnityEngine">
       <HintPath>$(ValheimManaged)\UnityEngine.dll</HintPath>
       <Private>false</Private>
@@ -96,49 +108,19 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="LiteDB" Version="5.0.19" />
-    <!-- Fixado na mesma versão que o modpack do servidor instala
-         (ValheimModding-YamlDotNet). BepInEx carrega um YamlDotNet só: se o mod
-         trouxer outra versão, uma das duas perde e quebra quem depende dela. -->
-    <PackageReference Include="YamlDotNet" Version="16.3.1">
-      <!-- Compila contra ela, mas não a copia para a saída: quem entrega o
-           YamlDotNet em runtime é o pacote do modpack. -->
+    <PackageReference Include="LiteDB" Version="5.0.19">
       <ExcludeAssets>runtime</ExcludeAssets>
     </PackageReference>
-    <!-- JetBrains.Annotations not referenced as a package: UnityEngine.CoreModule already
-         ships PublicAPI/UsedImplicitly in that same namespace, which ConfigSync.cs uses. -->
+    <PackageReference Include="YamlDotNet" Version="16.3.1">
+      <ExcludeAssets>runtime</ExcludeAssets>
+    </PackageReference>
   </ItemGroup>
 
-  <!-- A suite de testes e as ferramentas de demo agora vivem em NpcValheim.Server, que
-       nunca e distribuido. DevTools continua existindo so para a conveniencia de
-       desenvolvimento (CopyToPlugins) e para o zip nao trocar a dll de teste do jogo. -->
-  <PropertyGroup>
-    <DevTools Condition="'$(DevTools)' == ''">true</DevTools>
-  </PropertyGroup>
-
-  <ItemGroup>
-    <None Include="Assets\Mailbox\**\*" CopyToOutputDirectory="PreserveNewest" />
-    <!-- Conteudo pronto (quests e modelos de NPC importados). Vai junto com a dll: o
-         ContentSeeder copia dali para npcs/ na primeira execucao. -->
-    <ShippedQuests Include="Content\quests\*.yaml" />
-    <ShippedTemplates Include="Content\templates\*.yaml" />
-  </ItemGroup>
-
-  <!-- Drop the built plugin straight into the game's plugin folder for quick in-game testing -->
-  <!-- Conveniencia de desenvolvimento. Nao roda na compilacao de distribuicao: essa
-       produz a dll limpa para o zip, e nao deve trocar a dll de teste no jogo. -->
-  <Target Name="CopyToPlugins" AfterTargets="Build" Condition="'$(DevTools)' == 'true'">
+  <!-- Vai direto para a pasta de plugins do jogo local, para poder testar servidor
+       hospedado aqui. No zip de distribuicao esta dll nao entra. -->
+  <Target Name="CopyServerToPlugins" AfterTargets="Build">
     <MakeDir Directories="$(BepInExPlugins)\NpcValheim" Condition="!Exists('$(BepInExPlugins)\NpcValheim')" />
-    <MakeDir Directories="$(BepInExPlugins)\NpcValheim\Assets\Mailbox" Condition="!Exists('$(BepInExPlugins)\NpcValheim\Assets\Mailbox')" />
-    <MakeDir Directories="$(BepInExPlugins)\NpcValheim\Content\quests;$(BepInExPlugins)\NpcValheim\Content\templates" />
     <Copy SourceFiles="$(TargetDir)$(AssemblyName).dll" DestinationFolder="$(BepInExPlugins)\NpcValheim" />
-    <Copy SourceFiles="$(TargetDir)LiteDB.dll" DestinationFolder="$(BepInExPlugins)\NpcValheim" Condition="Exists('$(TargetDir)LiteDB.dll')" />
-    <Copy SourceFiles="$(ProjectDir)Assets\Mailbox\model.bin;$(ProjectDir)Assets\Mailbox\basecolor.png;$(ProjectDir)Assets\Mailbox\normal.png;$(ProjectDir)Assets\Mailbox\hud-icon.png;$(ProjectDir)Assets\Mailbox\Selo_Png.png;$(ProjectDir)Assets\Mailbox\Selo_Icon.png;$(ProjectDir)Assets\Mailbox\Selo_Icon.jpeg"
-          DestinationFolder="$(BepInExPlugins)\NpcValheim\Assets\Mailbox"
-          Condition="Exists('$(ProjectDir)Assets\Mailbox\model.bin')" />
-    <Copy SourceFiles="@(ShippedQuests)" DestinationFolder="$(BepInExPlugins)\NpcValheim\Content\quests" />
-    <Copy SourceFiles="@(ShippedTemplates)" DestinationFolder="$(BepInExPlugins)\NpcValheim\Content\templates" />
-    <!-- YamlDotNet de propósito não entra aqui: vem do modpack (ValheimModding-YamlDotNet). -->
   </Target>
 
 </Project>

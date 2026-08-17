@@ -5,9 +5,6 @@ using BepInEx.Logging;
 using HarmonyLib;
 using ServerSync;
 using NpcValheim.Persistence;
-#if DEVTOOLS
-using NpcValheim.Testing;
-#endif
 using NpcValheim.UI;
 
 namespace NpcValheim
@@ -160,39 +157,6 @@ namespace NpcValheim
                 UI.QuestHudButton.EnsureCreated();
                 UI.QuestTracker.EnsureCreated();
             }
-#if DEVTOOLS
-            if (EnableSelfTest.Value)
-            {
-                // The server suite runs on whoever is authoritative, and in a host game that
-                // is this process. Restricting it to batchmode meant it could only ever be
-                // exercised by standing up a dedicated server and connecting to it by hand --
-                // and it tests the same code either way, since a host owns the databases
-                // exactly like a dedicated server does.
-                ServerSelfTestRunner.EnsureCreated();
-
-                if (!UnityEngine.Application.isBatchMode)
-                {
-                    SelfTestRunner.EnsureCreated();
-                    AutoStart.EnsureCreated();
-                }
-            }
-            if (ShowcaseMode.Value && !UnityEngine.Application.isBatchMode)
-            {
-                if (!EnableSelfTest.Value) AutoStart.EnsureCreated(); // still skip the menu
-                if (DemoScenarioMode.Value) DemoScenario.EnsureCreated();
-                else DemoShowcase.EnsureCreated();
-            }
-            // Standalone menu skip. Guarded against double-creation because EnableSelfTest and
-            // ShowcaseMode above already create one, and two AutoStarts race each other through
-            // the same menu.
-            if (AutoStartWorld.Value && !EnableSelfTest.Value && !ShowcaseMode.Value &&
-                !UnityEngine.Application.isBatchMode)
-                AutoStart.EnsureCreated();
-
-
-            if (AutoConfirmCharacterOnJoin.Value)
-                AutoConfirmCharacter.EnsureCreated(AutoJoinPassword.Value);
-#endif
 
             _harmony = new Harmony(Guid);
             _harmony.PatchAll();

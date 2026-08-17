@@ -126,7 +126,6 @@ namespace NpcValheim.Persistence
             return QuestStatus.NotStarted;
         }
 
-#if DEVTOOLS
         /// <summary>Test-only: writes a progress record back as-is, so the suite can wind a
         /// completion timestamp backwards instead of waiting 24 real hours. Gated on the dev
         /// flag and unreachable from any client.</summary>
@@ -135,7 +134,6 @@ namespace NpcValheim.Persistence
             if (Plugin.EnableSelfTest?.Value != true || entry == null) return;
             Write(quests => quests.Update(entry));
         }
-#endif
 
         /// <summary>How long until a timed quest comes back, or zero when it is available or
         /// never resets.</summary>
