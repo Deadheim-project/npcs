@@ -14,6 +14,7 @@ Usage:
 """
 
 import os
+import subprocess
 import sys
 import zipfile
 
@@ -25,8 +26,33 @@ PROJECT = os.path.join(ROOT, "NpcValheim")
 ASSEMBLIES = ["NpcValheim.dll", "LiteDB.dll"]
 
 
+def build_distribution():
+    """Compiles with DevTools off, into an output folder of its own.
+
+    Two reasons not to just zip up bin/Release: that folder holds whatever flavour was built
+    last, and the distribution flavour drops the 3,200-line test suite -- shipping the dev
+    build by accident is exactly the mistake this removes the opportunity for.
+    """
+    out_dir = os.path.join(PROJECT, "bin", "Dist")
+    command = [
+        "dotnet", "build", os.path.join(PROJECT, "NpcValheim.csproj"),
+        "-c", "Release", "-p:DevTools=false", "-p:OutputPath=" + out_dir + os.sep,
+        "-v", "q", "--nologo",
+    ]
+    if subprocess.call(command) != 0:
+        return None
+    return out_dir
+
+
 def main():
-    bin_dir = sys.argv[1] if len(sys.argv) > 1 else os.path.join(PROJECT, "bin", "Release")
+    if len(sys.argv) > 1:
+        bin_dir = sys.argv[1]
+    else:
+        bin_dir = build_distribution()
+        if bin_dir is None:
+            print("build failed")
+            return 1
+
     out_path = os.path.join(ROOT, "dist", "Npcs.zip")
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
 

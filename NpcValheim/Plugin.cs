@@ -5,7 +5,9 @@ using BepInEx.Logging;
 using HarmonyLib;
 using ServerSync;
 using NpcValheim.Persistence;
+#if DEVTOOLS
 using NpcValheim.Testing;
+#endif
 using NpcValheim.UI;
 
 namespace NpcValheim
@@ -158,6 +160,7 @@ namespace NpcValheim
                 UI.QuestHudButton.EnsureCreated();
                 UI.QuestTracker.EnsureCreated();
             }
+#if DEVTOOLS
             if (EnableSelfTest.Value)
             {
                 // The server suite runs on whoever is authoritative, and in a host game that
@@ -189,6 +192,7 @@ namespace NpcValheim
 
             if (AutoConfirmCharacterOnJoin.Value)
                 AutoConfirmCharacter.EnsureCreated(AutoJoinPassword.Value);
+#endif
 
             _harmony = new Harmony(Guid);
             _harmony.PatchAll();

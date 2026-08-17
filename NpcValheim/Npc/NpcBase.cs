@@ -700,6 +700,7 @@ namespace NpcValheim.Npc
             PersistProfileSnapshot();
         }
 
+#if DEVTOOLS
         /// <summary>Dedicated-server runtime probe for the opt-in self-test. This is not an
         /// RPC and is inaccessible to remote clients; normal code must use the authorized
         /// request methods above.</summary>
@@ -710,6 +711,7 @@ namespace NpcValheim.Npc
             ApplyProfileAuthoritative(profile);
             return true;
         }
+#endif
 
         /// <summary>Showcase-only: hands this NPC to a different player so the panel can be
         /// captured as a visitor genuinely sees it -- IsOwner then fails for real reasons

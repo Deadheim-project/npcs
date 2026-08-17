@@ -109,6 +109,19 @@
          ships PublicAPI/UsedImplicitly in that same namespace, which ConfigSync.cs uses. -->
   </ItemGroup>
 
+  <!-- A suite de testes e as ferramentas de demo sao 3.200 linhas que so servem para
+       desenvolver: nao ha razao para estarem na dll que o jogador instala. Ligadas por
+       padrao (é assim que se testa o servidor) e desligadas no zip de distribuicao, que
+       tools/package.py compila com -p:DevTools=false. -->
+  <PropertyGroup>
+    <DevTools Condition="'$(DevTools)' == ''">true</DevTools>
+    <DefineConstants Condition="'$(DevTools)' == 'true'">$(DefineConstants);DEVTOOLS</DefineConstants>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(DevTools)' != 'true'">
+    <Compile Remove="Testing\**\*.cs" />
+  </ItemGroup>
+
   <ItemGroup>
     <None Include="Assets\Mailbox\**\*" CopyToOutputDirectory="PreserveNewest" />
     <!-- Conteudo pronto (quests e modelos de NPC importados). Vai junto com a dll: o
@@ -118,7 +131,9 @@
   </ItemGroup>
 
   <!-- Drop the built plugin straight into the game's plugin folder for quick in-game testing -->
-  <Target Name="CopyToPlugins" AfterTargets="Build">
+  <!-- Conveniencia de desenvolvimento. Nao roda na compilacao de distribuicao: essa
+       produz a dll limpa para o zip, e nao deve trocar a dll de teste no jogo. -->
+  <Target Name="CopyToPlugins" AfterTargets="Build" Condition="'$(DevTools)' == 'true'">
     <MakeDir Directories="$(BepInExPlugins)\NpcValheim" Condition="!Exists('$(BepInExPlugins)\NpcValheim')" />
     <MakeDir Directories="$(BepInExPlugins)\NpcValheim\Assets\Mailbox" Condition="!Exists('$(BepInExPlugins)\NpcValheim\Assets\Mailbox')" />
     <MakeDir Directories="$(BepInExPlugins)\NpcValheim\Content\quests;$(BepInExPlugins)\NpcValheim\Content\templates" />

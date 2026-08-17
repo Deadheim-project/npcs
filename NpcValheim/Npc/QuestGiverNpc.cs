@@ -527,6 +527,7 @@ namespace NpcValheim.Npc
             EpicMmoApi.AddExp(amount);
         }
 
+#if DEVTOOLS
         /// <summary>Test hook for the mail-only reward path. Not an RPC and unreachable from
         /// a client; the real flow goes through RPC_TurnInQuest.</summary>
         internal static void GrantRewardsForSelfTest(long playerId, QuestDefinition quest)
@@ -534,6 +535,7 @@ namespace NpcValheim.Npc
             if (Plugin.EnableSelfTest?.Value != true) return;
             GrantRewards(playerId, quest);
         }
+#endif
 
         private static void GrantRewards(long playerId, QuestDefinition quest)
         {
