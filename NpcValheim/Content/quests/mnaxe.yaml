@@ -1,0 +1,21 @@
+# Importado do KG Marketplace: Cidades.cfg [MNAxe]
+# Cooldown original: 999999999 (lido como horas)
+id: mnaxe
+name: "Machado de Metal Negro"
+description: "Machado de Metal Negro"
+objectives:
+  - kind: Collect
+    target: "BlackMetal"
+    amount: 20
+requiredLevel: 60
+repeatable: false
+resetHours: 0
+requiresQuests:
+  - ferroaxe
+rewards:
+  coins: 0
+  experience: 6000
+  items:
+    - itemName: "AxeBlackMetal"
+      amount: 1
+      quality: 1

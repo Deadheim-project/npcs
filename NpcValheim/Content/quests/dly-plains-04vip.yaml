@@ -1,0 +1,15 @@
+# Importado do KG Marketplace: TorilAesir.cfg [DLY_PLAINS_04vip]
+# Cooldown original: 30 (lido como horas)
+id: dly-plains-04vip
+name: "Quest - Berserker"
+description: "o bixo é brabo...."
+objectives:
+  - kind: Kill
+    target: "GoblinBrute"
+    amount: 4
+requiredLevel: 40
+repeatable: false
+resetHours: 30
+rewards:
+  coins: 900
+  experience: 8000

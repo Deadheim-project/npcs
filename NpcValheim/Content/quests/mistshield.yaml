@@ -1,0 +1,27 @@
+# Importado do KG Marketplace: Cidades.cfg [MistShield]
+# Cooldown original: 999999999 (lido como horas)
+id: mistshield
+name: "Broquel de Carapaça"
+description: "Broquel de Carapaça"
+objectives:
+  - kind: Collect
+    target: "Eitr"
+    amount: 10
+  - kind: Collect
+    target: "Carapace"
+    amount: 15
+  - kind: Collect
+    target: "ScaleHide"
+    amount: 3
+requiredLevel: 75
+repeatable: false
+resetHours: 0
+requiresQuests:
+  - mnshield
+rewards:
+  coins: 0
+  experience: 7000
+  items:
+    - itemName: "ShieldCarapaceBuckler"
+      amount: 1
+      quality: 1

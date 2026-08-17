@@ -1,0 +1,14 @@
+# Importado do KG Marketplace: QuestProfiles/QuestsProfiles.cfg [Ferro]
+name: ""
+forType: QuestGiver
+questGiver:
+  quests:
+    - ferrohelmet   # Elmo de Ferro
+    - ferrochest   # Peitoral de Ferro
+    - ferrolegs   # Calças de Ferro
+    - ferrosword   # Espada de Ferro
+    - ferroaxe   # Machado de Ferro
+    - ferroshield   # Escudo de Ferro
+    - ferropicareta   # Picareta de Ferro
+    - ferrobow   # Arco do Caçador
+    - bonemass   # Ameaça do Pantano

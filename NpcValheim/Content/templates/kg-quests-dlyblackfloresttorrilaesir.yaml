@@ -1,0 +1,10 @@
+# Importado do KG Marketplace: QuestProfiles/QuestsProfilesAesir.cfg [DLYBLACKFLORESTTORRILaesir]
+name: ""
+forType: QuestGiver
+questGiver:
+  quests:
+    - dly-blackflorestt-01vip   # Quest - Malditos Cinzentos!!
+    - dly-blackflorestt-02vip   # Quest - Caçando Brutos!!
+    - dly-blackflorestt-03vip   # Quest - Aqueles Xamas!!
+    - dly-blackflorestt-04vip   # Quest - Troll!!
+    - dly-blackflorestt-05vip   # Quest - Esqueletos!!!

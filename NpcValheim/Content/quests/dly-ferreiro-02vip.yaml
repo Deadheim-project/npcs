@@ -1,0 +1,15 @@
+# Importado do KG Marketplace: DiariasSkuleFerreiroAesir.cfg [Dly_Ferreiro_02vip]
+# Cooldown original: 20 (lido como horas)
+id: dly-ferreiro-02vip
+name: "Quest - Coletar Estanho"
+description: "Derreta alguns materiais para fazer o bronze"
+objectives:
+  - kind: Collect
+    target: "TinOre"
+    amount: 50
+requiredLevel: 15
+repeatable: false
+resetHours: 20
+rewards:
+  coins: 500
+  experience: 2000

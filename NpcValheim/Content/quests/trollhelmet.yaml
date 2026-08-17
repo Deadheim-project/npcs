@@ -1,0 +1,21 @@
+# Importado do KG Marketplace: Cidades.cfg [TrollHelmet]
+# Cooldown original: 999999999 (lido como horas)
+id: trollhelmet
+name: "Elmo de Couro de Troll"
+description: "Caçar Trolls"
+objectives:
+  - kind: Kill
+    target: "Troll"
+    amount: 1
+requiredLevel: 0
+repeatable: false
+resetHours: 0
+requiresQuests:
+  - jarl02
+rewards:
+  coins: 0
+  experience: 1000
+  items:
+    - itemName: "HelmetTrollLeather"
+      amount: 1
+      quality: 2

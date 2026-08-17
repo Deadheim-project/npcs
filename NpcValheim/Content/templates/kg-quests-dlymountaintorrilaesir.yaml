@@ -1,0 +1,11 @@
+# Importado do KG Marketplace: QuestProfiles/QuestsProfilesAesir.cfg [DLYMOUNTAINTORRILaesir]
+name: ""
+forType: QuestGiver
+questGiver:
+  quests:
+    - dly-mountain-01vip   # Quest - Lobos
+    - dly-mountain-02vip   # Quest - Hatchling
+    - dly-mountain-03vip   # Quest - Fenring
+    - dly-mountain-04vip   # Quest - Golem de Pedra
+    - dly-mountain-05vip   # Quest - Ulvs
+    - dly-mountain-06vip   # Quest - Cultistas

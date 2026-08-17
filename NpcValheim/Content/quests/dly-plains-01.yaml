@@ -1,0 +1,15 @@
+# Importado do KG Marketplace: Toril.cfg [DLY_PLAINS_01]
+# Cooldown original: 30 (lido como horas)
+id: dly-plains-01
+name: "Quest - Deathsquito"
+description: "Deathsquito cuidado...."
+objectives:
+  - kind: Kill
+    target: "Deathsquito"
+    amount: 15
+requiredLevel: 40
+repeatable: false
+resetHours: 30
+rewards:
+  coins: 600
+  experience: 8000

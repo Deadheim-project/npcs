@@ -1,0 +1,17 @@
+# Importado do KG Marketplace: Cidades.cfg [grandes]
+# Cooldown original: 999999999 (lido como horas)
+id: grandes
+name: "Casca Reforçada"
+description: "Neste caso o seu desafio será maior, esses insetos são reforçados, ordeno que acabe com eles!"
+objectives:
+  - kind: Kill
+    target: "SeekerBrute"
+    amount: 5
+requiredLevel: 0
+repeatable: false
+resetHours: 0
+requiresQuests:
+  - medios
+rewards:
+  coins: 2500
+  experience: 10000

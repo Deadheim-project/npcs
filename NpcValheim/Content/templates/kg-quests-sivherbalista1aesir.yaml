@@ -1,0 +1,8 @@
+# Importado do KG Marketplace: QuestProfiles/QuestsProfilesAesir.cfg [SivHerbalista1aesir]
+name: ""
+forType: QuestGiver
+questGiver:
+  quests:
+    - dly-sivherbalista-03vip   # Quest - Colhendo Cenouras
+    - dly-sivherbalista-04vip   # Quest - Colete Mirtilos
+    - dly-sivherbalista-05vip   # Quest - Colete Cardo

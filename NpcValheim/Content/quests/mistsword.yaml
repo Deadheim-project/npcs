@@ -1,0 +1,27 @@
+# Importado do KG Marketplace: Cidades.cfg [MistSword]
+# Cooldown original: 999999999 (lido como horas)
+id: mistsword
+name: "Caminhante da Névoa"
+description: "Caminhante da Névoa"
+objectives:
+  - kind: Collect
+    target: "Eitr"
+    amount: 10
+  - kind: Collect
+    target: "Wisp"
+    amount: 3
+  - kind: Collect
+    target: "Iron"
+    amount: 12
+requiredLevel: 75
+repeatable: false
+resetHours: 0
+requiresQuests:
+  - mnsword
+rewards:
+  coins: 0
+  experience: 7000
+  items:
+    - itemName: "SwordMistwalker"
+      amount: 1
+      quality: 1

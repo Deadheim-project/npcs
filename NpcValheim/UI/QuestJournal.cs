@@ -187,7 +187,8 @@ namespace NpcValheim.UI
             // every quest on the server.
             var active = _quests.Where(q => q.Status == QuestStatus.Active).ToList();
 
-            var signature = string.Join("|", active.Select(q => $"{q.Id}:{q.Counter}"));
+            var signature = string.Join("|", active.Select(q =>
+                q.Id + ":" + string.Join(",", QuestTracker.Steps(q).Select(s => s.Counter))));
             if (signature != _signature)
             {
                 _signature = signature;
@@ -206,8 +207,10 @@ namespace NpcValheim.UI
 
             foreach (var quest in active)
             {
+                var steps = QuestTracker.Steps(quest);
+
                 var card = ValheimUi.CreateRect("Quest", _list);
-                ValheimUi.SetHeight(card.gameObject, 86f);
+                ValheimUi.SetHeight(card.gameObject, 66f + 20f * steps.Count);
                 _rows.Add(card.gameObject);
 
                 var column = card.gameObject.AddComponent<VerticalLayoutGroup>();
@@ -221,15 +224,19 @@ namespace NpcValheim.UI
                 ValheimUi.CreateLabel(card, quest.Name, 18, ValheimUi.Orange,
                     TextAlignmentOptions.TopLeft, display: true);
 
-                bool ready = QuestGiverNpc.CanCompleteNow(quest, Player.m_localPlayer);
-                string progress = quest.Objective == QuestObjectiveKind.Kill
-                    ? $"{quest.Counter}/{quest.Goal}"
-                    : $"{ItemNames.Count(Player.m_localPlayer.GetInventory(), quest.Target, -1)}/{quest.Goal}";
+                var player = Player.m_localPlayer;
+                bool ready = QuestGiverNpc.CanCompleteNow(quest, player);
 
-                ValheimUi.CreateLabel(card,
-                    $"{quest.ObjectiveText}   <color=#9a9188>{progress}</color>" +
-                    (ready ? "   <color=#ffe300>pronta para entregar</color>" : ""),
-                    15, ValheimUi.Beige, TextAlignmentOptions.TopLeft);
+                foreach (var step in steps)
+                    ValheimUi.CreateLabel(card,
+                        step.IsDone(player)
+                            ? $"<color=#6fbf5b>✔ {QuestGiverNpc.Describe(step)}</color>"
+                            : $"{QuestGiverNpc.Describe(step)}   <color=#9a9188>{step.Progress(player)}/{step.Goal}</color>",
+                        15, ValheimUi.Beige, TextAlignmentOptions.TopLeft);
+
+                if (ready)
+                    ValheimUi.CreateLabel(card, "<color=#ffe300>pronta para entregar</color>",
+                        15, ValheimUi.Beige, TextAlignmentOptions.TopLeft);
 
                 ValheimUi.CreateLabel(card, $"Recompensa: {quest.RewardText}", 14, ValheimUi.Muted,
                     TextAlignmentOptions.TopLeft);

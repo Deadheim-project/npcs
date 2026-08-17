@@ -1,0 +1,21 @@
+# Importado do KG Marketplace: Cidades.cfg [FenrisChest]
+# Cooldown original: 999999999 (lido como horas)
+id: fenrischest
+name: "Armadura de Fenris"
+description: "Armadura de Fenris"
+objectives:
+  - kind: Collect
+    target: "WolfHairBundle"
+    amount: 20
+requiredLevel: 45
+repeatable: false
+resetHours: 0
+requiresQuests:
+  - raizchest
+rewards:
+  coins: 0
+  experience: 5000
+  items:
+    - itemName: "ArmorFenringChest"
+      amount: 1
+      quality: 1

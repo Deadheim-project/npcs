@@ -1,0 +1,15 @@
+# Importado do KG Marketplace: TorilAesir.cfg [DLY_MOUNTAIN_02vip]
+# Cooldown original: 30 (lido como horas)
+id: dly-mountain-02vip
+name: "Quest - Hatchling"
+description: "Hatchlings...."
+objectives:
+  - kind: Kill
+    target: "Hatchling"
+    amount: 10
+requiredLevel: 40
+repeatable: false
+resetHours: 30
+rewards:
+  coins: 700
+  experience: 4000

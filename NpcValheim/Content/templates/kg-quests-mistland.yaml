@@ -1,0 +1,17 @@
+# Importado do KG Marketplace: QuestProfiles/QuestsProfiles.cfg [Mistland]
+name: ""
+forType: QuestGiver
+questGiver:
+  quests:
+    - eitrhelmet   # Capuz de Tecido com Éter
+    - eitrchest   # Manto de Tecido com Éter
+    - eitrlegs   # Calças de Tecido com Éter
+    - eitrcape   # Capa de Penas
+    - misthelmet   # Capacete de Carapaça
+    - mistchest   # Colete de Carapaça
+    - mistlegs   # Perneiras de Carapaça
+    - mistsword   # Caminhante da Névoa
+    - mistbow   # Arco Estala Coluna
+    - mistshield   # Broquel de Carapaça
+    - mistaxe   # Ruína de Jotun
+    - seekerqueen   # Ameaça da Mistland

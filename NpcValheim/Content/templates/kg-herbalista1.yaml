@@ -1,0 +1,18 @@
+# Importado do KG Marketplace: Traders/Herbalista.cfg [Herbalista1]
+# Sem 'name': aplicar este modelo troca a lista de precos e deixa o
+# nome do NPC como esta.
+name: ""
+forType: Marketplace
+marketplace:
+  taxPercent: 0
+  sells:
+    - itemName: "Raspberry"
+      price: 1
+    - itemName: "Dandelion"
+      price: 1
+    - itemName: "Mushroom"
+      price: 5
+    - itemName: "Honey"
+      price: 5
+    - itemName: "QueenBee"
+      price: 750

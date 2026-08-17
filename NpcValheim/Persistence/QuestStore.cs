@@ -64,8 +64,9 @@ namespace NpcValheim.Persistence
             if (quest == null) { error = "Quest vazia"; return false; }
             if (string.IsNullOrWhiteSpace(quest.Id)) { error = "Id obrigatório"; return false; }
             if (string.IsNullOrWhiteSpace(quest.Name)) quest.Name = quest.Id;
-            if (string.IsNullOrWhiteSpace(quest.Target)) { error = "Alvo obrigatório"; return false; }
-            if (quest.Amount < 1) { error = "Quantidade tem de ser ao menos 1"; return false; }
+            var steps = quest.Steps();
+            if (steps.Exists(s => string.IsNullOrWhiteSpace(s.Target))) { error = "Alvo obrigatório"; return false; }
+            if (steps.Exists(s => s.Amount < 1)) { error = "Quantidade tem de ser ao menos 1"; return false; }
 
             var id = Slug(quest.Id);
             if (id.Length == 0) { error = "Id inválido"; return false; }
@@ -124,9 +125,13 @@ namespace NpcValheim.Persistence
                         if (string.IsNullOrWhiteSpace(quest.Name))
                             quest.Name = quest.Id;
 
-                        if (quest.Amount < 1 || string.IsNullOrWhiteSpace(quest.Target))
+                        // Validated against the resolved objectives, so a quest written either
+                        // way -- one `target:` or a list under `objectives:` -- is judged by
+                        // the same rule.
+                        var steps = quest.Steps();
+                        if (steps.Exists(s => s.Amount < 1 || string.IsNullOrWhiteSpace(s.Target)))
                         {
-                            Plugin.Log.LogWarning($"NpcValheim: quest '{quest.Id}' has no target or a zero amount; skipping");
+                            Plugin.Log.LogWarning($"NpcValheim: quest '{quest.Id}' has an objective with no target or a zero amount; skipping");
                             continue;
                         }
 

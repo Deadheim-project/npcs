@@ -1,0 +1,15 @@
+# Importado do KG Marketplace: SivHerbalista.cfg [Dly_SivHerbalista_12]
+# Cooldown original: 30 (lido como horas)
+id: dly-sivherbalista-12
+name: "Quest - Semeando Cevada"
+description: "Colha cevadas em sua plantação"
+objectives:
+  - kind: Gather
+    target: "Pickable_Barley"
+    amount: 50
+requiredLevel: 60
+repeatable: false
+resetHours: 30
+rewards:
+  coins: 0
+  experience: 4500

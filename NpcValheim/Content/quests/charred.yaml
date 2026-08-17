@@ -1,0 +1,23 @@
+# Importado do KG Marketplace: Cidades.cfg [charred]
+# Cooldown original: 999999999 (lido como horas)
+id: charred
+name: "Guerreiros Caídos"
+description: "Esses bravos guerreiros caídos são desafiadores e aparecem em bando, recomendo uma invasão em seus castelos para encontrar todos eles!"
+objectives:
+  - kind: Kill
+    target: "Charred_Archer"
+    amount: 10
+  - kind: Kill
+    target: "Charred_Mage"
+    amount: 2
+  - kind: Kill
+    target: "Charred_Melee"
+    amount: 10
+requiredLevel: 0
+repeatable: false
+resetHours: 0
+requiresQuests:
+  - selvagem
+rewards:
+  coins: 4000
+  experience: 15000

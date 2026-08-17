@@ -1,0 +1,17 @@
+# Importado do KG Marketplace: Cidades.cfg [Skill3]
+# Cooldown original: 999999999 (lido como horas)
+id: skill3
+name: "O Maratonista"
+description: "Olá novamente aprendiz, está na hora de testar seu fôlego, corra atrás de alguns javalis!"
+objectives:
+  - kind: Kill
+    target: "Boar"
+    amount: 5
+requiredLevel: 0
+repeatable: false
+resetHours: 0
+requiresQuests:
+  - skill2
+rewards:
+  coins: 0
+  experience: 0

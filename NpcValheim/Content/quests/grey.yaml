@@ -1,0 +1,23 @@
+# Importado do KG Marketplace: Cidades.cfg [Grey]
+# Cooldown original: 999999999 (lido como horas)
+id: grey
+name: "Acabe com a infestação de anões cinzentos"
+description: "Humm, O rei Eldgar finalmente enviou alguem com força! Cace alguns Greydwarf, eles estão aos montes na floresta"
+objectives:
+  - kind: Kill
+    target: "Greydwarf"
+    amount: 10
+  - kind: Kill
+    target: "Greydwarf_Shaman"
+    amount: 3
+  - kind: Kill
+    target: "Greydwarf_Elite"
+    amount: 1
+requiredLevel: 0
+repeatable: false
+resetHours: 0
+requiresQuests:
+  - jarl02
+rewards:
+  coins: 100
+  experience: 1500

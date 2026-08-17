@@ -1,0 +1,11 @@
+# Importado do KG Marketplace: QuestProfiles/QuestsProfiles.cfg [Eirik]
+name: ""
+forType: QuestGiver
+questGiver:
+  quests:
+    - courohelmet   # Elmo de Couro
+    - courolegs   # Calça de Couro
+    - courochest   # Túnica de Couro
+    - courocape   # Capa de Pele de Cervo
+    - eikthyr   # Ameaça do Prado
+    - jarl02   # Encontrar o Rei Skorri

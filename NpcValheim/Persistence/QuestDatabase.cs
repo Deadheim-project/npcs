@@ -15,7 +15,29 @@ namespace NpcValheim.Persistence
         public string Key { get; set; }
         public long PlayerId { get; set; }
         public string QuestId { get; set; }
-        public int Counter { get; set; }
+
+        /// <summary>One counter per objective, in the quest's own order. A list rather than a
+        /// single number because a quest asks for several things at once; the list grows on
+        /// demand, so a record written before an admin added an objective still reads.</summary>
+        public List<int> Counters { get; set; } = new List<int>();
+
+        /// <summary>Progress on the first objective. Almost every quest has exactly one, and
+        /// the tracker, the nameplate marker and the journal line all want a single number.
+        /// Computed, and marked so LiteDB doesn't store it twice.</summary>
+        [BsonIgnore]
+        public int Counter => CounterAt(0);
+
+        public int CounterAt(int index) =>
+            Counters != null && index >= 0 && index < Counters.Count ? Counters[index] : 0;
+
+        public void SetCounterAt(int index, int value)
+        {
+            if (index < 0) return;
+            if (Counters == null) Counters = new List<int>();
+            while (Counters.Count <= index) Counters.Add(0);
+            Counters[index] = value;
+        }
+
         public QuestStatus Status { get; set; }
         public DateTime UpdatedUtc { get; set; }
 
@@ -98,7 +120,7 @@ namespace NpcValheim.Persistence
             if (DateTime.UtcNow < entry.CompletedUtc.AddHours(quest.ResetHours)) return entry.Status;
 
             entry.Status = QuestStatus.NotStarted;
-            entry.Counter = 0;
+            entry.Counters = new List<int>();
             entry.UpdatedUtc = DateTime.UtcNow;
             Write(quests => quests.Update(entry));
             return QuestStatus.NotStarted;
@@ -136,7 +158,7 @@ namespace NpcValheim.Persistence
                 Key = QuestProgress.MakeKey(playerId, questId),
                 PlayerId = playerId,
                 QuestId = questId,
-                Counter = 0,
+                Counters = new List<int>(),
                 Status = QuestStatus.Active,
                 UpdatedUtc = DateTime.UtcNow,
             };
@@ -144,17 +166,18 @@ namespace NpcValheim.Persistence
             return entry;
         }
 
-        /// <summary>Advances a kill counter, capped at the goal so it can't overshoot.
+        /// <summary>Advances one objective's counter, capped at its goal so it can't overshoot.
         /// No-op unless the quest is actually active for that player.</summary>
-        public static int AddProgress(long playerId, string questId, int delta, int goal)
+        public static int AddProgress(long playerId, string questId, int objectiveIndex, int delta, int goal)
         {
             var entry = Get(playerId, questId);
             if (entry == null || entry.Status != QuestStatus.Active) return 0;
 
-            entry.Counter = Math.Min(goal, entry.Counter + Math.Max(0, delta));
+            int now = Math.Min(goal, entry.CounterAt(objectiveIndex) + Math.Max(0, delta));
+            entry.SetCounterAt(objectiveIndex, now);
             entry.UpdatedUtc = DateTime.UtcNow;
             Write(quests => quests.Update(entry));
-            return entry.Counter;
+            return now;
         }
 
         /// <summary>Marks a quest done, or clears it back to NotStarted when it is repeatable
@@ -165,7 +188,7 @@ namespace NpcValheim.Persistence
             if (entry == null) return;
 
             entry.TimesCompleted++;
-            entry.Counter = 0;
+            entry.Counters = new List<int>();
             entry.UpdatedUtc = DateTime.UtcNow;
             entry.CompletedUtcTicks = DateTime.UtcNow.Ticks;
 

@@ -1,0 +1,21 @@
+# Importado do KG Marketplace: Cidades.cfg [MNSword]
+# Cooldown original: 999999999 (lido como horas)
+id: mnsword
+name: "Espada de Metal Negro"
+description: "Espada de Metal Negro"
+objectives:
+  - kind: Collect
+    target: "BlackMetal"
+    amount: 20
+requiredLevel: 60
+repeatable: false
+resetHours: 0
+requiresQuests:
+  - pratasword
+rewards:
+  coins: 0
+  experience: 6000
+  items:
+    - itemName: "SwordBlackmetal"
+      amount: 1
+      quality: 1

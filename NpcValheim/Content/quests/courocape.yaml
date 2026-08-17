@@ -1,0 +1,21 @@
+# Importado do KG Marketplace: Cidades.cfg [CouroCape]
+# Cooldown original: 999999999 (lido como horas)
+id: courocape
+name: "Capa de Pele de Cervo"
+description: "Cace greylings eles me irritam, assim você poderá progredir para nossa maior ameaça."
+objectives:
+  - kind: Kill
+    target: "Greyling"
+    amount: 5
+requiredLevel: 0
+repeatable: false
+resetHours: 0
+requiresQuests:
+  - courochest
+rewards:
+  coins: 0
+  experience: 700
+  items:
+    - itemName: "CapeDeerHide"
+      amount: 1
+      quality: 2

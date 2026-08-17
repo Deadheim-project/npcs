@@ -1,0 +1,10 @@
+# Importado do KG Marketplace: QuestProfiles/QuestsProfiles.cfg [Troll]
+name: ""
+forType: QuestGiver
+questGiver:
+  quests:
+    - trollhelmet   # Elmo de Couro de Troll
+    - trollchest   # Túnica de Couro de Troll
+    - trolllegs   # Calça de Couro de Troll
+    - trollcape   # Capa de Couro de Troll
+    - elder   # Ameaça da Floresta Negra

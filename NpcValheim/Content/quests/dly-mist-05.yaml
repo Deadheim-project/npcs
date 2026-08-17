@@ -1,0 +1,15 @@
+# Importado do KG Marketplace: Toril.cfg [DLY_MIST_05]
+# Cooldown original: 30 (lido como horas)
+id: dly-mist-05
+name: "Quest - Gjall"
+description: "Barulhento e Asqueroso...."
+objectives:
+  - kind: Kill
+    target: "Gjall"
+    amount: 2
+requiredLevel: 50
+repeatable: false
+resetHours: 30
+rewards:
+  coins: 1500
+  experience: 15000

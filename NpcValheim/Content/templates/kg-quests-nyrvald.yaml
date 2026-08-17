@@ -1,0 +1,6 @@
+# Importado do KG Marketplace: QuestProfiles/QuestsProfiles.cfg [Nyrvald]
+name: ""
+forType: QuestGiver
+questGiver:
+  quests:
+    - traveler03   # Encontrar Sitric Caech

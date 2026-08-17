@@ -1,0 +1,15 @@
+# Importado do KG Marketplace: SivHerbalistaAesir.cfg [Dly_SivHerbalista_10vip]
+# Cooldown original: 20 (lido como horas)
+id: dly-sivherbalista-10vip
+name: "Quest - Presa de Lobo"
+description: "Coletar Presa de Lobo nas Montanhas."
+objectives:
+  - kind: Collect
+    target: "WolfFang"
+    amount: 20
+requiredLevel: 45
+repeatable: false
+resetHours: 20
+rewards:
+  coins: 0
+  experience: 10000

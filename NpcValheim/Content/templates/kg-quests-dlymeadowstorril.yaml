@@ -1,0 +1,9 @@
+# Importado do KG Marketplace: QuestProfiles/QuestsProfiles.cfg [DLYMEADOWSTORRIL]
+name: ""
+forType: QuestGiver
+questGiver:
+  quests:
+    - dly-meadowst-01   # Quest - Cacar Javalis!!
+    - dly-meadowst-02   # Quest - Caçando lagartos!!
+    - dly-meadowst-03   # Quest - Mate alguns cervos!!
+    - dly-meadowst-04   # Quest - Cinzentos!!

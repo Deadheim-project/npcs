@@ -1,0 +1,20 @@
+# Importado do KG Marketplace: Cidades.cfg [Blob]
+# Cooldown original: 999999999 (lido como horas)
+id: blob
+name: "Mate as bolhas"
+description: "Essas bolhas possuem algo que preciso, elas são venenosas para vocês sacos de sangue fresco, porém seu veneno me serve para poder caminhar durante o dia."
+objectives:
+  - kind: Kill
+    target: "Blob"
+    amount: 6
+  - kind: Kill
+    target: "BlobElite"
+    amount: 2
+requiredLevel: 0
+repeatable: false
+resetHours: 0
+requiresQuests:
+  - draugr
+rewards:
+  coins: 150
+  experience: 1700

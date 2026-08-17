@@ -1,0 +1,13 @@
+# Importado do KG Marketplace: QuestProfiles/QuestsProfiles.cfg [Prata]
+name: ""
+forType: QuestGiver
+questGiver:
+  quests:
+    - pratahelmet   # Elmo de Dragão
+    - pratachest   # Armadura de Lobo
+    - pratalegs   # Calça de Lobo
+    - pratashield   # Escudo de Prata
+    - pratabow   # Arco Presa de Draugr
+    - pratasword   # Espada de Prata
+    - pratacape   # Capa de Lobo
+    - dragon   # Ameaça da Montanha

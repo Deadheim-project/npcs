@@ -1,0 +1,20 @@
+# Importado do KG Marketplace: Traders/TraderProfiles.cfg [ComidasAsh]
+# Sem 'name': aplicar este modelo troca a lista de precos e deixa o
+# nome do NPC como esta.
+name: ""
+forType: Marketplace
+marketplace:
+  taxPercent: 0
+  sells:
+    - itemName: "FierySvinstew"
+      price: 130
+    - itemName: "PiquantPie"
+      price: 150
+    - itemName: "RoastedCrustPie"
+      price: 130
+    - itemName: "MashedMeat"
+      price: 150
+    - itemName: "ScorchingMedley"
+      price: 120
+    - itemName: "SpicyMarmalade"
+      price: 120

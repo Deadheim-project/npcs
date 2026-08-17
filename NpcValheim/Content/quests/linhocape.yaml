@@ -1,0 +1,21 @@
+# Importado do KG Marketplace: Cidades.cfg [LinhoCape]
+# Cooldown original: 999999999 (lido como horas)
+id: linhocape
+name: "Capa de Linho"
+description: "Capa de Linho"
+objectives:
+  - kind: Collect
+    target: "LinenThread"
+    amount: 20
+requiredLevel: 60
+repeatable: false
+resetHours: 0
+requiresQuests:
+  - pratacape
+rewards:
+  coins: 0
+  experience: 6000
+  items:
+    - itemName: "CapeLinen"
+      amount: 1
+      quality: 1

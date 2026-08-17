@@ -1,0 +1,9 @@
+# Importado do KG Marketplace: QuestProfiles/QuestsProfiles.cfg [Couro]
+name: ""
+forType: QuestGiver
+questGiver:
+  quests:
+    - courohelmet   # Elmo de Couro
+    - courolegs   # Calça de Couro
+    - courochest   # Túnica de Couro
+    - courocape   # Capa de Pele de Cervo

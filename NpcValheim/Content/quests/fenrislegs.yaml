@@ -1,0 +1,21 @@
+# Importado do KG Marketplace: Cidades.cfg [FenrisLegs]
+# Cooldown original: 999999999 (lido como horas)
+id: fenrislegs
+name: "Calças de Fenris"
+description: "Calças de Fenris"
+objectives:
+  - kind: Collect
+    target: "WolfHairBundle"
+    amount: 20
+requiredLevel: 45
+repeatable: false
+resetHours: 0
+requiresQuests:
+  - raizlegs
+rewards:
+  coins: 0
+  experience: 5000
+  items:
+    - itemName: "ArmorFenringLegs"
+      amount: 1
+      quality: 1

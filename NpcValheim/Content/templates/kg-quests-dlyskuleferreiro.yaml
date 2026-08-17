@@ -1,0 +1,8 @@
+# Importado do KG Marketplace: QuestProfiles/QuestsProfiles.cfg [DLYSkuleFerreiro]
+name: ""
+forType: QuestGiver
+questGiver:
+  quests:
+    - dly-ferreiro-01   # Quest - Coletar Cobre
+    - dly-ferreiro-02   # Quest - Coletar Estanho
+    - dly-ferreiro-03   # Quest - Fazer Bronze

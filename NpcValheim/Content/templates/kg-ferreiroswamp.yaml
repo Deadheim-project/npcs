@@ -1,0 +1,16 @@
+# Importado do KG Marketplace: Traders/TraderProfiles.cfg [FerreiroSwamp]
+# Sem 'name': aplicar este modelo troca a lista de precos e deixa o
+# nome do NPC como esta.
+name: ""
+forType: Marketplace
+marketplace:
+  taxPercent: 0
+  sells:
+    - itemName: "IronScrap"
+      price: 50
+    - itemName: "Iron"
+      price: 100
+    - itemName: "Guck"
+      price: 30
+    - itemName: "PortalToken"
+      price: 2500

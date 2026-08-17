@@ -1,0 +1,17 @@
+# Importado do KG Marketplace: Cidades.cfg [Troll]
+# Cooldown original: 999999999 (lido como horas)
+id: troll
+name: "Mate o troll"
+description: "Malditos trolls, já perdi um castelo por causa deles, mate-os!"
+objectives:
+  - kind: Kill
+    target: "Troll"
+    amount: 1
+requiredLevel: 0
+repeatable: false
+resetHours: 0
+requiresQuests:
+  - urso
+rewards:
+  coins: 200
+  experience: 2000

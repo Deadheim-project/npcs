@@ -1,0 +1,15 @@
+# Importado do KG Marketplace: TorilAesir.cfg [DLY_ASH_02vip]
+# Cooldown original: 30 (lido como horas)
+id: dly-ash-02vip
+name: "Quest - Asksvin"
+description: "Criatura estranha ..."
+objectives:
+  - kind: Kill
+    target: "Asksvin"
+    amount: 5
+requiredLevel: 50
+repeatable: false
+resetHours: 30
+rewards:
+  coins: 1800
+  experience: 18000

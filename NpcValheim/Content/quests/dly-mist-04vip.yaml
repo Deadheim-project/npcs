@@ -1,0 +1,15 @@
+# Importado do KG Marketplace: TorilAesir.cfg [DLY_MIST_04vip]
+# Cooldown original: 30 (lido como horas)
+id: dly-mist-04vip
+name: "Quest - Carrapatos"
+description: "Nojentos...."
+objectives:
+  - kind: Kill
+    target: "Tick"
+    amount: 10
+requiredLevel: 50
+repeatable: false
+resetHours: 30
+rewards:
+  coins: 1200
+  experience: 10000

@@ -1,0 +1,15 @@
+# Importado do KG Marketplace: TorilAesir.cfg [DLY_SWAMP_03vip]
+# Cooldown original: 30 (lido como horas)
+id: dly-swamp-03vip
+name: "Quest - Sangue-Sugas !!"
+description: "Fino e feio que seu p....."
+objectives:
+  - kind: Kill
+    target: "Leech"
+    amount: 15
+requiredLevel: 30
+repeatable: false
+resetHours: 30
+rewards:
+  coins: 200
+  experience: 2800

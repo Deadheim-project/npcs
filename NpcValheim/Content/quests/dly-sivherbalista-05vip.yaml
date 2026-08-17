@@ -1,0 +1,15 @@
+# Importado do KG Marketplace: SivHerbalistaAesir.cfg [Dly_SivHerbalista_05vip]
+# Cooldown original: 20 (lido como horas)
+id: dly-sivherbalista-05vip
+name: "Quest - Colete Cardo"
+description: "Pege alguns cardos."
+objectives:
+  - kind: Collect
+    target: "Thistle"
+    amount: 20
+requiredLevel: 15
+repeatable: false
+resetHours: 20
+rewards:
+  coins: 0
+  experience: 3000

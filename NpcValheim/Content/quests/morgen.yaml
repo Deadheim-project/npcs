@@ -1,0 +1,17 @@
+# Importado do KG Marketplace: Cidades.cfg [morgen]
+# Cooldown original: 999999999 (lido como horas)
+id: morgen
+name: "Ossos rolantes"
+description: "Esse monstro de ossos estão acostumados a esmagar seus desafiadores, enfrente-os e pegue sua recompensa!"
+objectives:
+  - kind: Kill
+    target: "Morgen"
+    amount: 3
+requiredLevel: 0
+repeatable: false
+resetHours: 0
+requiresQuests:
+  - charred
+rewards:
+  coins: 4000
+  experience: 15000

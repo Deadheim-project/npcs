@@ -1,0 +1,24 @@
+# Importado do KG Marketplace: Cidades.cfg [MNPicareta]
+# Cooldown original: 999999999 (lido como horas)
+id: mnpicareta
+name: "Picareta de Metal Negro"
+description: "Picareta de Metal Negro"
+objectives:
+  - kind: Collect
+    target: "BlackMetal"
+    amount: 23
+  - kind: Collect
+    target: "YggdrasilWood"
+    amount: 5
+requiredLevel: 60
+repeatable: false
+resetHours: 0
+requiresQuests:
+  - mnaxe
+rewards:
+  coins: 0
+  experience: 6000
+  items:
+    - itemName: "PickaxeBlackMetal"
+      amount: 1
+      quality: 1

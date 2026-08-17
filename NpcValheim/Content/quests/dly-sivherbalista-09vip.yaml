@@ -1,0 +1,15 @@
+# Importado do KG Marketplace: SivHerbalistaAesir.cfg [Dly_SivHerbalista_09vip]
+# Cooldown original: 20 (lido como horas)
+id: dly-sivherbalista-09vip
+name: "Quest - Glândula de Gelo"
+description: "Coletar Glândula de Gelo nas Montanhas."
+objectives:
+  - kind: Collect
+    target: "FreezeGland"
+    amount: 30
+requiredLevel: 45
+repeatable: false
+resetHours: 20
+rewards:
+  coins: 0
+  experience: 10000

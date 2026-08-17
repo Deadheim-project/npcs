@@ -1,0 +1,10 @@
+# Importado do KG Marketplace: QuestProfiles/QuestsProfiles.cfg [Surkhan]
+name: ""
+forType: QuestGiver
+questGiver:
+  quests:
+    - selvagem   # Fogo Selvagem
+    - charred   # Guerreiros Caídos
+    - morgen   # Ossos rolantes
+    - valk   # Divindades caídas
+    - fader   # Ameaça na Ashlands

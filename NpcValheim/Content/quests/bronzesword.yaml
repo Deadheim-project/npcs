@@ -1,0 +1,21 @@
+# Importado do KG Marketplace: Cidades.cfg [BronzeSword]
+# Cooldown original: 999999999 (lido como horas)
+id: bronzesword
+name: "Espada de Bronze"
+description: "Fabricar Bronze"
+objectives:
+  - kind: Collect
+    target: "Bronze"
+    amount: 10
+requiredLevel: 15
+repeatable: false
+resetHours: 0
+requiresQuests:
+  - trollcape
+rewards:
+  coins: 0
+  experience: 1000
+  items:
+    - itemName: "SwordBronze"
+      amount: 1
+      quality: 2

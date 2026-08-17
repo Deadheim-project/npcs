@@ -1,0 +1,9 @@
+# Importado do KG Marketplace: QuestProfiles/QuestsProfilesAesir.cfg [DLYMEADOWSTORRILaesir]
+name: ""
+forType: QuestGiver
+questGiver:
+  quests:
+    - dly-meadowst-01vip   # Quest - Cacar Javalis!!
+    - dly-meadowst-02vip   # Quest - Caçando lagartos!!
+    - dly-meadowst-03vip   # Quest - Mate alguns cervos!!
+    - dly-meadowst-04vip   # Quest - Cinzentos!!

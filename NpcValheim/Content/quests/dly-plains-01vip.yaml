@@ -1,0 +1,15 @@
+# Importado do KG Marketplace: TorilAesir.cfg [DLY_PLAINS_01vip]
+# Cooldown original: 30 (lido como horas)
+id: dly-plains-01vip
+name: "Quest - Deathsquito"
+description: "Deathsquito cuidado...."
+objectives:
+  - kind: Kill
+    target: "Deathsquito"
+    amount: 15
+requiredLevel: 40
+repeatable: false
+resetHours: 30
+rewards:
+  coins: 900
+  experience: 8000

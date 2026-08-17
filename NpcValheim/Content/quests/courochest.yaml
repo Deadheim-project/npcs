@@ -1,0 +1,30 @@
+# Importado do KG Marketplace: Cidades.cfg [CouroChest]
+# Cooldown original: 999999999 (lido como horas)
+id: courochest
+name: "Túnica de Couro"
+description: "Cace cervos e javalis que iremos fazer um banquete com essa carne, te entregarei algumas comidas e mais equipamentos"
+objectives:
+  - kind: Kill
+    target: "Deer"
+    amount: 5
+  - kind: Kill
+    target: "Boar"
+    amount: 5
+requiredLevel: 0
+repeatable: false
+resetHours: 0
+requiresQuests:
+  - courolegs
+rewards:
+  coins: 0
+  experience: 700
+  items:
+    - itemName: "ArmorLeatherChest"
+      amount: 1
+      quality: 2
+    - itemName: "DeerStew"
+      amount: 5
+      quality: 1
+    - itemName: "BoarJerky"
+      amount: 5
+      quality: 1

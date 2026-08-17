@@ -1,0 +1,8 @@
+# Importado do KG Marketplace: QuestProfiles/QuestsProfiles.cfg [SivHerbalista1]
+name: ""
+forType: QuestGiver
+questGiver:
+  quests:
+    - dly-sivherbalista-03   # Quest - Colhendo Cenouras
+    - dly-sivherbalista-04   # Quest - Colete Mirtilos
+    - dly-sivherbalista-05   # Quest - Colete Cardo

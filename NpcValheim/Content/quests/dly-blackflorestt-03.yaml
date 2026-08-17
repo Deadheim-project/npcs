@@ -1,0 +1,15 @@
+# Importado do KG Marketplace: Toril.cfg [DLY_BLACKFLORESTT_03]
+# Cooldown original: 30 (lido como horas)
+id: dly-blackflorestt-03
+name: "Quest - Aqueles Xamas!!"
+description: "O xamas são um problema, eles curam basante as criaturas, elimine eles primeiro."
+objectives:
+  - kind: Kill
+    target: "Greydwarf_Shaman"
+    amount: 5
+requiredLevel: 15
+repeatable: false
+resetHours: 30
+rewards:
+  coins: 150
+  experience: 1500

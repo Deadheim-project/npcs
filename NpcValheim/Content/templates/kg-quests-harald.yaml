@@ -1,0 +1,7 @@
+# Importado do KG Marketplace: QuestProfiles/QuestsProfiles.cfg [Harald]
+name: ""
+forType: QuestGiver
+questGiver:
+  quests:
+    - totem   # Totem de Proteção
+    - deadvar   # Encontrar o Rei Eldgar

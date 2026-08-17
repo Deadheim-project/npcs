@@ -1,0 +1,21 @@
+# Importado do KG Marketplace: Cidades.cfg [FerroAxe]
+# Cooldown original: 999999999 (lido como horas)
+id: ferroaxe
+name: "Machado de Ferro"
+description: "Forjar Ferro"
+objectives:
+  - kind: Collect
+    target: "Iron"
+    amount: 20
+requiredLevel: 30
+repeatable: false
+resetHours: 0
+requiresQuests:
+  - bronzeaxe
+rewards:
+  coins: 0
+  experience: 1500
+  items:
+    - itemName: "AxeIron"
+      amount: 1
+      quality: 1

@@ -1,0 +1,24 @@
+# Importado do KG Marketplace: Traders/TraderProfiles.cfg [FerreiroGelo]
+# Sem 'name': aplicar este modelo troca a lista de precos e deixa o
+# nome do NPC como esta.
+name: ""
+forType: Marketplace
+marketplace:
+  taxPercent: 0
+  sells:
+    - itemName: "SilverOre"
+      price: 300
+    - itemName: "Obsidian"
+      price: 20
+    - itemName: "Crystal"
+      price: 10
+    - itemName: "WolfPelt"
+      price: 50
+    - itemName: "FreezeGland"
+      price: 25
+    - itemName: "WolfHairBundle"
+      price: 70
+    - itemName: "WolfClaw"
+      price: 70
+    - itemName: "JuteRed"
+      price: 100

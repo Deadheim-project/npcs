@@ -1,0 +1,24 @@
+# Importado do KG Marketplace: Cidades.cfg [MNChest]
+# Cooldown original: 999999999 (lido como horas)
+id: mnchest
+name: "Armadura Acolchoada"
+description: "Armadura Acolchoada"
+objectives:
+  - kind: Collect
+    target: "Iron"
+    amount: 10
+  - kind: Collect
+    target: "LinenThread"
+    amount: 18
+requiredLevel: 60
+repeatable: false
+resetHours: 0
+requiresQuests:
+  - pratachest
+rewards:
+  coins: 0
+  experience: 6000
+  items:
+    - itemName: "ArmorPaddedCuirass"
+      amount: 1
+      quality: 1

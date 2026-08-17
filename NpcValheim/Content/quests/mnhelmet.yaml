@@ -1,0 +1,24 @@
+# Importado do KG Marketplace: Cidades.cfg [MNHelmet]
+# Cooldown original: 999999999 (lido como horas)
+id: mnhelmet
+name: "Elmo Acolchoado"
+description: "Elmo Acolchoado"
+objectives:
+  - kind: Collect
+    target: "Iron"
+    amount: 10
+  - kind: Collect
+    target: "LinenThread"
+    amount: 12
+requiredLevel: 60
+repeatable: false
+resetHours: 0
+requiresQuests:
+  - pratahelmet
+rewards:
+  coins: 0
+  experience: 6000
+  items:
+    - itemName: "HelmetPadded"
+      amount: 1
+      quality: 1

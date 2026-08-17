@@ -1,0 +1,26 @@
+# Importado do KG Marketplace: Traders/TraderProfiles.cfg [ComidasMist]
+# Sem 'name': aplicar este modelo troca a lista de precos e deixa o
+# nome do NPC como esta.
+name: ""
+forType: Marketplace
+marketplace:
+  taxPercent: 0
+  sells:
+    - itemName: "MisthareSupreme"
+      price: 80
+    - itemName: "MushroomOmelette"
+      price: 80
+    - itemName: "HoneyGlazedChicken"
+      price: 80
+    - itemName: "MeatPlatter"
+      price: 100
+    - itemName: "Salad"
+      price: 100
+    - itemName: "MagicallyStuffedShroom"
+      price: 125
+    - itemName: "SeekerAspic"
+      price: 130
+    - itemName: "YggdrasilPorridge"
+      price: 130
+    - itemName: "FeastMistlands_Material"
+      price: 200

@@ -1,0 +1,15 @@
+# Importado do KG Marketplace: TorilAesir.cfg [DLY_BLACKFLORESTT_01vip]
+# Cooldown original: 30 (lido como horas)
+id: dly-blackflorestt-01vip
+name: "Quest - Malditos Cinzentos!!"
+description: "Lide com alguns anoes cinzentos na floresta negra, desculpa... não sabia que eram seus parentes."
+objectives:
+  - kind: Kill
+    target: "Greydwarf"
+    amount: 10
+requiredLevel: 15
+repeatable: false
+resetHours: 30
+rewards:
+  coins: 75
+  experience: 1500

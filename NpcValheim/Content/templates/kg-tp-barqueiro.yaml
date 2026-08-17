@@ -1,0 +1,59 @@
+# Importado do KG Marketplace: Teleporters/TeleportHubProfiles.cfg [Barqueiro]
+# KG cobrava por NPC, nao por destino. Cada rota fica em 0 -- ajuste
+# 'cost' por destino no painel de admin.
+name: ""
+forType: Teleporter
+teleporter:
+  costItem: Coins
+  costAmount: 0
+  cooldownSeconds: 0
+  destinations:
+    - id: fortaleza-de-eldgard
+      name: "Fortaleza de Eldgard"
+      x: -346
+      y: 35
+      z: -118
+      yaw: 0
+      cost: 0
+    - id: castelo-de-skorgheim
+      name: "Castelo de Skorgheim"
+      x: -440
+      y: 32
+      z: 2136
+      yaw: 0
+      cost: 0
+    - id: fortaleza-shagrath
+      name: "Fortaleza Shagrath"
+      x: 1983
+      y: 30
+      z: 1207
+      yaw: 0
+      cost: 0
+    - id: fortaleza-de-ulvheim
+      name: "Fortaleza de Ulvheim"
+      x: 2049
+      y: 188
+      z: 167
+      yaw: 0
+      cost: 0
+    - id: castelo-dromvald
+      name: "Castelo Dromvald"
+      x: -2486
+      y: 33
+      z: -3487
+      yaw: 0
+      cost: 0
+    - id: fortaleza-nebelheim
+      name: "Fortaleza Nebelheim"
+      x: 5056
+      y: 33
+      z: 5046
+      yaw: 0
+      cost: 0
+    - id: brimskall
+      name: "Brimskall"
+      x: 941
+      y: 35
+      z: -9957
+      yaw: 0
+      cost: 0

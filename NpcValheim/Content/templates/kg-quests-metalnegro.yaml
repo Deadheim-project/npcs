@@ -1,0 +1,15 @@
+# Importado do KG Marketplace: QuestProfiles/QuestsProfiles.cfg [Metalnegro]
+name: ""
+forType: QuestGiver
+questGiver:
+  quests:
+    - mnhelmet   # Elmo Acolchoado
+    - mnchest   # Armadura Acolchoada
+    - mnlegs   # Perneiras Acolchoada
+    - linhocape   # Capa de Linho
+    - loxcape   # Capa de Lox
+    - mnsword   # Espada de Metal Negro
+    - mnaxe   # Machado de Metal Negro
+    - mnpicareta   # Picareta de Metal Negro
+    - mnshield   # Broquel de Metal Negro
+    - yagluth   # Ameaça da Planicie

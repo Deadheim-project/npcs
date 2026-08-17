@@ -1,0 +1,8 @@
+# Importado do KG Marketplace: QuestProfiles/QuestsProfiles.cfg [Fenris]
+name: ""
+forType: QuestGiver
+questGiver:
+  quests:
+    - fenrishelmet   # Capuz de Fenris
+    - fenrischest   # Armadura de Fenris
+    - fenrislegs   # Calças de Fenris

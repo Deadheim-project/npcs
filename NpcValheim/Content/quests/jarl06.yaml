@@ -1,0 +1,21 @@
+# Importado do KG Marketplace: Cidades.cfg [Jarl06]
+# Cooldown original: 999999999 (lido como horas)
+id: jarl06
+name: "Encontrar o Rei Velkar"
+description: "Encontre o Rei Velkar pois ele está tendo problemas em sua região"
+objectives:
+  - kind: Talk
+    target: "Velkar"
+    amount: 1
+requiredLevel: 0
+repeatable: false
+resetHours: 0
+requiresQuests:
+  - yagluth
+rewards:
+  coins: 0
+  experience: 150
+  items:
+    - itemName: "Demister"
+      amount: 1
+      quality: 1

@@ -1,0 +1,15 @@
+# Importado do KG Marketplace: SivHerbalistaAesir.cfg [Dly_SivHerbalista_19vip]
+# Cooldown original: 20 (lido como horas)
+id: dly-sivherbalista-19vip
+name: "Quest - Coletar Bilebag"
+description: "Coletar Bilebag nas Mistlands."
+objectives:
+  - kind: Collect
+    target: "Bilebag"
+    amount: 10
+requiredLevel: 75
+repeatable: false
+resetHours: 20
+rewards:
+  coins: 0
+  experience: 20000

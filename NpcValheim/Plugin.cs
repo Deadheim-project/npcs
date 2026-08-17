@@ -141,6 +141,10 @@ namespace NpcValheim
             QuestDatabase.Init(Path.Combine(Path.GetDirectoryName(dbPath)!, "quests.db"));
 
 
+            // Before anything reads the quests folder, so the shipped content is already there
+            // the first time a quest giver is asked what it offers.
+            ContentSeeder.Run();
+
             UiRoot.EnsureCreated();
 
             // No mail HUD. Reading your post is something you go to the Caixa Postal for --

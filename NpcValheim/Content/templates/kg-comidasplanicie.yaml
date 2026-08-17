@@ -1,0 +1,26 @@
+# Importado do KG Marketplace: Traders/TraderProfiles.cfg [ComidasPlanicie]
+# Sem 'name': aplicar este modelo troca a lista de precos e deixa o
+# nome do NPC como esta.
+name: ""
+forType: Marketplace
+marketplace:
+  taxPercent: 0
+  sells:
+    - itemName: "Bread"
+      price: 50
+    - itemName: "SerpentMeatCooked"
+      price: 60
+    - itemName: "LoxPie"
+      price: 70
+    - itemName: "FishWraps"
+      price: 70
+    - itemName: "SerpentStew"
+      price: 100
+    - itemName: "Fish5"
+      price: 15
+    - itemName: "Fish7"
+      price: 100
+    - itemName: "Fish9"
+      price: 150
+    - itemName: "Chitin"
+      price: 50

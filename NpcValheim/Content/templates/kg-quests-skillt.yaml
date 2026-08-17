@@ -1,0 +1,6 @@
+# Importado do KG Marketplace: QuestProfiles/QuestsProfiles.cfg [skillt]
+name: ""
+forType: QuestGiver
+questGiver:
+  quests:
+    - skill1   # Treinamento Ninja!

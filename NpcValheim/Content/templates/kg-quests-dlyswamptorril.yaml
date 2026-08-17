@@ -1,0 +1,13 @@
+# Importado do KG Marketplace: QuestProfiles/QuestsProfiles.cfg [DLYSWAMPTORRIL]
+name: ""
+forType: QuestGiver
+questGiver:
+  quests:
+    - dly-swamp-01   # Quest - Draugr !!
+    - dly-swamp-02   # Quest - Draugr Elite !!
+    - dly-swamp-03   # Quest - Sangue-Sugas !!
+    - dly-swamp-04   # Quest - Abominações
+    - dly-swamp-05   # Quest - Fantasmas
+    - dly-swamp-06   # Quest - Bolha
+    - dly-swamp-07   # Quest - Bolha Elite
+    - dly-swamp-08   # Quest - Serpentes

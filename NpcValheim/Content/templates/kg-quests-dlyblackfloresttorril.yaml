@@ -1,0 +1,11 @@
+# Importado do KG Marketplace: QuestProfiles/QuestsProfiles.cfg [DLYBLACKFLORESTTORRIL]
+name: ""
+forType: QuestGiver
+questGiver:
+  quests:
+    - dly-blackflorestt-01   # Quest - Malditos Cinzentos!!
+    - dly-blackflorestt-02   # Quest - Caçando Brutos!!
+    - dly-blackflorestt-03   # Quest - Aqueles Xamas!!
+    - dly-blackflorestt-04   # Quest - Troll!!
+    - dly-blackflorestt-05   # Quest - Esqueletos!!!
+    - dly-blackflorestt-06   # Quest - Ursos!!!

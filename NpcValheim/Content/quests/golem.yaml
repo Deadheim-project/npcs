@@ -1,0 +1,17 @@
+# Importado do KG Marketplace: Cidades.cfg [golem]
+# Cooldown original: 999999999 (lido como horas)
+id: golem
+name: "Golems de pedra"
+description: "Essas criaturas de pedra é um grande problema para nós, ela é bastante resistente e ameaça nossa segurança, acabe com eles!"
+objectives:
+  - kind: Kill
+    target: "StoneGolem"
+    amount: 3
+requiredLevel: 0
+repeatable: false
+resetHours: 0
+requiresQuests:
+  - dgneve
+rewards:
+  coins: 1000
+  experience: 6000

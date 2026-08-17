@@ -1,0 +1,15 @@
+# Importado do KG Marketplace: SivHerbalistaAesir.cfg [Dly_SivHerbalista_18vip]
+# Cooldown original: 20 (lido como horas)
+id: dly-sivherbalista-18vip
+name: "Quest - Coletar Black Core"
+description: "Coletar Black Core nas Mistlands"
+objectives:
+  - kind: Collect
+    target: "BlackCore"
+    amount: 5
+requiredLevel: 75
+repeatable: false
+resetHours: 20
+rewards:
+  coins: 0
+  experience: 20000

@@ -1,0 +1,20 @@
+# Importado do KG Marketplace: Cidades.cfg [pequenos]
+# Cooldown original: 999999999 (lido como horas)
+id: pequenos
+name: "Malditos pequenos"
+description: "Jarl Sigvard te enviou para esta terra nebulosa?! Precisamos limpar essa terra dessas criaturas nogentas, preciso que comece com os pequenos malditos!"
+objectives:
+  - kind: Kill
+    target: "Tick"
+    amount: 10
+  - kind: Kill
+    target: "SeekerBrood"
+    amount: 10
+requiredLevel: 0
+repeatable: false
+resetHours: 0
+requiresQuests:
+  - jarl06
+rewards:
+  coins: 2000
+  experience: 10000

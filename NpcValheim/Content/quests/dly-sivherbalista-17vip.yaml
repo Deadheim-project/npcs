@@ -1,0 +1,15 @@
+# Importado do KG Marketplace: SivHerbalistaAesir.cfg [Dly_SivHerbalista_17vip]
+# Cooldown original: 20 (lido como horas)
+id: dly-sivherbalista-17vip
+name: "Quest - Magecap"
+description: "Colha Magecap em sua plantação"
+objectives:
+  - kind: Gather
+    target: "Pickable_Mushroom_Magecap"
+    amount: 50
+requiredLevel: 75
+repeatable: false
+resetHours: 20
+rewards:
+  coins: 0
+  experience: 18000

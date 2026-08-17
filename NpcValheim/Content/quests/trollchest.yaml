@@ -1,0 +1,21 @@
+# Importado do KG Marketplace: Cidades.cfg [TrollChest]
+# Cooldown original: 999999999 (lido como horas)
+id: trollchest
+name: "Túnica de Couro de Troll"
+description: "Caçar Trolls"
+objectives:
+  - kind: Kill
+    target: "Troll"
+    amount: 1
+requiredLevel: 0
+repeatable: false
+resetHours: 0
+requiresQuests:
+  - trollhelmet
+rewards:
+  coins: 0
+  experience: 1000
+  items:
+    - itemName: "ArmorTrollLeatherChest"
+      amount: 1
+      quality: 2

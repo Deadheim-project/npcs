@@ -1,0 +1,15 @@
+# Importado do KG Marketplace: SivHerbalista.cfg [Dly_SivHerbalista_14]
+# Cooldown original: 30 (lido como horas)
+id: dly-sivherbalista-14
+name: "Quest - Coletar Nuvinesa"
+description: "Coletar Nuvinesa na Planície"
+objectives:
+  - kind: Collect
+    target: "Cloudberry"
+    amount: 50
+requiredLevel: 60
+repeatable: false
+resetHours: 30
+rewards:
+  coins: 0
+  experience: 4500

@@ -1,0 +1,8 @@
+# Importado do KG Marketplace: QuestProfiles/QuestsProfilesAesir.cfg [SivHerbalista2aesir]
+name: ""
+forType: QuestGiver
+questGiver:
+  quests:
+    - dly-sivherbalista-06vip   # Quest - Colhendo Nabo
+    - dly-sivherbalista-07vip   # Quest - Entranhas
+    - dly-sivherbalista-08vip   # Quest - Lodo

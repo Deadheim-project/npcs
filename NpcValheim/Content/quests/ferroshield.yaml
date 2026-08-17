@@ -1,0 +1,21 @@
+# Importado do KG Marketplace: Cidades.cfg [FerroShield]
+# Cooldown original: 999999999 (lido como horas)
+id: ferroshield
+name: "Escudo de Ferro"
+description: "Forjar Ferro"
+objectives:
+  - kind: Collect
+    target: "Iron"
+    amount: 15
+requiredLevel: 30
+repeatable: false
+resetHours: 0
+requiresQuests:
+  - bronzeshield
+rewards:
+  coins: 0
+  experience: 1500
+  items:
+    - itemName: "ShieldIronBuckler"
+      amount: 1
+      quality: 2

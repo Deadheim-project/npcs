@@ -1,0 +1,21 @@
+# Importado do KG Marketplace: Cidades.cfg [Elder]
+# Cooldown original: 999999999 (lido como horas)
+id: elder
+name: "Ameaça da Floresta Negra"
+description: "Existe um grande ser da floresta que é invocado, ele é poderoso porém seu ponto fraco é o mesmo da floresta, o fogo! Acabe com ele para que podemos ficar em segurança."
+objectives:
+  - kind: Kill
+    target: "gd_king"
+    amount: 1
+requiredLevel: 0
+repeatable: false
+resetHours: 0
+requiresQuests:
+  - troll
+rewards:
+  coins: 300
+  experience: 5000
+  items:
+    - itemName: "mmo_xp_drink1"
+      amount: 5
+      quality: 1

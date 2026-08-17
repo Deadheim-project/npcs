@@ -1,0 +1,11 @@
+# Importado do KG Marketplace: QuestProfiles/QuestsProfiles.cfg [Boss]
+name: ""
+forType: QuestGiver
+questGiver:
+  quests:
+    - eikthyr   # Ameaça do Prado
+    - elder   # Ameaça da Floresta Negra
+    - bonemass   # Ameaça do Pantano
+    - dragon   # Ameaça da Montanha
+    - yagluth   # Ameaça da Planicie
+    - seekerqueen   # Ameaça da Mistland

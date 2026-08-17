@@ -1,0 +1,17 @@
+# Importado do KG Marketplace: Cidades.cfg [Traveler05]
+# Cooldown original: 999999999 (lido como horas)
+id: traveler05
+name: "Encontrar Korr"
+description: "Você veio de longe hein?! Se aqueça um pouco e descanse pois irá precisar, pois Korr está bastante distante na Izakaya dos Goblins naquele clima seco da planície em uma pequena ilha que faz divisa com terras nevoadas à nordeste."
+objectives:
+  - kind: Talk
+    target: "Korr"
+    amount: 1
+requiredLevel: 0
+repeatable: false
+resetHours: 0
+requiresQuests:
+  - traveler04
+rewards:
+  coins: 5000
+  experience: 10000

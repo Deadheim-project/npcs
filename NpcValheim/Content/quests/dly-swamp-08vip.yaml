@@ -1,0 +1,15 @@
+# Importado do KG Marketplace: TorilAesir.cfg [DLY_SWAMP_08vip]
+# Cooldown original: 30 (lido como horas)
+id: dly-swamp-08vip
+name: "Quest - Serpentes"
+description: "O Terror dos Mares"
+objectives:
+  - kind: Kill
+    target: "Serpent"
+    amount: 3
+requiredLevel: 30
+repeatable: false
+resetHours: 30
+rewards:
+  coins: 650
+  experience: 4000

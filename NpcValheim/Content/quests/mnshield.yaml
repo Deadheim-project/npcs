@@ -1,0 +1,24 @@
+# Importado do KG Marketplace: Cidades.cfg [MNShield]
+# Cooldown original: 999999999 (lido como horas)
+id: mnshield
+name: "Broquel de Metal Negro"
+description: "Broquel de Metal Negro"
+objectives:
+  - kind: Collect
+    target: "BlackMetal"
+    amount: 12
+  - kind: Collect
+    target: "Chain"
+    amount: 6
+requiredLevel: 60
+repeatable: false
+resetHours: 0
+requiresQuests:
+  - ferroshield
+rewards:
+  coins: 0
+  experience: 6000
+  items:
+    - itemName: "ShieldBlackmetal"
+      amount: 1
+      quality: 2

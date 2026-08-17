@@ -1,0 +1,8 @@
+# Importado do KG Marketplace: QuestProfiles/QuestsProfilesAesir.cfg [DLYSkuleFerreiroaesir]
+name: ""
+forType: QuestGiver
+questGiver:
+  quests:
+    - dly-ferreiro-01vip   # Quest - Coletar Cobre
+    - dly-ferreiro-02vip   # Quest - Coletar Estanho
+    - dly-ferreiro-03vip   # Quest - Fazer Bronze

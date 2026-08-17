@@ -1,0 +1,15 @@
+# Importado do KG Marketplace: SivHerbalistaAesir.cfg [Dly_SivHerbalista_03vip]
+# Cooldown original: 20 (lido como horas)
+id: dly-sivherbalista-03vip
+name: "Quest - Colhendo Cenouras"
+description: "Plante e colha algumas cenouras"
+objectives:
+  - kind: Gather
+    target: "Pickable_Carrot"
+    amount: 50
+requiredLevel: 15
+repeatable: false
+resetHours: 20
+rewards:
+  coins: 0
+  experience: 3000

@@ -1,0 +1,9 @@
+# Importado do KG Marketplace: QuestProfiles/QuestsProfilesAesir.cfg [SivHerbalista4aesir]
+name: ""
+forType: QuestGiver
+questGiver:
+  quests:
+    - dly-sivherbalista-12vip   # Quest - Semeando Cevada
+    - dly-sivherbalista-13vip   # Quest - Semeando Linho
+    - dly-sivherbalista-14vip   # Quest - Coletar Nuvinesa
+    - dly-sivherbalista-15vip   # Quest - Coletar Betume

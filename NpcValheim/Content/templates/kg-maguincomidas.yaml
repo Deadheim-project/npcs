@@ -1,0 +1,26 @@
+# Importado do KG Marketplace: Traders/TraderProfiles.cfg [Maguincomidas]
+# Sem 'name': aplicar este modelo troca a lista de precos e deixa o
+# nome do NPC como esta.
+name: ""
+forType: Marketplace
+marketplace:
+  taxPercent: 0
+  sells:
+    - itemName: "SpiritTotemDO"
+      price: 15
+    - itemName: "SpiritLightDO"
+      price: 30
+    - itemName: "SpiritDeathDO"
+      price: 50
+    - itemName: "SpiritFrostDO"
+      price: 100
+    - itemName: "SpiritFireDO"
+      price: 150
+    - itemName: "SpiritStormDO"
+      price: 200
+    - itemName: "SpiritBloodDO"
+      price: 250
+    - itemName: "Softtissue"
+      price: 10
+    - itemName: "CrystalRoseheartDO"
+      price: 1000

@@ -1,0 +1,16 @@
+# Importado do KG Marketplace: Traders/TraderProfiles.cfg [TraderBronze]
+# Sem 'name': aplicar este modelo troca a lista de precos e deixa o
+# nome do NPC como esta.
+name: ""
+forType: Marketplace
+marketplace:
+  taxPercent: 0
+  sells:
+    - itemName: "Bronze"
+      price: 67
+    - itemName: "CopperOre"
+      price: 17
+    - itemName: "TinOre"
+      price: 17
+    - itemName: "PortalToken"
+      price: 2500

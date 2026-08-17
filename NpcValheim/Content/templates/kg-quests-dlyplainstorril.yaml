@@ -1,0 +1,10 @@
+# Importado do KG Marketplace: QuestProfiles/QuestsProfiles.cfg [DLYPLAINSTORRIL]
+name: ""
+forType: QuestGiver
+questGiver:
+  quests:
+    - dly-plains-01   # Quest - Deathsquito
+    - dly-plains-02   # Quest - Lox
+    - dly-plains-03   # Quest - Goblin
+    - dly-plains-04   # Quest - Berserker
+    - dly-plains-05   # Quest - Betume

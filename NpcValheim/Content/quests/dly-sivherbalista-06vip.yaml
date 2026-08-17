@@ -1,0 +1,15 @@
+# Importado do KG Marketplace: SivHerbalistaAesir.cfg [Dly_SivHerbalista_06vip]
+# Cooldown original: 20 (lido como horas)
+id: dly-sivherbalista-06vip
+name: "Quest - Colhendo Nabo"
+description: "Prepare alguns nabos em sua plantação"
+objectives:
+  - kind: Gather
+    target: "Pickable_Turnip"
+    amount: 50
+requiredLevel: 30
+repeatable: false
+resetHours: 20
+rewards:
+  coins: 0
+  experience: 6000

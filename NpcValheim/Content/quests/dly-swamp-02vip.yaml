@@ -1,0 +1,15 @@
+# Importado do KG Marketplace: TorilAesir.cfg [DLY_SWAMP_02vip]
+# Cooldown original: 30 (lido como horas)
+id: dly-swamp-02vip
+name: "Quest - Draugr Elite !!"
+description: "Parecem com seu pai, fedido e calvo...."
+objectives:
+  - kind: Kill
+    target: "Draugr_Elite"
+    amount: 5
+requiredLevel: 30
+repeatable: false
+resetHours: 30
+rewards:
+  coins: 500
+  experience: 3000

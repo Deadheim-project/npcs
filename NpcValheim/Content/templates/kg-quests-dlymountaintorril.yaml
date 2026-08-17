@@ -1,0 +1,11 @@
+# Importado do KG Marketplace: QuestProfiles/QuestsProfiles.cfg [DLYMOUNTAINTORRIL]
+name: ""
+forType: QuestGiver
+questGiver:
+  quests:
+    - dly-mountain-01   # Quest - Lobos
+    - dly-mountain-02   # Quest - Hatchling
+    - dly-mountain-03   # Quest - Fenring
+    - dly-mountain-04   # Quest - Golem de Pedra
+    - dly-mountain-05   # Quest - Ulvs
+    - dly-mountain-06   # Quest - Cultistas

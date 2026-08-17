@@ -1,0 +1,15 @@
+# Importado do KG Marketplace: Toril.cfg [DLY_MOUNTAIN_04]
+# Cooldown original: 30 (lido como horas)
+id: dly-mountain-04
+name: "Quest - Golem de Pedra"
+description: "Dureza..."
+objectives:
+  - kind: Kill
+    target: "StoneGolem"
+    amount: 2
+requiredLevel: 40
+repeatable: false
+resetHours: 30
+rewards:
+  coins: 800
+  experience: 6000

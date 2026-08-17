@@ -111,7 +111,8 @@ namespace NpcValheim.UI
         {
             var quests = ActiveQuests();
 
-            var signature = string.Join("|", quests.Select(q => $"{q.Id}:{Progress(q)}:{q.Goal}"));
+            var signature = string.Join("|", quests.Select(q =>
+                q.Id + ":" + string.Join(",", Steps(q).Select(s => $"{s.Progress(Player.m_localPlayer)}/{s.Goal}"))));
             if (signature != _signature)
             {
                 _signature = signature;
@@ -136,13 +137,19 @@ namespace NpcValheim.UI
             return new List<QuestEntry>();
         }
 
-        /// <summary>Where the player stands, counted the way this objective is counted --
-        /// Collect reads the bag, everything else reads the server's counter.</summary>
-        private static int Progress(QuestEntry quest)
+        /// <summary>A quest's objectives, never empty. Falls back to the single-objective
+        /// fields for a server still sending the older packet.</summary>
+        internal static List<QuestObjectiveView> Steps(QuestEntry quest)
         {
-            if (quest.Objective != QuestObjectiveKind.Collect) return quest.Counter;
-            var player = Player.m_localPlayer;
-            return player != null ? ItemNames.Count(player.GetInventory(), quest.Target, -1) : 0;
+            if (quest.Objectives != null && quest.Objectives.Count > 0) return quest.Objectives;
+            return new List<QuestObjectiveView>
+            {
+                new QuestObjectiveView
+                {
+                    Kind = quest.Objective, Target = quest.Target,
+                    Goal = quest.Goal, Counter = quest.Counter,
+                },
+            };
         }
 
         private void Rebuild(List<QuestEntry> quests)
@@ -152,8 +159,10 @@ namespace NpcValheim.UI
 
             foreach (var quest in quests)
             {
+                var steps = Steps(quest);
+
                 var entry = ValheimUi.CreateRect("Quest", _list);
-                ValheimUi.SetHeight(entry.gameObject, 44f);
+                ValheimUi.SetHeight(entry.gameObject, 22f + 18f * steps.Count);
                 _rows.Add(entry.gameObject);
 
                 var column = entry.gameObject.AddComponent<VerticalLayoutGroup>();
@@ -167,16 +176,23 @@ namespace NpcValheim.UI
                     TextAlignmentOptions.Right, display: true);
                 AddShadow(title);
 
-                int now = Progress(quest);
-                bool done = now >= quest.Goal;
+                // One line per objective, each ticking off on its own -- a quest asking for
+                // three things is three lines to cross out, which is the whole point of having
+                // a tracker rather than a single "3/10" that hides two of them.
+                var player = Player.m_localPlayer;
+                foreach (var step in steps)
+                {
+                    int now = step.Progress(player);
+                    bool done = step.IsDone(player);
+                    string text = $"{QuestGiverNpc.Describe(step)}  {now}/{step.Goal}";
 
-                // Green with a tick when finished, exactly like the tracker this is modelled
-                // on -- the completion is the moment worth showing.
-                var line = ValheimUi.CreateLabel(entry,
-                    done ? $"<color=#6fbf5b>✔ {quest.ObjectiveText}  {now}/{quest.Goal}</color>"
-                         : $"<color=#c9c1b4>{quest.ObjectiveText}  {now}/{quest.Goal}</color>",
-                    13, ValheimUi.Muted, TextAlignmentOptions.Right);
-                AddShadow(line);
+                    // Green with a tick when finished, exactly like the tracker this is
+                    // modelled on -- the completion is the moment worth showing.
+                    var line = ValheimUi.CreateLabel(entry,
+                        done ? $"<color=#6fbf5b>✔ {text}</color>" : $"<color=#c9c1b4>{text}</color>",
+                        13, ValheimUi.Muted, TextAlignmentOptions.Right);
+                    AddShadow(line);
+                }
             }
         }
 

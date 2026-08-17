@@ -1,0 +1,24 @@
+# Importado do KG Marketplace: Cidades.cfg [PrataChest]
+# Cooldown original: 999999999 (lido como horas)
+id: pratachest
+name: "Armadura de Lobo"
+description: "Armadura de Lobo"
+objectives:
+  - kind: Collect
+    target: "Silver"
+    amount: 20
+  - kind: Collect
+    target: "Chain"
+    amount: 1
+requiredLevel: 45
+repeatable: false
+resetHours: 0
+requiresQuests:
+  - ferrochest
+rewards:
+  coins: 0
+  experience: 5000
+  items:
+    - itemName: "ArmorWolfChest"
+      amount: 1
+      quality: 1

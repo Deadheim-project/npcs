@@ -1,0 +1,15 @@
+# Importado do KG Marketplace: SivHerbalista.cfg [Dly_SivHerbalista_15]
+# Cooldown original: 30 (lido como horas)
+id: dly-sivherbalista-15
+name: "Quest - Coletar Betume"
+description: "Coletar Betume na Planície"
+objectives:
+  - kind: Collect
+    target: "Tar"
+    amount: 30
+requiredLevel: 60
+repeatable: false
+resetHours: 30
+rewards:
+  coins: 0
+  experience: 4500

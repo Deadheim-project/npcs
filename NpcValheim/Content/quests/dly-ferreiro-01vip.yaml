@@ -1,0 +1,15 @@
+# Importado do KG Marketplace: DiariasSkuleFerreiroAesir.cfg [Dly_Ferreiro_01vip]
+# Cooldown original: 20 (lido como horas)
+id: dly-ferreiro-01vip
+name: "Quest - Coletar Cobre"
+description: "Colete alguams unidades de cobre bruto."
+objectives:
+  - kind: Collect
+    target: "CopperOre"
+    amount: 50
+requiredLevel: 15
+repeatable: false
+resetHours: 20
+rewards:
+  coins: 500
+  experience: 2000

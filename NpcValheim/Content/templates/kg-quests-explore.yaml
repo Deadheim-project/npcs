@@ -1,0 +1,6 @@
+# Importado do KG Marketplace: QuestProfiles/QuestsProfiles.cfg [explore]
+name: ""
+forType: QuestGiver
+questGiver:
+  quests:
+    - traveler01   # Encontre Eldrin

@@ -1,0 +1,17 @@
+# Importado do KG Marketplace: Cidades.cfg [growth]
+# Cooldown original: 999999999 (lido como horas)
+id: growth
+name: "Petróleo mortal"
+description: "Em alguns lugares existe uma poça negra que possuem algumas criaturas mortais, é um grande desafio para você, é sua chance de provar seu valor!"
+objectives:
+  - kind: Kill
+    target: "BlobTar"
+    amount: 5
+requiredLevel: 0
+repeatable: false
+resetHours: 0
+requiresQuests:
+  - goblins
+rewards:
+  coins: 3000
+  experience: 8000

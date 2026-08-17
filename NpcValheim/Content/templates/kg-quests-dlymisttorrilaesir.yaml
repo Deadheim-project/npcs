@@ -1,0 +1,10 @@
+# Importado do KG Marketplace: QuestProfiles/QuestsProfilesAesir.cfg [DLYMISTTORRILaesir]
+name: ""
+forType: QuestGiver
+questGiver:
+  quests:
+    - dly-mist-01vip   # Quest - Hare
+    - dly-mist-02vip   # Quest - Seeker
+    - dly-mist-03vip   # Quest - SeekerBrute
+    - dly-mist-04vip   # Quest - Carrapatos
+    - dly-mist-05vip   # Quest - Gjall

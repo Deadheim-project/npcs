@@ -1,0 +1,8 @@
+# Importado do KG Marketplace: QuestProfiles/QuestsProfiles.cfg [Raiz]
+name: ""
+forType: QuestGiver
+questGiver:
+  quests:
+    - raizhelmet   # Máscara de Raízes
+    - raizchest   # Peitoral de Raízes
+    - raizlegs   # Calças de Raízes

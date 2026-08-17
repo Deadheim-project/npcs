@@ -1,0 +1,11 @@
+# Importado do KG Marketplace: QuestProfiles/QuestsProfiles.cfg [skorri]
+name: ""
+forType: QuestGiver
+questGiver:
+  quests:
+    - grey   # Acabe com a infestação de anões cinzentos
+    - skel   # Limpe as masmorras
+    - urso   # Cace o Urso
+    - troll   # Mate o troll
+    - elder   # Ameaça da Floresta Negra
+    - jarl03   # Encontrar o Rei Morveng

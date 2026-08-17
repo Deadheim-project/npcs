@@ -1,0 +1,8 @@
+# Importado do KG Marketplace: QuestProfiles/QuestsProfilesAesir.cfg [SivHerbalista3aesir]
+name: ""
+forType: QuestGiver
+questGiver:
+  quests:
+    - dly-sivherbalista-09vip   # Quest - Glândula de Gelo
+    - dly-sivherbalista-10vip   # Quest - Presa de Lobo
+    - dly-sivherbalista-11vip   # Quest - Colhendo Cebolas

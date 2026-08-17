@@ -1,0 +1,17 @@
+# Importado do KG Marketplace: Cidades.cfg [Skill12]
+# Cooldown original: 999999999 (lido como horas)
+id: skill12
+name: "Espadas"
+description: "Você tem me surpreendido! Mas agora vamos deixar as coisas mais difíceis, a espada é versátil, rápida e eficiente, então cace alguns Brutos!"
+objectives:
+  - kind: Kill
+    target: "GoblinBrute"
+    amount: 5
+requiredLevel: 0
+repeatable: false
+resetHours: 0
+requiresQuests:
+  - skill11
+rewards:
+  coins: 0
+  experience: 0

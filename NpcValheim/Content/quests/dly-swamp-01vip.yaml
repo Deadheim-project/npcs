@@ -1,0 +1,15 @@
+# Importado do KG Marketplace: TorilAesir.cfg [DLY_SWAMP_01vip]
+# Cooldown original: 30 (lido como horas)
+id: dly-swamp-01vip
+name: "Quest - Draugr !!"
+description: "Está na hora de caçar inimigos de verdade não ?"
+objectives:
+  - kind: Kill
+    target: "Draugr"
+    amount: 15
+requiredLevel: 30
+repeatable: false
+resetHours: 30
+rewards:
+  coins: 300
+  experience: 3000

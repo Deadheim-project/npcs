@@ -1,0 +1,17 @@
+# Importado do KG Marketplace: Cidades.cfg [Skill10]
+# Cooldown original: 999999999 (lido como horas)
+id: skill10
+name: "Machado"
+description: "O machado é a características dos vikings, prove matando Abominações"
+objectives:
+  - kind: Kill
+    target: "Abomination"
+    amount: 3
+requiredLevel: 0
+repeatable: false
+resetHours: 0
+requiresQuests:
+  - skill9
+rewards:
+  coins: 0
+  experience: 0

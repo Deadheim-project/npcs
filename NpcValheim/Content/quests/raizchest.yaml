@@ -1,0 +1,21 @@
+# Importado do KG Marketplace: Cidades.cfg [RaizChest]
+# Cooldown original: 999999999 (lido como horas)
+id: raizchest
+name: "Peitoral de Raízes"
+description: "Caçar Abominação"
+objectives:
+  - kind: Kill
+    target: "Abomination"
+    amount: 2
+requiredLevel: 30
+repeatable: false
+resetHours: 0
+requiresQuests:
+  - raizhelmet
+rewards:
+  coins: 0
+  experience: 1500
+  items:
+    - itemName: "ArmorRootChest"
+      amount: 1
+      quality: 1

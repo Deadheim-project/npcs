@@ -1190,7 +1190,7 @@ namespace NpcValheim.Testing
 
                 // Progress must not run past the goal, or a kill counter could be inflated
                 // into an early turn-in.
-                QuestDatabase.AddProgress(playerId, quest.Id, quest.Amount + 50, quest.Amount);
+                QuestDatabase.AddProgress(playerId, quest.Id, 0, quest.Amount + 50, quest.Amount);
                 Check("progress is capped at the goal",
                     QuestDatabase.Get(playerId, quest.Id).Counter == quest.Amount,
                     $"counter={QuestDatabase.Get(playerId, quest.Id).Counter} goal={quest.Amount}");
@@ -1203,7 +1203,7 @@ namespace NpcValheim.Testing
 
                 // Progress on a quest that isn't active must be ignored, otherwise a stray
                 // kill report could revive a finished quest's counter.
-                int ignored = QuestDatabase.AddProgress(playerId, quest.Id, 5, quest.Amount);
+                int ignored = QuestDatabase.AddProgress(playerId, quest.Id, 0, 5, quest.Amount);
                 Check("progress on an inactive quest is ignored", ignored == 0, $"got {ignored}");
 
                 Check("abandoning an active quest clears it", AbandonRoundTrip(playerId, quest.Id));
@@ -1367,7 +1367,7 @@ namespace NpcValheim.Testing
             Check("a kill quest with no progress cannot be completed",
                 QuestDatabase.Get(playerId, killQuest.Id).Counter < killQuest.Amount);
 
-            QuestDatabase.AddProgress(playerId, killQuest.Id, 1, killQuest.Amount);
+            QuestDatabase.AddProgress(playerId, killQuest.Id, 0, 1, killQuest.Amount);
             Check("partial progress is still not enough",
                 QuestDatabase.Get(playerId, killQuest.Id).Counter == 1);
 

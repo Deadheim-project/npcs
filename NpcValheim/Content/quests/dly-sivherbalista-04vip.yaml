@@ -1,0 +1,15 @@
+# Importado do KG Marketplace: SivHerbalistaAesir.cfg [Dly_SivHerbalista_04vip]
+# Cooldown original: 20 (lido como horas)
+id: dly-sivherbalista-04vip
+name: "Quest - Colete Mirtilos"
+description: "Colete alguns mirtilos pela floresta negra."
+objectives:
+  - kind: Collect
+    target: "Blueberries"
+    amount: 30
+requiredLevel: 15
+repeatable: false
+resetHours: 20
+rewards:
+  coins: 0
+  experience: 3000

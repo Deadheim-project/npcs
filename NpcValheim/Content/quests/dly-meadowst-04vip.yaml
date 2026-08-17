@@ -1,0 +1,15 @@
+# Importado do KG Marketplace: TorilAesir.cfg [DLY_MEADOWST_04vip]
+# Cooldown original: 30 (lido como horas)
+id: dly-meadowst-04vip
+name: "Quest - Cinzentos!!"
+description: "Por incrivel que pareça são mais feios que você, então mate eles...."
+objectives:
+  - kind: Kill
+    target: "Greyling"
+    amount: 5
+requiredLevel: 1
+repeatable: false
+resetHours: 30
+rewards:
+  coins: 35
+  experience: 250

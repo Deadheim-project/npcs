@@ -1,0 +1,17 @@
+# Importado do KG Marketplace: Cidades.cfg [Skill8]
+# Cooldown original: 999999999 (lido como horas)
+id: skill8
+name: "Escudo"
+description: "Estava quase me esquecendo, às vezes é bom saber que uma boa defesa é um excelente ataque, cace ursos agora!"
+objectives:
+  - kind: Kill
+    target: "Bjorn"
+    amount: 3
+requiredLevel: 0
+repeatable: false
+resetHours: 0
+requiresQuests:
+  - skill7
+rewards:
+  coins: 0
+  experience: 0

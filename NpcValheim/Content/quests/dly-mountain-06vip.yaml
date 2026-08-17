@@ -1,0 +1,15 @@
+# Importado do KG Marketplace: TorilAesir.cfg [DLY_MOUNTAIN_06vip]
+# Cooldown original: 30 (lido como horas)
+id: dly-mountain-06vip
+name: "Quest - Cultistas"
+description: "A noite é maluca..."
+objectives:
+  - kind: Kill
+    target: "Fenring_Cultist"
+    amount: 3
+requiredLevel: 40
+repeatable: false
+resetHours: 30
+rewards:
+  coins: 700
+  experience: 4000

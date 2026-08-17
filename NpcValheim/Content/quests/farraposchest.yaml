@@ -1,0 +1,19 @@
+# Importado do KG Marketplace: Cidades.cfg [FarraposChest]
+# Cooldown original: 999999999 (lido como horas)
+id: farraposchest
+name: "Túnica de Farrapos"
+description: "Olá viajante, aqui você começará suas missões de progressão de itens, após completar elas aqui você deverá seguir para o reino de Eldgard!"
+objectives:
+  - kind: Kill
+    target: "Boar"
+    amount: 5
+requiredLevel: 0
+repeatable: false
+resetHours: 0
+rewards:
+  coins: 0
+  experience: 200
+  items:
+    - itemName: "ArmorRagsChest"
+      amount: 1
+      quality: 2

@@ -1,0 +1,38 @@
+# Importado do KG Marketplace: Teleporters/TeleportHubProfiles.cfg [Agostinho]
+# KG cobrava por NPC, nao por destino. Cada rota fica em 0 -- ajuste
+# 'cost' por destino no painel de admin.
+name: ""
+forType: Teleporter
+teleporter:
+  costItem: Coins
+  costAmount: 0
+  cooldownSeconds: 0
+  destinations:
+    - id: tp-nordeste
+      name: "TP Nordeste"
+      x: 1305
+      y: 52
+      z: 1229
+      yaw: 0
+      cost: 0
+    - id: tp-norte1
+      name: "TP Norte1"
+      x: 70
+      y: 61
+      z: 665
+      yaw: 0
+      cost: 0
+    - id: tp-norte2
+      name: "TP Norte2"
+      x: 87
+      y: 36
+      z: 1316
+      yaw: 0
+      cost: 0
+    - id: power
+      name: "Power"
+      x: -20
+      y: 37
+      z: 11
+      yaw: 0
+      cost: 0

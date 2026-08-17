@@ -1,0 +1,6 @@
+# Importado do KG Marketplace: QuestProfiles/QuestsProfiles.cfg [Sitric]
+name: ""
+forType: QuestGiver
+questGiver:
+  quests:
+    - traveler04   # Encontrar Skari

@@ -1,0 +1,17 @@
+# Importado do KG Marketplace: Cidades.cfg [Traveler02]
+# Cooldown original: 999999999 (lido como horas)
+id: traveler02
+name: "Encontre Nyrvald"
+description: "Então você está buscando os exploradores desse mundo?! Muito bem, eu acredito que Nyrvald está na taverna Asa de Corvo que fica na parte Sul em uma ilha de floresta negra."
+objectives:
+  - kind: Talk
+    target: "Nyrvald"
+    amount: 1
+requiredLevel: 0
+repeatable: false
+resetHours: 0
+requiresQuests:
+  - traveler01
+rewards:
+  coins: 1000
+  experience: 2500

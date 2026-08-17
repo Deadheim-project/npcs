@@ -1,0 +1,21 @@
+# Importado do KG Marketplace: Cidades.cfg [BronzeLegs]
+# Cooldown original: 999999999 (lido como horas)
+id: bronzelegs
+name: "Calça de Bronze"
+description: "Fabricar Bronze"
+objectives:
+  - kind: Collect
+    target: "Bronze"
+    amount: 5
+requiredLevel: 15
+repeatable: false
+resetHours: 0
+requiresQuests:
+  - bronzechest
+rewards:
+  coins: 0
+  experience: 1000
+  items:
+    - itemName: "ArmorBronzeLegs"
+      amount: 1
+      quality: 1

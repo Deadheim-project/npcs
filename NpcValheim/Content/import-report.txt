@@ -1,0 +1,42 @@
+Anotacoes da importacao do KG Marketplace.
+
+skill reward dropped: 'Skill: Sneak, 15'
+skill reward dropped: 'Skill: Unarmed, 15'
+skill reward dropped: 'Skill: Run, 15'
+skill reward dropped: 'Skill: Jump, 15'
+skill reward dropped: 'Skill: Dodge, 15'
+skill reward dropped: 'Skill: Knives, 15'
+skill reward dropped: 'Skill: Spears, 15'
+skill reward dropped: 'Skill: Blocking, 15'
+skill reward dropped: 'Skill: Clubs, 15'
+skill reward dropped: 'Skill: Axes, 15'
+skill reward dropped: 'Skill: Polearms, 15'
+skill reward dropped: 'Skill: Swords, 15'
+skill reward dropped: 'Skill: Bows, 15'
+skill reward dropped: 'Skill: Crossbows, 15'
+skill reward dropped: 'Skill: ElementalMagic, 25'
+skill reward dropped: 'Skill: BloodMagic, 25'
+DiariasSkuleFerreiro.cfg [Dly_Ferreiro_03]: Craft has no equivalent, imported as Collect
+DiariasSkuleFerreiroAesir.cfg [Dly_Ferreiro_03vip]: Craft has no equivalent, imported as Collect
+TraderProfiles.cfg [coletaprado]: 25 coins for 100x Wood is 0.250/un, sold at 1/un
+TraderProfiles.cfg [ferreirobf]: 50 coins for 100x Coal is 0.500/un, sold at 1/un
+TraderProfiles.cfg [ferreiropan]: 50 coins for 100x Coal is 0.500/un, sold at 1/un
+TraderProfiles.cfg [CarvaoG]: 50 coins for 100x Coal is 0.500/un, sold at 1/un
+TraderProfiles.cfg [fazendeiro]: 100 coins for 3x CarrotSeeds is 33.333/un, sold at 34/un
+TraderProfiles.cfg [MateriaisG]: 25 coins for 100x Wood is 0.250/un, sold at 1/un
+TraderProfiles.cfg [MateriaisG]: 25 coins for 100x Stone is 0.250/un, sold at 1/un
+TraderProfiles.cfg [Trofeu]: 50x BoneFragments for 30 coins is under 1/un, dropped
+TraderProfiles.cfg [TraderBronze]: 2000 coins for 30x Bronze is 66.667/un, sold at 67/un
+TraderProfiles.cfg [TraderBronze]: 1000 coins for 60x CopperOre is 16.667/un, sold at 17/un
+TraderProfiles.cfg [TraderBronze]: 500 coins for 30x TinOre is 16.667/un, sold at 17/un
+TraderProfiles.cfg [TraderFN]: 10 coins for 100x ArrowWood is 0.100/un, sold at 1/un
+TraderProfiles.cfg [TraderFN]: 25 coins for 100x ArrowFlint is 0.250/un, sold at 1/un
+TraderProfiles.cfg [TraderFN]: 50 coins for 100x ArrowFire is 0.500/un, sold at 1/un
+TraderProfiles.cfg [TraderFN]: 75 coins for 100x ArrowBronze is 0.750/un, sold at 1/un
+TraderProfiles.cfg [TraderFN]: 125 coins for 100x ArrowObsidian is 1.250/un, sold at 2/un
+TraderProfiles.cfg [TraderFN]: 150 coins for 100x ArrowFrost is 1.500/un, sold at 2/un
+QuestsProfiles.cfg [Kavgar]: offers unknown quest 'Traveler08'
+QuestsProfiles.cfg [Kavgar]: no known quests, skipped
+QuestsProfiles.cfg [Olaf]: no known quests, skipped
+QuestsProfiles.cfg [Jarl]: offers unknown quest 'Jarl01'
+QuestsProfilesAesir.cfg [DLYSkuleFerreiro2aesir]: offers unknown quest 'Dly_Ferreiro_05vip'

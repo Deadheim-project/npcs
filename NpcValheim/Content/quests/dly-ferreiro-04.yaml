@@ -1,0 +1,15 @@
+# Importado do KG Marketplace: DiariasSkuleFerreiro.cfg [Dly_Ferreiro_04]
+# Cooldown original: 30 (lido como horas)
+id: dly-ferreiro-04
+name: "Quest - Coletar Ferro"
+description: "Coletar ferro é dificil mas utilizaremos ele para diversas coisas."
+objectives:
+  - kind: Collect
+    target: "IronScrap"
+    amount: 50
+requiredLevel: 30
+repeatable: false
+resetHours: 30
+rewards:
+  coins: 500
+  experience: 2000

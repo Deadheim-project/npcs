@@ -1,0 +1,17 @@
+# Importado do KG Marketplace: Cidades.cfg [Traveler06]
+# Cooldown original: 999999999 (lido como horas)
+id: traveler06
+name: "Encontrar Vaelis"
+description: "Você deve ter vindo de longe para me encontrar, te digo isso pois sua exploração está sendo um sucesso por ter encontrado nós até agora. Mas agora deverás procurar por Vaelis na taverna Refúgio da Névoa em um pico nas terras nevoadas a sudeste."
+objectives:
+  - kind: Talk
+    target: "Vaelis"
+    amount: 1
+requiredLevel: 0
+repeatable: false
+resetHours: 0
+requiresQuests:
+  - traveler05
+rewards:
+  coins: 8000
+  experience: 20000

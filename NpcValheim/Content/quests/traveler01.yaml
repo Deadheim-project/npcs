@@ -1,0 +1,15 @@
+# Importado do KG Marketplace: Cidades.cfg [Traveler01]
+# Cooldown original: 999999999 (lido como horas)
+id: traveler01
+name: "Encontre Eldrin"
+description: "Você então quer fazer parte do clube dos exploradores? Hum, vamos ver se é capaz de desbravar essas terras! Primeiramente encontre Eldrin ele encontra-se na taverna do Carvalho embriagado, para encontrar esse local aconchegante você deverá esperar pois essa taverna está em construção e você terá uma dica generosa futuramente."
+objectives:
+  - kind: Talk
+    target: "Eldrin"
+    amount: 1
+requiredLevel: 0
+repeatable: false
+resetHours: 0
+rewards:
+  coins: 500
+  experience: 1000

@@ -1,0 +1,18 @@
+# Importado do KG Marketplace: Traders/TraderProfiles.cfg [maguinmist]
+# Sem 'name': aplicar este modelo troca a lista de precos e deixa o
+# nome do NPC como esta.
+name: ""
+forType: Marketplace
+marketplace:
+  taxPercent: 0
+  sells:
+    - itemName: "SpiritStormDO"
+      price: 150
+    - itemName: "Softtissue"
+      price: 150
+    - itemName: "DvergrNeedle"
+      price: 500
+    - itemName: "MushroomJotunPuffs"
+      price: 250
+    - itemName: "MushroomMagecap"
+      price: 250

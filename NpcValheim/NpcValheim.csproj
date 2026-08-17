@@ -111,17 +111,24 @@
 
   <ItemGroup>
     <None Include="Assets\Mailbox\**\*" CopyToOutputDirectory="PreserveNewest" />
+    <!-- Conteudo pronto (quests e modelos de NPC importados). Vai junto com a dll: o
+         ContentSeeder copia dali para npcs/ na primeira execucao. -->
+    <ShippedQuests Include="Content\quests\*.yaml" />
+    <ShippedTemplates Include="Content\templates\*.yaml" />
   </ItemGroup>
 
   <!-- Drop the built plugin straight into the game's plugin folder for quick in-game testing -->
   <Target Name="CopyToPlugins" AfterTargets="Build">
     <MakeDir Directories="$(BepInExPlugins)\NpcValheim" Condition="!Exists('$(BepInExPlugins)\NpcValheim')" />
     <MakeDir Directories="$(BepInExPlugins)\NpcValheim\Assets\Mailbox" Condition="!Exists('$(BepInExPlugins)\NpcValheim\Assets\Mailbox')" />
+    <MakeDir Directories="$(BepInExPlugins)\NpcValheim\Content\quests;$(BepInExPlugins)\NpcValheim\Content\templates" />
     <Copy SourceFiles="$(TargetDir)$(AssemblyName).dll" DestinationFolder="$(BepInExPlugins)\NpcValheim" />
     <Copy SourceFiles="$(TargetDir)LiteDB.dll" DestinationFolder="$(BepInExPlugins)\NpcValheim" Condition="Exists('$(TargetDir)LiteDB.dll')" />
     <Copy SourceFiles="$(ProjectDir)Assets\Mailbox\model.bin;$(ProjectDir)Assets\Mailbox\basecolor.png;$(ProjectDir)Assets\Mailbox\normal.png;$(ProjectDir)Assets\Mailbox\hud-icon.png;$(ProjectDir)Assets\Mailbox\Selo_Png.png;$(ProjectDir)Assets\Mailbox\Selo_Icon.png;$(ProjectDir)Assets\Mailbox\Selo_Icon.jpeg"
           DestinationFolder="$(BepInExPlugins)\NpcValheim\Assets\Mailbox"
           Condition="Exists('$(ProjectDir)Assets\Mailbox\model.bin')" />
+    <Copy SourceFiles="@(ShippedQuests)" DestinationFolder="$(BepInExPlugins)\NpcValheim\Content\quests" />
+    <Copy SourceFiles="@(ShippedTemplates)" DestinationFolder="$(BepInExPlugins)\NpcValheim\Content\templates" />
     <!-- YamlDotNet de propósito não entra aqui: vem do modpack (ValheimModding-YamlDotNet). -->
   </Target>
 

@@ -1,0 +1,23 @@
+# Importado do KG Marketplace: Cidades.cfg [Draugr]
+# Cooldown original: 999999999 (lido como horas)
+id: draugr
+name: "Necessidades sangrentas"
+description: "Ha Ha ha, então o Rei Skorri enviou sangue fresco para me servir! Zumbis asquerosos, não possuem sangue fresco, porém suas tripas são de meu interesse, assim como as sanguessugas que possuem aquilo que mais preciso!"
+objectives:
+  - kind: Kill
+    target: "Draugr"
+    amount: 10
+  - kind: Kill
+    target: "Draugr_Elite"
+    amount: 1
+  - kind: Kill
+    target: "Leech"
+    amount: 5
+requiredLevel: 0
+repeatable: false
+resetHours: 0
+requiresQuests:
+  - jarl03
+rewards:
+  coins: 150
+  experience: 1700

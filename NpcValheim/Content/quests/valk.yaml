@@ -1,0 +1,17 @@
+# Importado do KG Marketplace: Cidades.cfg [valk]
+# Cooldown original: 999999999 (lido como horas)
+id: valk
+name: "Divindades caídas"
+description: "Apenas aqui que essa Valquírias caídas aparecem, elas são fortes e perigosas, mesmo não pertencendo ao mundo da luz elas ainda possuem seu poder que agora os usa para destruição."
+objectives:
+  - kind: Kill
+    target: "FallenValkyrie"
+    amount: 2
+requiredLevel: 0
+repeatable: false
+resetHours: 0
+requiresQuests:
+  - morgen
+rewards:
+  coins: 5000
+  experience: 20000

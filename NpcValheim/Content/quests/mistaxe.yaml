@@ -1,0 +1,27 @@
+# Importado do KG Marketplace: Cidades.cfg [MistAxe]
+# Cooldown original: 999999999 (lido como horas)
+id: mistaxe
+name: "Ruína de Jotun"
+description: "Ruína de Jotun"
+objectives:
+  - kind: Collect
+    target: "Eitr"
+    amount: 10
+  - kind: Collect
+    target: "Bilebag"
+    amount: 3
+  - kind: Collect
+    target: "Iron"
+    amount: 12
+requiredLevel: 75
+repeatable: false
+resetHours: 0
+requiresQuests:
+  - mnaxe
+rewards:
+  coins: 0
+  experience: 7000
+  items:
+    - itemName: "AxeJotunBane"
+      amount: 1
+      quality: 1

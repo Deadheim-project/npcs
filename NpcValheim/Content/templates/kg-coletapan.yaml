@@ -1,0 +1,14 @@
+# Importado do KG Marketplace: Traders/TraderProfiles.cfg [coletapan]
+# Sem 'name': aplicar este modelo troca a lista de precos e deixa o
+# nome do NPC como esta.
+name: ""
+forType: Marketplace
+marketplace:
+  taxPercent: 0
+  sells:
+    - itemName: "ElderBark"
+      price: 4
+    - itemName: "Guck"
+      price: 4
+    - itemName: "Root"
+      price: 50

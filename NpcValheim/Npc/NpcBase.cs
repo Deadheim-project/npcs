@@ -653,7 +653,12 @@ namespace NpcValheim.Npc
             if (profile == null || Nview == null || !Nview.IsValid()) return;
             var zdo = Nview.GetZDO();
 
-            zdo.Set(ZdoKeys.Name, string.IsNullOrEmpty(profile.Name) ? "NPC" : profile.Name);
+            // A profile with no name leaves the NPC's own alone -- the same rule the quest list
+            // and the destination list already follow. It matters for templates that carry
+            // only a price list or a set of errands: applying a merchant's stock to Halvard
+            // should not turn him into "kg-ferreiro-gelo".
+            if (!string.IsNullOrWhiteSpace(profile.Name))
+                zdo.Set(ZdoKeys.Name, profile.Name);
 
             foreach (ArmorSlot slot in Enum.GetValues(typeof(ArmorSlot)))
             {

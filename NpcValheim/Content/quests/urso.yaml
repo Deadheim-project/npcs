@@ -1,0 +1,17 @@
+# Importado do KG Marketplace: Cidades.cfg [Urso]
+# Cooldown original: 999999999 (lido como horas)
+id: urso
+name: "Cace o Urso"
+description: "Existe um urso que ronda essa floresta, ele é uma ameaça aos nossos viajantes, destrua-o!"
+objectives:
+  - kind: Kill
+    target: "Bjorn"
+    amount: 1
+requiredLevel: 0
+repeatable: false
+resetHours: 0
+requiresQuests:
+  - skel
+rewards:
+  coins: 150
+  experience: 2000

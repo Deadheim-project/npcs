@@ -1,0 +1,20 @@
+# Importado do KG Marketplace: Traders/TraderProfiles.cfg [Taverg2]
+# Sem 'name': aplicar este modelo troca a lista de precos e deixa o
+# nome do NPC como esta.
+name: ""
+forType: Marketplace
+marketplace:
+  taxPercent: 0
+  sells:
+    - itemName: "QueensJam"
+      price: 3
+    - itemName: "CarrotSoup"
+      price: 10
+    - itemName: "BoarJerky"
+      price: 5
+    - itemName: "MinceMeatSauce"
+      price: 10
+    - itemName: "DeerStew"
+      price: 10
+    - itemName: "FeastMeadows_Material"
+      price: 60

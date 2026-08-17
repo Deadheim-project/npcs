@@ -53,15 +53,23 @@ namespace NpcValheim.UI
                 foreach (var quest in giver.CachedQuests)
                 {
                     if (quest.Status != QuestStatus.Active) continue;
-                    if (quest.Counter >= quest.Goal) continue;   // done, just not handed in yet
 
-                    if (quest.Objective == QuestObjectiveKind.Explore)
+                    // Per objective, because a quest that says "go there and talk to him" has
+                    // two places on the map and each stops being interesting on its own.
+                    foreach (var step in QuestTracker.Steps(quest))
                     {
-                        if (TryParsePlace(quest.Target, out var place)) wanted[quest.Id] = place;
-                    }
-                    else if (quest.Objective == QuestObjectiveKind.Talk)
-                    {
-                        if (TryFindNpc(quest.Target, out var where)) wanted[quest.Id] = where;
+                        if (step.Counter >= step.Goal) continue;   // done, just not handed in yet
+
+                        if (step.Kind == QuestObjectiveKind.Explore)
+                        {
+                            if (TryParsePlace(step.Target, out var place))
+                                wanted[quest.Id + "|" + step.Target] = place;
+                        }
+                        else if (step.Kind == QuestObjectiveKind.Talk)
+                        {
+                            if (TryFindNpc(step.Target, out var where))
+                                wanted[quest.Id + "|" + step.Target] = where;
+                        }
                     }
                 }
             }
@@ -94,9 +102,11 @@ namespace NpcValheim.UI
             }
         }
 
-        /// <summary>The quest's own name, for the pin label.</summary>
-        private static string NameOf(string questId)
+        /// <summary>The quest's own name, for the pin label. The key is "questId|target"
+        /// because one quest can put several pins on the map; only the id half names it.</summary>
+        private static string NameOf(string pinKey)
         {
+            var questId = pinKey.Split('|')[0];
             foreach (var giver in FindObjectsByType<QuestGiverNpc>(FindObjectsSortMode.None))
             {
                 if (giver == null) continue;

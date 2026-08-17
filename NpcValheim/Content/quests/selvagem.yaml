@@ -1,0 +1,23 @@
+# Importado do KG Marketplace: Cidades.cfg [selvagem]
+# Cooldown original: 999999999 (lido como horas)
+id: selvagem
+name: "Fogo Selvagem"
+description: "Eis o guerreiro notório quem Jarl Sigvard enviou! Tenho para ti algumas missões, neste primeiro momento você irá enfrentar as criaturas selvagens desta terra em chamas!"
+objectives:
+  - kind: Kill
+    target: "Asksvin"
+    amount: 5
+  - kind: Kill
+    target: "Volture"
+    amount: 5
+  - kind: Kill
+    target: "BlobLava"
+    amount: 2
+requiredLevel: 0
+repeatable: false
+resetHours: 0
+requiresQuests:
+  - jarl07
+rewards:
+  coins: 4000
+  experience: 15000

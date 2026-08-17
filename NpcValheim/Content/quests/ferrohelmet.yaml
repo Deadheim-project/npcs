@@ -1,0 +1,21 @@
+# Importado do KG Marketplace: Cidades.cfg [FerroHelmet]
+# Cooldown original: 999999999 (lido como horas)
+id: ferrohelmet
+name: "Elmo de Ferro"
+description: "Forjar Ferro"
+objectives:
+  - kind: Collect
+    target: "Iron"
+    amount: 20
+requiredLevel: 30
+repeatable: false
+resetHours: 0
+requiresQuests:
+  - bronzelegs
+rewards:
+  coins: 0
+  experience: 1500
+  items:
+    - itemName: "HelmetIron"
+      amount: 1
+      quality: 1

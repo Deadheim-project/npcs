@@ -1,0 +1,17 @@
+# Importado do KG Marketplace: Cidades.cfg [Traveler03]
+# Cooldown original: 999999999 (lido como horas)
+id: traveler03
+name: "Encontrar Sitric Caech"
+description: "Olá explorador, que bom que me encontrou, agora é o momento de buscar por Sitric Caech, ele se encontra na taverna do Barril Afogado, essa taverna é bem icônica pois é um barco acidentado em um pequeno pântano a oeste."
+objectives:
+  - kind: Talk
+    target: "Sitric"
+    amount: 1
+requiredLevel: 0
+repeatable: false
+resetHours: 0
+requiresQuests:
+  - traveler02
+rewards:
+  coins: 2000
+  experience: 4000

@@ -1,0 +1,24 @@
+# Importado do KG Marketplace: Cidades.cfg [EitrHelmet]
+# Cooldown original: 999999999 (lido como horas)
+id: eitrhelmet
+name: "Capuz de Tecido com Éter"
+description: "Capuz de Tecido com Éter"
+objectives:
+  - kind: Collect
+    target: "Eitr"
+    amount: 15
+  - kind: Collect
+    target: "LinenThread"
+    amount: 15
+requiredLevel: 75
+repeatable: false
+resetHours: 0
+requiresQuests:
+  - mnhelmet
+rewards:
+  coins: 0
+  experience: 7000
+  items:
+    - itemName: "HelmetMage"
+      amount: 1
+      quality: 1

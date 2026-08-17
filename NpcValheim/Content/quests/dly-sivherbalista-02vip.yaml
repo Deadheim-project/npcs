@@ -1,0 +1,15 @@
+# Importado do KG Marketplace: SivHerbalistaAesir.cfg [Dly_SivHerbalista_02vip]
+# Cooldown original: 20 (lido como horas)
+id: dly-sivherbalista-02vip
+name: "Quest - Dentes de leão"
+description: "Colete alguns dentes de leão."
+objectives:
+  - kind: Collect
+    target: "Dandelion"
+    amount: 20
+requiredLevel: 1
+repeatable: false
+resetHours: 20
+rewards:
+  coins: 0
+  experience: 1000

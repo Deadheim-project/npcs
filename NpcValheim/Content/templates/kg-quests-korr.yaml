@@ -1,0 +1,6 @@
+# Importado do KG Marketplace: QuestProfiles/QuestsProfiles.cfg [Korr]
+name: ""
+forType: QuestGiver
+questGiver:
+  quests:
+    - traveler06   # Encontrar Vaelis

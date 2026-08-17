@@ -1,0 +1,10 @@
+# Importado do KG Marketplace: QuestProfiles/QuestsProfiles.cfg [DLYMISTTORRIL]
+name: ""
+forType: QuestGiver
+questGiver:
+  quests:
+    - dly-mist-01   # Quest - Hare
+    - dly-mist-02   # Quest - Seeker
+    - dly-mist-03   # Quest - SeekerBrute
+    - dly-mist-04   # Quest - Carrapatos
+    - dly-mist-05   # Quest - Gjall

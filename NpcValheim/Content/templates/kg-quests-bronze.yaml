@@ -1,0 +1,13 @@
+# Importado do KG Marketplace: QuestProfiles/QuestsProfiles.cfg [Bronze]
+name: ""
+forType: QuestGiver
+questGiver:
+  quests:
+    - bronzehelmet   # Elmo de Bronze
+    - bronzechest   # Couraça de Bronze
+    - bronzelegs   # Calça de Bronze
+    - bronzesword   # Espada de Bronze
+    - bronzeaxe   # Machado de Bronze
+    - bronzeshield   # Broquel de Bronze
+    - bronzebow   # Arco de Madeira Boa
+    - bronzepicareta   # Picareta de Bronze

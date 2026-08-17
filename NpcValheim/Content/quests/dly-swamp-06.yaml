@@ -1,0 +1,15 @@
+# Importado do KG Marketplace: Toril.cfg [DLY_SWAMP_06]
+# Cooldown original: 30 (lido como horas)
+id: dly-swamp-06
+name: "Quest - Bolha"
+description: "Lama, lodo e algas, o gosto não é tão ruim"
+objectives:
+  - kind: Kill
+    target: "Blob"
+    amount: 5
+requiredLevel: 30
+repeatable: false
+resetHours: 30
+rewards:
+  coins: 200
+  experience: 1500

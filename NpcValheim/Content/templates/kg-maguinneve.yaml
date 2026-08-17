@@ -1,0 +1,16 @@
+# Importado do KG Marketplace: Traders/TraderProfiles.cfg [maguinneve]
+# Sem 'name': aplicar este modelo troca a lista de precos e deixa o
+# nome do NPC como esta.
+name: ""
+forType: Marketplace
+marketplace:
+  taxPercent: 0
+  sells:
+    - itemName: "SpiritFrostDO"
+      price: 100
+    - itemName: "SpiritWindDO"
+      price: 100
+    - itemName: "FoodEitrMountainDessertDO"
+      price: 50
+    - itemName: "FoodEitrMountainDrinkDO"
+      price: 60

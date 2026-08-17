@@ -1,0 +1,26 @@
+# Importado do KG Marketplace: Traders/TraderProfiles.cfg [TraderFN]
+# Sem 'name': aplicar este modelo troca a lista de precos e deixa o
+# nome do NPC como esta.
+name: ""
+forType: Marketplace
+marketplace:
+  taxPercent: 0
+  sells:
+    - itemName: "ArrowWood"
+      price: 1
+    - itemName: "ArrowFlint"
+      price: 1
+    - itemName: "ArrowFire"
+      price: 1
+    - itemName: "ArrowBronze"
+      price: 1
+    - itemName: "ArrowIron"
+      price: 1
+    - itemName: "ArrowObsidian"
+      price: 2
+    - itemName: "ArrowFrost"
+      price: 2
+    - itemName: "AxeHead1"
+      price: 100
+    - itemName: "AxeHead2"
+      price: 100

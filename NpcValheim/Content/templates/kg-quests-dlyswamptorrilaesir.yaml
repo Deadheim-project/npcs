@@ -1,0 +1,12 @@
+# Importado do KG Marketplace: QuestProfiles/QuestsProfilesAesir.cfg [DLYSWAMPTORRILaesir]
+name: ""
+forType: QuestGiver
+questGiver:
+  quests:
+    - dly-swamp-01vip   # Quest - Draugr !!
+    - dly-swamp-02vip   # Quest - Draugr Elite !!
+    - dly-swamp-03vip   # Quest - Sangue-Sugas !!
+    - dly-swamp-04vip   # Quest - Abominações
+    - dly-swamp-05vip   # Quest - Fantasmas
+    - dly-swamp-06vip   # Quest - Bolha
+    - dly-swamp-07vip   # Quest - Bolha Elite

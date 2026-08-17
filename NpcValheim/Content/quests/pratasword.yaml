@@ -1,0 +1,21 @@
+# Importado do KG Marketplace: Cidades.cfg [PrataSword]
+# Cooldown original: 999999999 (lido como horas)
+id: pratasword
+name: "Espada de Prata"
+description: "Espada de Prata"
+objectives:
+  - kind: Collect
+    target: "Silver"
+    amount: 40
+requiredLevel: 45
+repeatable: false
+resetHours: 0
+requiresQuests:
+  - ferrosword
+rewards:
+  coins: 0
+  experience: 5000
+  items:
+    - itemName: "SwordSilver"
+      amount: 1
+      quality: 1

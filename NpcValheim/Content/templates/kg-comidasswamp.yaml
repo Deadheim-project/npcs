@@ -1,0 +1,18 @@
+# Importado do KG Marketplace: Traders/TraderProfiles.cfg [ComidasSwamp]
+# Sem 'name': aplicar este modelo troca a lista de precos e deixa o
+# nome do NPC como esta.
+name: ""
+forType: Marketplace
+marketplace:
+  taxPercent: 0
+  sells:
+    - itemName: "ShocklateSmoothie"
+      price: 15
+    - itemName: "TurnipStew"
+      price: 15
+    - itemName: "BlackSoup"
+      price: 20
+    - itemName: "Sausages"
+      price: 15
+    - itemName: "FeastSwamps_Material"
+      price: 100

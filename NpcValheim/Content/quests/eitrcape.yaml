@@ -1,0 +1,24 @@
+# Importado do KG Marketplace: Cidades.cfg [EitrCape]
+# Cooldown original: 999999999 (lido como horas)
+id: eitrcape
+name: "Capa de Penas"
+description: "Capa de Penas"
+objectives:
+  - kind: Collect
+    target: "Eitr"
+    amount: 20
+  - kind: Collect
+    target: "ScaleHide"
+    amount: 5
+requiredLevel: 75
+repeatable: false
+resetHours: 0
+requiresQuests:
+  - loxcape
+rewards:
+  coins: 0
+  experience: 7000
+  items:
+    - itemName: "CapeFeather"
+      amount: 1
+      quality: 1

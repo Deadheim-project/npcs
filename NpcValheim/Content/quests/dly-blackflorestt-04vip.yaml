@@ -1,0 +1,15 @@
+# Importado do KG Marketplace: TorilAesir.cfg [DLY_BLACKFLORESTT_04vip]
+# Cooldown original: 30 (lido como horas)
+id: dly-blackflorestt-04vip
+name: "Quest - Troll!!"
+description: "Parecem sua mãe ahhahahaha."
+objectives:
+  - kind: Kill
+    target: "Troll"
+    amount: 2
+requiredLevel: 15
+repeatable: false
+resetHours: 30
+rewards:
+  coins: 250
+  experience: 2500

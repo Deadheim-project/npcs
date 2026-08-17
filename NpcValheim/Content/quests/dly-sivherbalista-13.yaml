@@ -1,0 +1,15 @@
+# Importado do KG Marketplace: SivHerbalista.cfg [Dly_SivHerbalista_13]
+# Cooldown original: 30 (lido como horas)
+id: dly-sivherbalista-13
+name: "Quest - Semeando Linho"
+description: "Colha linhos em sua plantação"
+objectives:
+  - kind: Gather
+    target: "Pickable_Flax"
+    amount: 50
+requiredLevel: 60
+repeatable: false
+resetHours: 30
+rewards:
+  coins: 0
+  experience: 4500

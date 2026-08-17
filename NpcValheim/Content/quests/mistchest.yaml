@@ -1,0 +1,30 @@
+# Importado do KG Marketplace: Cidades.cfg [MistChest]
+# Cooldown original: 999999999 (lido como horas)
+id: mistchest
+name: "Colete de Carapaça"
+description: "Colete de Carapaça"
+objectives:
+  - kind: Collect
+    target: "Eitr"
+    amount: 4
+  - kind: Collect
+    target: "Carapace"
+    amount: 15
+  - kind: Collect
+    target: "ScaleHide"
+    amount: 3
+  - kind: Collect
+    target: "Iron"
+    amount: 2
+requiredLevel: 75
+repeatable: false
+resetHours: 0
+requiresQuests:
+  - mnchest
+rewards:
+  coins: 0
+  experience: 7000
+  items:
+    - itemName: "ArmorCarapaceChest"
+      amount: 1
+      quality: 1

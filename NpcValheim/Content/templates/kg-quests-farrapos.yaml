@@ -1,0 +1,8 @@
+# Importado do KG Marketplace: QuestProfiles/QuestsProfiles.cfg [Farrapos]
+name: ""
+forType: QuestGiver
+questGiver:
+  quests:
+    - farraposchest   # Túnica de Farrapos
+    - farraposlegs   # Calça de Farrapos
+    - arco   # Arco de Madeira

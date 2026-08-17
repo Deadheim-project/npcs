@@ -1,0 +1,11 @@
+# Importado do KG Marketplace: QuestProfiles/QuestsProfiles.cfg [Jarl]
+name: ""
+forType: QuestGiver
+questGiver:
+  quests:
+    - jarl02   # Encontrar o Rei Skorri
+    - jarl03   # Encontrar o Rei Morveng
+    - jarl04   # Encontrar o Rei Skallr
+    - jarl05   # Encontrar o Rei Drogath
+    - jarl06   # Encontrar o Rei Velkar
+    - jarl07   # Encontrar o Rei Surkhan

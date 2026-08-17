@@ -1,0 +1,24 @@
+# Importado do KG Marketplace: Traders/TraderProfiles.cfg [MateriaisG]
+# Sem 'name': aplicar este modelo troca a lista de precos e deixa o
+# nome do NPC como esta.
+name: ""
+forType: Marketplace
+marketplace:
+  taxPercent: 0
+  sells:
+    - itemName: "Wood"
+      price: 1
+    - itemName: "Stone"
+      price: 1
+    - itemName: "RoundLog"
+      price: 1
+    - itemName: "FineWood"
+      price: 3
+    - itemName: "Crystal"
+      price: 4
+    - itemName: "CharcoalResin"
+      price: 20
+    - itemName: "BlackMarble"
+      price: 10
+    - itemName: "Grausten"
+      price: 20

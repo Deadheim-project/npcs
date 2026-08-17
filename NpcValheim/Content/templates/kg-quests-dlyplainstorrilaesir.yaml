@@ -1,0 +1,10 @@
+# Importado do KG Marketplace: QuestProfiles/QuestsProfilesAesir.cfg [DLYPLAINSTORRILaesir]
+name: ""
+forType: QuestGiver
+questGiver:
+  quests:
+    - dly-plains-01vip   # Quest - Deathsquito
+    - dly-plains-02vip   # Quest - Lox
+    - dly-plains-03vip   # Quest - Goblin
+    - dly-plains-04vip   # Quest - Berserker
+    - dly-plains-05vip   # Quest - Betume

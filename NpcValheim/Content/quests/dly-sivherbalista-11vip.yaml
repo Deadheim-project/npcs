@@ -1,0 +1,15 @@
+# Importado do KG Marketplace: SivHerbalistaAesir.cfg [Dly_SivHerbalista_11vip]
+# Cooldown original: 20 (lido como horas)
+id: dly-sivherbalista-11vip
+name: "Quest - Colhendo Cebolas"
+description: "Prepare algumas cebolas em sua plantação"
+objectives:
+  - kind: Gather
+    target: "Pickable_Onion"
+    amount: 50
+requiredLevel: 45
+repeatable: false
+resetHours: 20
+rewards:
+  coins: 0
+  experience: 8000

@@ -1,0 +1,11 @@
+# Importado do KG Marketplace: QuestProfiles/QuestsProfiles.cfg [Drogath]
+name: ""
+forType: QuestGiver
+questGiver:
+  quests:
+    - mosquito   # Foco de Mortesquitos
+    - goblins   # Risadinhas mortais
+    - growth   # Petróleo mortal
+    - lox   # O Rebanho
+    - yagluth   # Ameaça da Planicie
+    - jarl06   # Encontrar o Rei Velkar

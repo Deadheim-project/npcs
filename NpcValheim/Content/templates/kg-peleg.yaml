@@ -1,0 +1,16 @@
+# Importado do KG Marketplace: Traders/TraderProfiles.cfg [PeleG]
+# Sem 'name': aplicar este modelo troca a lista de precos e deixa o
+# nome do NPC como esta.
+name: ""
+forType: Marketplace
+marketplace:
+  taxPercent: 0
+  sells:
+    - itemName: "DeerHide"
+      price: 5
+    - itemName: "LeatherScraps"
+      price: 1
+    - itemName: "TrollHide"
+      price: 10
+    - itemName: "BjornHide"
+      price: 15

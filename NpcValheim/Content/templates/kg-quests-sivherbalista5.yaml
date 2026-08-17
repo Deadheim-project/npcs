@@ -1,0 +1,9 @@
+# Importado do KG Marketplace: QuestProfiles/QuestsProfiles.cfg [SivHerbalista5]
+name: ""
+forType: QuestGiver
+questGiver:
+  quests:
+    - dly-sivherbalista-16   # Quest - JotunPuffs
+    - dly-sivherbalista-17   # Quest - Magecap
+    - dly-sivherbalista-18   # Quest - Coletar Black Core
+    - dly-sivherbalista-19   # Quest - Coletar Bilebag

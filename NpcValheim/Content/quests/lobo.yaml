@@ -1,0 +1,17 @@
+# Importado do KG Marketplace: Cidades.cfg [Lobo]
+# Cooldown original: 999999999 (lido como horas)
+id: lobo
+name: "Presas rápidas"
+description: "Sou um fã de lobos, porém os lobos selvagens tem se multiplicado bastante por aqui, preciso que dê um fim digno a eles de forma que podemos controlar sua população."
+objectives:
+  - kind: Kill
+    target: "Wolf"
+    amount: 15
+requiredLevel: 0
+repeatable: false
+resetHours: 0
+requiresQuests:
+  - drake
+rewards:
+  coins: 400
+  experience: 5000

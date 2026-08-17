@@ -83,16 +83,20 @@ namespace NpcValheim.Patches
             foreach (var quest in giver.CachedQuests)
             {
                 if (quest.Status != QuestStatus.Active) continue;
-                if (quest.Objective != QuestObjectiveKind.Explore) continue;
-                if (quest.Counter >= quest.Goal) continue;      // already there once
-                if (!TryParsePlace(quest.Target, out var place)) continue;
 
-                // Amount doubles as the radius for this objective: "get within N metres".
-                float radius = Mathf.Max(5f, quest.Goal);
-                var here = player.transform.position;
-                if ((new Vector2(here.x, here.z) - place).sqrMagnitude > radius * radius) continue;
+                foreach (var step in UI.QuestTracker.Steps(quest))
+                {
+                    if (step.Kind != QuestObjectiveKind.Explore) continue;
+                    if (step.Counter >= step.Goal) continue;    // already there once
+                    if (!TryParsePlace(step.Target, out var place)) continue;
 
-                giver.ReportArrival(quest.Id);
+                    // Amount doubles as the radius for this objective: "get within N metres".
+                    float radius = Mathf.Max(5f, step.Goal);
+                    var here = player.transform.position;
+                    if ((new Vector2(here.x, here.z) - place).sqrMagnitude > radius * radius) continue;
+
+                    giver.ReportArrival(quest.Id);
+                }
             }
         }
 

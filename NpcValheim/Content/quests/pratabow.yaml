@@ -1,0 +1,21 @@
+# Importado do KG Marketplace: Cidades.cfg [PrataBow]
+# Cooldown original: 999999999 (lido como horas)
+id: pratabow
+name: "Arco Presa de Draugr"
+description: "Arco Presa de Draugr"
+objectives:
+  - kind: Collect
+    target: "Silver"
+    amount: 20
+requiredLevel: 45
+repeatable: false
+resetHours: 0
+requiresQuests:
+  - ferrobow
+rewards:
+  coins: 0
+  experience: 5000
+  items:
+    - itemName: "BowDraugrFang"
+      amount: 1
+      quality: 1

@@ -1,0 +1,15 @@
+# Importado do KG Marketplace: DiariasSkuleFerreiroAesir.cfg [Dly_Ferreiro_03vip]
+# Cooldown original: 20 (lido como horas)
+id: dly-ferreiro-03vip
+name: "Quest - Fazer Bronze"
+description: "Preparar o bronze é facil e é um material que sempre é necessario para nós."
+objectives:
+  - kind: Collect
+    target: "Bronze"
+    amount: 25
+requiredLevel: 15
+repeatable: false
+resetHours: 20
+rewards:
+  coins: 500
+  experience: 2000

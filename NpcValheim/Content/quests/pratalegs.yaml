@@ -1,0 +1,21 @@
+# Importado do KG Marketplace: Cidades.cfg [PrataLegs]
+# Cooldown original: 999999999 (lido como horas)
+id: pratalegs
+name: "Calça de Lobo"
+description: "Calça de Lobo"
+objectives:
+  - kind: Collect
+    target: "Silver"
+    amount: 20
+requiredLevel: 45
+repeatable: false
+resetHours: 0
+requiresQuests:
+  - ferrolegs
+rewards:
+  coins: 0
+  experience: 5000
+  items:
+    - itemName: "ArmorWolfLegs"
+      amount: 1
+      quality: 1

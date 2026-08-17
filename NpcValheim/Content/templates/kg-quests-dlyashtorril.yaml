@@ -1,0 +1,10 @@
+# Importado do KG Marketplace: QuestProfiles/QuestsProfiles.cfg [DLYASHTORRIL]
+name: ""
+forType: QuestGiver
+questGiver:
+  quests:
+    - dly-ash-01   # Quest - Volture
+    - dly-ash-02   # Quest - Asksvin
+    - dly-ash-03   # Quest - Skugg
+    - dly-ash-04   # Quest - Morgen
+    - dly-ash-05   # Quest - FallenValkyrie

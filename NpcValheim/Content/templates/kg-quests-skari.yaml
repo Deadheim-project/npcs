@@ -1,0 +1,6 @@
+# Importado do KG Marketplace: QuestProfiles/QuestsProfiles.cfg [Skari]
+name: ""
+forType: QuestGiver
+questGiver:
+  quests:
+    - traveler05   # Encontrar Korr

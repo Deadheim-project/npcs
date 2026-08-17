@@ -1,0 +1,15 @@
+# Importado do KG Marketplace: TorilAesir.cfg [DLY_MOUNTAIN_03vip]
+# Cooldown original: 30 (lido como horas)
+id: dly-mountain-03vip
+name: "Quest - Fenring"
+description: "Fenrings...."
+objectives:
+  - kind: Kill
+    target: "Fenring"
+    amount: 3
+requiredLevel: 40
+repeatable: false
+resetHours: 30
+rewards:
+  coins: 750
+  experience: 5000

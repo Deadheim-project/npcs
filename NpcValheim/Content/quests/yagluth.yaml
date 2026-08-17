@@ -1,0 +1,21 @@
+# Importado do KG Marketplace: Cidades.cfg [Yagluth]
+# Cooldown original: 999999999 (lido como horas)
+id: yagluth
+name: "Ameaça da Planicie"
+description: "Este esqueleto gigante deve ser invocado em sua mesa, é seu teste final para que você seja um berzerker como nós, vá e mostre sua raiva!"
+objectives:
+  - kind: Kill
+    target: "GoblinKing"
+    amount: 1
+requiredLevel: 0
+repeatable: false
+resetHours: 0
+requiresQuests:
+  - growth
+rewards:
+  coins: 4000
+  experience: 20000
+  items:
+    - itemName: "mmo_xp_drink3"
+      amount: 5
+      quality: 1

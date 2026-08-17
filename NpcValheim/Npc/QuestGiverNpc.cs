@@ -37,9 +37,17 @@ namespace NpcValheim.Npc
 
         /// <summary>The objective in machine-readable form. The prose in ObjectiveText is for
         /// display only -- deciding anything by parsing it (which an earlier version did)
-        /// breaks the moment the wording or the language changes.</summary>
+        /// breaks the moment the wording or the language changes.
+        ///
+        /// This is the *first* objective. Everything a quest asks for is in Objectives below;
+        /// these two stay because almost every quest has exactly one and the nameplate marker,
+        /// the tracker line and the journal row all want a single thing to show.</summary>
         public QuestObjectiveKind Objective;
         public string Target;
+
+        /// <summary>Every objective with this player's progress against it, in the quest's own
+        /// order. Never empty -- a one-objective quest has a list of one.</summary>
+        public List<QuestObjectiveView> Objectives = new List<QuestObjectiveView>();
 
         /// <summary>Comes back on a timer -- what WoW calls a daily, and what its blue "!"
         /// marks. Carried to the client so the marker and the tracker can say so.</summary>
@@ -50,6 +58,39 @@ namespace NpcValheim.Npc
     {
         public string ItemName;
         public int Amount;
+    }
+
+    /// <summary>One line of a quest's to-do list, as the client sees it.</summary>
+    public class QuestObjectiveView
+    {
+        public QuestObjectiveKind Kind;
+        public string Target;
+        public int Goal;
+        public int Counter;
+
+        /// <summary>
+        /// Whether this line is done.
+        ///
+        /// Collect is the exception, and has to be: the server never sees a remote player's
+        /// bag, so its counter for a Collect objective stays at zero and the answer can only
+        /// come from the inventory in front of us. Pass the player when there is one.
+        /// </summary>
+        public bool IsDone(Player player)
+        {
+            if (Kind != QuestObjectiveKind.Collect) return Counter >= Goal;
+            return player != null &&
+                   ItemNames.Count(player.GetInventory(), Target, -1) >= Goal;
+        }
+
+        /// <summary>What to show on the left of the "n/m" -- the bag for Collect, the server's
+        /// counter for everything else.</summary>
+        public int Progress(Player player)
+        {
+            if (Kind != QuestObjectiveKind.Collect) return Counter;
+            return player == null || string.IsNullOrEmpty(Target)
+                ? 0
+                : Mathf.Min(Goal, ItemNames.Count(player.GetInventory(), Target, -1));
+        }
     }
 
     /// <summary>
@@ -364,12 +405,23 @@ namespace NpcValheim.Npc
             {
                 if (progress.Status != QuestStatus.Active) continue;
                 var quest = QuestStore.Get(progress.QuestId);
-                if (quest == null || quest.Objective != kind) continue;
-                if (!string.Equals(quest.Target, target, StringComparison.OrdinalIgnoreCase)) continue;
+                if (quest == null) continue;
 
-                int now = QuestDatabase.AddProgress(playerId, quest.Id, count, quest.Amount);
-                advanced = true;
-                Nview.InvokeRPC(sender, "RPC_ProgressNotice", quest.Name, now + ";" + quest.Amount);
+                // Every matching objective is advanced, not just the first: a quest that asks
+                // for two different things counts each of them on its own line, and a quest
+                // that happens to name the same target twice should not silently lose one.
+                var steps = quest.Steps();
+                for (int i = 0; i < steps.Count; i++)
+                {
+                    var step = steps[i];
+                    if (step.Kind != kind) continue;
+                    if (!string.Equals(step.Target, target, StringComparison.OrdinalIgnoreCase)) continue;
+
+                    int now = QuestDatabase.AddProgress(playerId, quest.Id, i, count, step.Amount);
+                    advanced = true;
+                    Nview.InvokeRPC(sender, "RPC_ProgressNotice",
+                        NoticeLabel(quest, step, steps.Count), now + ";" + step.Amount);
+                }
             }
 
             if (advanced) SendQuestsTo(sender);
@@ -384,15 +436,26 @@ namespace NpcValheim.Npc
             if (playerId == 0L) return;
 
             var quest = QuestStore.Get(questId);
-            if (quest == null || quest.Objective != kind) return;
+            if (quest == null) return;
 
             var progress = QuestDatabase.Get(playerId, questId);
             if (progress == null || progress.Status != QuestStatus.Active) return;
 
-            int now = QuestDatabase.AddProgress(playerId, questId, count, quest.Amount);
-            Nview.InvokeRPC(sender, "RPC_ProgressNotice", quest.Name, now + ";" + quest.Amount);
+            var steps = quest.Steps();
+            int index = steps.FindIndex(s => s.Kind == kind);
+            if (index < 0) return;
+
+            int now = QuestDatabase.AddProgress(playerId, questId, index, count, steps[index].Amount);
+            Nview.InvokeRPC(sender, "RPC_ProgressNotice",
+                NoticeLabel(quest, steps[index], steps.Count), now + ";" + steps[index].Amount);
             SendQuestsTo(sender);
         }
+
+        /// <summary>What the centre-screen progress line calls the thing that just moved. On a
+        /// single-objective quest the quest's own name says it; on a longer one the name alone
+        /// would leave the player guessing which of three counters ticked.</summary>
+        private static string NoticeLabel(QuestDefinition quest, QuestObjective step, int stepCount) =>
+            stepCount <= 1 ? quest.Name : $"{quest.Name} — {ItemNames.Display(step.Target)}";
 
         /// <summary>Client side: tell the player their quest moved, on the same centre-screen
         /// channel the game uses for "picked up an item" -- progress you only find by opening
@@ -429,10 +492,16 @@ namespace NpcValheim.Npc
 
             // Everything except Collect is measured by the counter the server itself kept.
             // Collect is the one objective checked against the bag instead, at the moment of
-            // hand-in, and the client removes the items before asking.
-            if (quest.Objective != QuestObjectiveKind.Collect && progress.Counter < quest.Amount)
+            // hand-in, and the client removes the items before asking. Checked per objective:
+            // a quest is only done when every line of it is.
+            var steps = quest.Steps();
+            for (int i = 0; i < steps.Count; i++)
             {
-                Plugin.Log.LogInfo($"NpcValheim: turn-in refused for '{questId}' -- {progress.Counter}/{quest.Amount}");
+                if (steps[i].Kind == QuestObjectiveKind.Collect) continue;
+                if (progress.CounterAt(i) >= steps[i].Amount) continue;
+
+                Plugin.Log.LogInfo($"NpcValheim: turn-in refused for '{questId}' -- " +
+                                   $"{steps[i].Target} {progress.CounterAt(i)}/{steps[i].Amount}");
                 return;
             }
 
@@ -558,10 +627,13 @@ namespace NpcValheim.Npc
 
         // Wire format, one quest per line:
         // id;name;description;objectiveText;counter;goal;status;canTurnIn;levelLocked;
-        //   requiredLevel;rewardText;coins;xp;items;objectiveKind;target;locked;lockReason
-        // where items is "Prefab*Amount,Prefab*Amount" -- the separators are chosen to not
-        // collide with the field/line separators, and Clean() strips those from free text.
-        private const int FieldCount = 19;
+        //   requiredLevel;rewardText;coins;xp;items;objectiveKind;target;locked;lockReason;
+        //   repeats;objectives
+        // where items is "Prefab*Amount,Prefab*Amount" and objectives is
+        // "kind*target*goal*counter|kind*target*goal*counter". The separators are chosen to
+        // not collide with the field/line separators; Clean() strips those from free text, and
+        // an objective's target keeps its commas because Explore stores a place as "x,z".
+        private const int FieldCount = 20;
         /// <summary>Same snapshot the panel gets, for the global quest journal -- which has
         /// no NPC to ask and so cannot go through this one's ZNetView.</summary>
         public static string PackFor(long playerId) => Pack(playerId);
@@ -582,14 +654,21 @@ namespace NpcValheim.Npc
                 // put back on offer here rather than looking permanently finished.
                 var status = QuestDatabase.RefreshAndGetStatus(playerId, quest);
                 var progress = QuestDatabase.Get(playerId, quest.Id);
-                int counter = progress?.Counter ?? 0;
+                var steps = quest.Steps();
+                int counter = progress?.CounterAt(0) ?? 0;
                 var untilReset = QuestDatabase.TimeUntilReset(playerId, quest);
 
                 // A level requirement can only be enforced where EpicMMO is actually loaded;
                 // without it GetLevel returns 0 and the quest stays open to everyone.
                 bool levelLocked = EpicMmoApi.IsAvailable && quest.RequiredLevel > 0 && level < quest.RequiredLevel;
-                bool canTurnIn = status == QuestStatus.Active &&
-                    (quest.Objective == QuestObjectiveKind.Collect || counter >= quest.Amount);
+
+                // Optimistic for Collect, and it has to be -- the server cannot see a remote
+                // bag. CanCompleteNow re-decides this on the client, where the bag is.
+                bool serverSideDone = true;
+                for (int i = 0; i < steps.Count && serverSideDone; i++)
+                    serverSideDone = steps[i].Kind == QuestObjectiveKind.Collect ||
+                                     (progress?.CounterAt(i) ?? 0) >= steps[i].Amount;
+                bool canTurnIn = status == QuestStatus.Active && serverSideDone;
 
                 // Prerequisites only gate picking a quest up; one already in progress stays
                 // playable even if an admin edits the chain underneath it.
@@ -610,7 +689,7 @@ namespace NpcValheim.Npc
                   .Append(Clean(quest.Description)).Append(';')
                   .Append(Clean(DescribeObjective(quest))).Append(';')
                   .Append(counter.ToString(CultureInfo.InvariantCulture)).Append(';')
-                  .Append(quest.Amount.ToString(CultureInfo.InvariantCulture)).Append(';')
+                  .Append(steps[0].Amount.ToString(CultureInfo.InvariantCulture)).Append(';')
                   .Append((int)status).Append(';')
                   .Append(canTurnIn ? '1' : '0').Append(';')
                   .Append(levelLocked ? '1' : '0').Append(';')
@@ -619,11 +698,12 @@ namespace NpcValheim.Npc
                   .Append((quest.Rewards?.Coins ?? 0).ToString(CultureInfo.InvariantCulture)).Append(';')
                   .Append((quest.Rewards?.Experience ?? 0).ToString(CultureInfo.InvariantCulture)).Append(';')
                   .Append(PackRewardItems(quest)).Append(';')
-                  .Append((int)quest.Objective).Append(';')
-                  .Append(Clean(quest.Target)).Append(';')
+                  .Append((int)steps[0].Kind).Append(';')
+                  .Append(Clean(steps[0].Target)).Append(';')
                   .Append(locked ? '1' : '0').Append(';')
                   .Append(Clean(lockReason)).Append(';')
-                  .Append(quest.ResetHours > 0 ? '1' : '0');
+                  .Append(quest.ResetHours > 0 ? '1' : '0').Append(';')
+                  .Append(PackObjectives(steps, progress));
             }
             return sb.ToString();
         }
@@ -658,6 +738,7 @@ namespace NpcValheim.Npc
                     Locked = p[16] == "1",
                     LockReason = p[17],
                     Repeats = p[18] == "1",
+                    Objectives = UnpackObjectives(p[19]),
                 });
             }
             return result;
@@ -670,13 +751,51 @@ namespace NpcValheim.Npc
         public static bool CanCompleteNow(QuestView quest, Player player)
         {
             if (quest == null || player == null || quest.Status != QuestStatus.Active) return false;
+            if (quest.Objectives == null || quest.Objectives.Count == 0) return false;
 
-            if (quest.Objective == QuestObjectiveKind.Kill)
-                return quest.Counter >= quest.Goal;
-
-            return !string.IsNullOrEmpty(quest.Target) &&
-                   ItemNames.Count(player.GetInventory(), quest.Target, -1) >= quest.Goal;
+            foreach (var step in quest.Objectives)
+                if (!step.IsDone(player)) return false;
+            return true;
         }
+
+        private static string PackObjectives(List<QuestObjective> steps, QuestProgress progress)
+        {
+            var sb = new StringBuilder();
+            for (int i = 0; i < steps.Count; i++)
+            {
+                if (sb.Length > 0) sb.Append('|');
+                sb.Append((int)steps[i].Kind).Append('*')
+                  .Append(CleanObjectiveTarget(steps[i].Target)).Append('*')
+                  .Append(steps[i].Amount.ToString(CultureInfo.InvariantCulture)).Append('*')
+                  .Append((progress?.CounterAt(i) ?? 0).ToString(CultureInfo.InvariantCulture));
+            }
+            return sb.ToString();
+        }
+
+        private static List<QuestObjectiveView> UnpackObjectives(string packed)
+        {
+            var result = new List<QuestObjectiveView>();
+            if (string.IsNullOrEmpty(packed)) return result;
+
+            foreach (var chunk in packed.Split('|'))
+            {
+                var p = chunk.Split('*');
+                if (p.Length != 4) continue;
+                result.Add(new QuestObjectiveView
+                {
+                    Kind = int.TryParse(p[0], out var k) ? (QuestObjectiveKind)k : QuestObjectiveKind.Collect,
+                    Target = p[1],
+                    Goal = int.TryParse(p[2], out var g) ? g : 1,
+                    Counter = int.TryParse(p[3], out var c) ? c : 0,
+                });
+            }
+            return result;
+        }
+
+        /// <summary>Keeps commas, which an Explore target needs ("x,z"), and drops only the
+        /// two characters that would break the objective encoding.</summary>
+        private static string CleanObjectiveTarget(string s) =>
+            Clean(s).Replace('|', ' ').Replace('*', ' ');
 
         private static string PackRewardItems(QuestDefinition quest)
         {
@@ -712,9 +831,30 @@ namespace NpcValheim.Npc
             left.TotalHours >= 1 ? $"{(int)left.TotalHours}h {left.Minutes}min" : $"{Math.Max(1, left.Minutes)}min";
 
         public static string DescribeObjective(QuestDefinition quest) =>
-            quest.Objective == QuestObjectiveKind.Kill
-                ? $"Matar {quest.Amount}x {quest.Target}"
-                : $"Entregar {quest.Amount}x {quest.Target}";
+            string.Join(", ", quest.Steps().ConvertAll(DescribeStep).ToArray());
+
+        /// <summary>The client-side twin of DescribeStep, for the tracker and the journal.
+        /// Same wording, because a line that reads one way in the panel and another in the
+        /// tracker looks like two different objectives.</summary>
+        public static string Describe(QuestObjectiveView step) =>
+            DescribeStep(new QuestObjective { Kind = step.Kind, Target = step.Target, Amount = step.Goal });
+
+        private static string DescribeStep(QuestObjective step)
+        {
+            switch (step.Kind)
+            {
+                case QuestObjectiveKind.Kill:
+                    return $"Matar {step.Amount}x {ItemNames.Display(step.Target)}";
+                case QuestObjectiveKind.Gather:
+                    return $"Coletar {step.Amount}x {ItemNames.Display(step.Target)}";
+                case QuestObjectiveKind.Talk:
+                    return $"Falar com {step.Target}";
+                case QuestObjectiveKind.Explore:
+                    return $"Chegar a {step.Target}";
+                default:
+                    return $"Entregar {step.Amount}x {ItemNames.Display(step.Target)}";
+            }
+        }
 
         private static string DescribeRewards(QuestDefinition quest)
         {

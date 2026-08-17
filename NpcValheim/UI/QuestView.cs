@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Linq;
 using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
@@ -182,16 +183,25 @@ namespace NpcValheim.UI
         /// Counter for both meant a Collect quest showed 0/20 with twenty planks in the bag,
         /// which reads as "the mod is broken" even though hand-in worked.
         /// </summary>
-        private int Progress(QuestEntry quest)
+        private string Progress(QuestEntry quest)
         {
-            if (quest.Objective == QuestObjectiveKind.Kill) return quest.Counter;
             var player = Player;
-            return player != null ? ItemNames.Count(player.GetInventory(), quest.Target, -1) : 0;
+            var steps = QuestTracker.Steps(quest);
+
+            // A quest with several objectives is summarised as "2 de 3 objetivos" rather than
+            // the first one's count -- showing 0/2 deer while the neck tails are already done
+            // is worse than showing nothing.
+            if (steps.Count > 1)
+            {
+                int done = steps.Count(s => s.IsDone(player));
+                return $"{done} de {steps.Count} objetivos";
+            }
+            return $"{steps[0].Progress(player)}/{steps[0].Goal}";
         }
 
         private string ShortState(QuestEntry quest) => quest.Status switch
         {
-            QuestStatus.Active => $"em andamento — {Progress(quest)}/{quest.Goal}",
+            QuestStatus.Active => $"em andamento — {Progress(quest)}",
             QuestStatus.Completed => "concluída",
             _ => quest.Locked ? quest.LockReason : "disponível",
         };
@@ -269,12 +279,25 @@ namespace NpcValheim.UI
 
         /// <summary>Rebuilt from the structured objective rather than the server's prose, so
         /// the item shows the name the player reads in their inventory.</summary>
-        private static string DescribeObjective(QuestEntry quest)
+        private string DescribeObjective(QuestEntry quest)
         {
-            string target = ValheimUi.Localize(DisplayName(quest.Target));
-            return quest.Objective == QuestObjectiveKind.Kill
-                ? $"Matar {quest.Goal}x {target}"
-                : $"Entregar {quest.Goal}x {target}";
+            var player = Player;
+            var lines = new List<string>();
+            foreach (var step in QuestTracker.Steps(quest))
+            {
+                string target = ValheimUi.Localize(DisplayName(step.Target));
+                string what =
+                    step.Kind == QuestObjectiveKind.Kill ? $"Matar {step.Goal}x {target}" :
+                    step.Kind == QuestObjectiveKind.Gather ? $"Coletar {step.Goal}x {target}" :
+                    step.Kind == QuestObjectiveKind.Talk ? $"Falar com {step.Target}" :
+                    step.Kind == QuestObjectiveKind.Explore ? $"Chegar a {step.Target}" :
+                    $"Entregar {step.Goal}x {target}";
+
+                lines.Add(step.IsDone(player)
+                    ? $"<color=#6fbf5b>✔ {what}</color>"
+                    : $"{what}  <color=#9a9188>{step.Progress(player)}/{step.Goal}</color>");
+            }
+            return string.Join("\n", lines);
         }
 
         private string _rewardsShownFor;
@@ -304,21 +327,26 @@ namespace NpcValheim.UI
             var quest = Selected();
             if (quest == null) return;
 
-            if (quest.Objective == QuestObjectiveKind.Collect)
+            var steps = QuestTracker.Steps(quest);
+            var inventory = Player.GetInventory();
+
+            // Checked in full before anything is removed. Taking the items objective by
+            // objective as we go would, on a quest asking for two things, eat the first one
+            // and then refuse -- the player would be down the items and still holding the
+            // quest.
+            foreach (var step in steps)
             {
-                var inventory = Player.GetInventory();
-                if (ItemNames.Count(inventory, quest.Target, -1) < quest.Goal)
-                {
-                    Say($"Você precisa de {quest.Goal}x {ValheimUi.Localize(DisplayName(quest.Target))}.");
-                    return;
-                }
-                ItemNames.Remove(inventory, quest.Target, quest.Goal, -1);
-            }
-            else if (quest.Counter < quest.Goal)
-            {
-                Say($"Progresso insuficiente ({quest.Counter}/{quest.Goal}).");
+                if (step.IsDone(Player)) continue;
+
+                Say(step.Kind == QuestObjectiveKind.Collect
+                    ? $"Você precisa de {step.Goal}x {ValheimUi.Localize(DisplayName(step.Target))}."
+                    : $"Progresso insuficiente ({step.Progress(Player)}/{step.Goal}).");
                 return;
             }
+
+            foreach (var step in steps)
+                if (step.Kind == QuestObjectiveKind.Collect)
+                    ItemNames.Remove(inventory, step.Target, step.Goal, -1);
 
             Giver.RequestTurnIn(quest.Id);
             Say("Missão entregue; a recompensa vai para a sua bolsa.");

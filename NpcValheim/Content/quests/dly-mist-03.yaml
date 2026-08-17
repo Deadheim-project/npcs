@@ -1,0 +1,15 @@
+# Importado do KG Marketplace: Toril.cfg [DLY_MIST_03]
+# Cooldown original: 30 (lido como horas)
+id: dly-mist-03
+name: "Quest - SeekerBrute"
+description: "SeekerBrute...."
+objectives:
+  - kind: Kill
+    target: "SeekerBrute"
+    amount: 3
+requiredLevel: 50
+repeatable: false
+resetHours: 30
+rewards:
+  coins: 1000
+  experience: 12000

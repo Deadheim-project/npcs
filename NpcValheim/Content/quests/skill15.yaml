@@ -1,0 +1,29 @@
+# Importado do KG Marketplace: Cidades.cfg [Skill15]
+# Cooldown original: 999999999 (lido como horas)
+id: skill15
+name: "Magias"
+description: "Estou orgulhoso de você! Você completou meu treinamento, mas eu ainda tenho umas cartas na manga! Então te ensinarei uns segredos que aprendi com Dgvar, mas não conte para ele! Mas para isso preciso que prove seu valor, vá até ashlands e mate suas criaturas!"
+objectives:
+  - kind: Kill
+    target: "Charred_Archer"
+    amount: 5
+  - kind: Kill
+    target: "Charred_Mage"
+    amount: 1
+  - kind: Kill
+    target: "Charred_Melee"
+    amount: 5
+  - kind: Kill
+    target: "FallenValkyrie"
+    amount: 1
+  - kind: Kill
+    target: "Morgen"
+    amount: 2
+requiredLevel: 0
+repeatable: false
+resetHours: 0
+requiresQuests:
+  - skill14
+rewards:
+  coins: 0
+  experience: 0

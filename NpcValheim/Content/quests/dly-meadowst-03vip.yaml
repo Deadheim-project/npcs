@@ -1,0 +1,15 @@
+# Importado do KG Marketplace: TorilAesir.cfg [DLY_MEADOWST_03vip]
+# Cooldown original: 30 (lido como horas)
+id: dly-meadowst-03vip
+name: "Quest - Mate alguns cervos!!"
+description: "Eles são mais rapidos e veem melhor que você, então usa sua cabecinha para pensar."
+objectives:
+  - kind: Kill
+    target: "Deer"
+    amount: 10
+requiredLevel: 1
+repeatable: false
+resetHours: 30
+rewards:
+  coins: 35
+  experience: 250

@@ -1,0 +1,15 @@
+# Importado do KG Marketplace: Toril.cfg [DLY_BLACKFLORESTT_02]
+# Cooldown original: 30 (lido como horas)
+id: dly-blackflorestt-02
+name: "Quest - Caçando Brutos!!"
+description: "Maiores e mais fortes, tente usa um escudo para não ser esmagado."
+objectives:
+  - kind: Kill
+    target: "Greydwarf_Elite"
+    amount: 5
+requiredLevel: 15
+repeatable: false
+resetHours: 30
+rewards:
+  coins: 150
+  experience: 1500

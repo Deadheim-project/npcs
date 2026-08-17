@@ -1,0 +1,21 @@
+# Importado do KG Marketplace: Cidades.cfg [RaizLegs]
+# Cooldown original: 999999999 (lido como horas)
+id: raizlegs
+name: "Calças de Raízes"
+description: "Caçar Abominação"
+objectives:
+  - kind: Kill
+    target: "Abomination"
+    amount: 2
+requiredLevel: 30
+repeatable: false
+resetHours: 0
+requiresQuests:
+  - raizchest
+rewards:
+  coins: 0
+  experience: 1500
+  items:
+    - itemName: "ArmorRootLegs"
+      amount: 1
+      quality: 1

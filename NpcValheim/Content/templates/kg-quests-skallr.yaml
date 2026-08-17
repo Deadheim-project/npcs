@@ -1,0 +1,11 @@
+# Importado do KG Marketplace: QuestProfiles/QuestsProfiles.cfg [skallr]
+name: ""
+forType: QuestGiver
+questGiver:
+  quests:
+    - drake   # Céu gelado
+    - lobo   # Presas rápidas
+    - dgneve   # Criaturas Caninas
+    - golem   # Golems de pedra
+    - dragon   # Ameaça da Montanha
+    - jarl05   # Encontrar o Rei Drogath

@@ -1,0 +1,15 @@
+# Importado do KG Marketplace: Toril.cfg [DLY_PLAINS_02]
+# Cooldown original: 30 (lido como horas)
+id: dly-plains-02
+name: "Quest - Lox"
+description: "Lox...."
+objectives:
+  - kind: Kill
+    target: "Lox"
+    amount: 5
+requiredLevel: 40
+repeatable: false
+resetHours: 30
+rewards:
+  coins: 800
+  experience: 8000

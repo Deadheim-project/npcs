@@ -1,0 +1,27 @@
+# Importado do KG Marketplace: Cidades.cfg [EitrLegs]
+# Cooldown original: 999999999 (lido como horas)
+id: eitrlegs
+name: "Calças de Tecido com Éter"
+description: "Calças de Tecido com Éter"
+objectives:
+  - kind: Collect
+    target: "Eitr"
+    amount: 20
+  - kind: Collect
+    target: "LinenThread"
+    amount: 15
+  - kind: Collect
+    target: "ScaleHide"
+    amount: 8
+requiredLevel: 75
+repeatable: false
+resetHours: 0
+requiresQuests:
+  - mnlegs
+rewards:
+  coins: 0
+  experience: 7000
+  items:
+    - itemName: "ArmorMageLegs"
+      amount: 1
+      quality: 1

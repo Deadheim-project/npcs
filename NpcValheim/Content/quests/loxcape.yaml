@@ -1,0 +1,21 @@
+# Importado do KG Marketplace: Cidades.cfg [LoxCape]
+# Cooldown original: 999999999 (lido como horas)
+id: loxcape
+name: "Capa de Lox"
+description: "Capa de Lox"
+objectives:
+  - kind: Collect
+    target: "LoxPelt"
+    amount: 8
+requiredLevel: 60
+repeatable: false
+resetHours: 0
+requiresQuests:
+  - pratacape
+rewards:
+  coins: 0
+  experience: 6000
+  items:
+    - itemName: "CapeLox"
+      amount: 1
+      quality: 1

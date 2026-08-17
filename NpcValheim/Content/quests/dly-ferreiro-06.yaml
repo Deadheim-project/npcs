@@ -1,0 +1,15 @@
+# Importado do KG Marketplace: DiariasSkuleFerreiro.cfg [Dly_Ferreiro_06]
+# Cooldown original: 30 (lido como horas)
+id: dly-ferreiro-06
+name: "Quest - Correntes !!"
+description: "As correntes são de dificil confecção então colete algumas no pantano."
+objectives:
+  - kind: Collect
+    target: "Chain"
+    amount: 5
+requiredLevel: 30
+repeatable: false
+resetHours: 30
+rewards:
+  coins: 50
+  experience: 2000

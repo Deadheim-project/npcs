@@ -1,0 +1,41 @@
+# Importado do KG Marketplace: Traders/TraderProfiles.cfg [pescador]
+# Sem 'name': aplicar este modelo troca a lista de precos e deixa o
+# nome do NPC como esta.
+name: ""
+forType: Marketplace
+marketplace:
+  taxPercent: 0
+  sells:
+    - itemName: "Fish5"
+      price: 15
+    - itemName: "Fish7"
+      price: 100
+    - itemName: "Fish9"
+      price: 150
+    - itemName: "Chitin"
+      price: 30
+  buys:
+    - itemName: "Fish1"
+      price: 10
+    - itemName: "Fish2"
+      price: 10
+    - itemName: "Fish3"
+      price: 30
+    - itemName: "Fish4"
+      price: 150
+    - itemName: "Fish5"
+      price: 15
+    - itemName: "Fish6"
+      price: 50
+    - itemName: "Fish7"
+      price: 100
+    - itemName: "Fish8"
+      price: 100
+    - itemName: "Fish9"
+      price: 150
+    - itemName: "Fish10"
+      price: 300
+    - itemName: "Fish11"
+      price: 250
+    - itemName: "Fish12"
+      price: 100

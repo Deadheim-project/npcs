@@ -1,0 +1,21 @@
+# Importado do KG Marketplace: Cidades.cfg [FerroLegs]
+# Cooldown original: 999999999 (lido como horas)
+id: ferrolegs
+name: "Calças de Ferro"
+description: "Forjar Ferro"
+objectives:
+  - kind: Collect
+    target: "Iron"
+    amount: 20
+requiredLevel: 30
+repeatable: false
+resetHours: 0
+requiresQuests:
+  - ferrochest
+rewards:
+  coins: 0
+  experience: 1500
+  items:
+    - itemName: "ArmorIronLegs"
+      amount: 1
+      quality: 1

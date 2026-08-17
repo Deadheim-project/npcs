@@ -32,6 +32,24 @@ namespace NpcValheim.Persistence
     }
 
     /// <summary>
+    /// One line of a quest's to-do list: "kill 10 boars", "hand over 5 leather scraps".
+    ///
+    /// A quest carries a list of these rather than a single one because that is what a quest
+    /// actually is in every game that has them -- "bring me two deer hides and five neck
+    /// tails" is one errand, not two, and splitting it into two entries in the journal makes
+    /// the player do bookkeeping the game should be doing.
+    /// </summary>
+    public class QuestObjective
+    {
+        public QuestObjectiveKind Kind { get; set; } = QuestObjectiveKind.Collect;
+
+        /// <summary>Prefab name of the creature to kill or the item to hand over; for Explore,
+        /// the "x,z" of the place to reach.</summary>
+        public string Target { get; set; } = "";
+        public int Amount { get; set; } = 1;
+    }
+
+    /// <summary>
     /// A quest as authored by an admin, in YAML under
     /// `BepInEx/plugins/NpcValheim/npcs/quests/&lt;id&gt;.yaml`. Definitions are content, not
     /// state -- what a given player has done with a quest lives in QuestDatabase.
@@ -42,10 +60,34 @@ namespace NpcValheim.Persistence
         public string Name { get; set; } = "";
         public string Description { get; set; } = "";
 
+        /// <summary>
+        /// Everything this quest asks for. Left empty by a quest written the old way, or by
+        /// the in-game quest maker, which both use the single Objective/Target/Amount below --
+        /// Steps() folds the two shapes into one so nothing downstream has to care which was
+        /// used.
+        /// </summary>
+        public List<QuestObjective> Objectives { get; set; } = new List<QuestObjective>();
+
         public QuestObjectiveKind Objective { get; set; } = QuestObjectiveKind.Collect;
         /// <summary>Prefab name of the creature to kill or the item to hand over.</summary>
         public string Target { get; set; } = "";
         public int Amount { get; set; } = 1;
+
+        /// <summary>
+        /// The objectives this quest really has, as one list.
+        ///
+        /// Deliberately a method and not a property: both YamlDotNet and LiteDB map every
+        /// public property they find, so a computed property here would be written back to
+        /// disk as a duplicate of the data it was derived from.
+        /// </summary>
+        public List<QuestObjective> Steps()
+        {
+            if (Objectives != null && Objectives.Count > 0) return Objectives;
+            return new List<QuestObjective>
+            {
+                new QuestObjective { Kind = Objective, Target = Target, Amount = Amount },
+            };
+        }
 
         /// <summary>Minimum EpicMMO level. Ignored when EpicMMO isn't installed, so a quest
         /// pack written for it still works on a server without it.</summary>

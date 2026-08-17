@@ -1,0 +1,11 @@
+# Importado do KG Marketplace: QuestProfiles/QuestsProfiles.cfg [Velkar]
+name: ""
+forType: QuestGiver
+questGiver:
+  quests:
+    - pequenos   # Malditos pequenos
+    - medios   # Baratas voadoras
+    - grandes   # Casca Reforçada
+    - gjall   # Gigante no céu
+    - seekerqueen   # Ameaça da Mistland
+    - jarl07   # Encontrar o Rei Surkhan

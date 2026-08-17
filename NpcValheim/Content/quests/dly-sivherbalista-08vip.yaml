@@ -1,0 +1,15 @@
+# Importado do KG Marketplace: SivHerbalistaAesir.cfg [Dly_SivHerbalista_08vip]
+# Cooldown original: 20 (lido como horas)
+id: dly-sivherbalista-08vip
+name: "Quest - Lodo"
+description: "Colete Lodo no pantano."
+objectives:
+  - kind: Collect
+    target: "Ooze"
+    amount: 30
+requiredLevel: 30
+repeatable: false
+resetHours: 20
+rewards:
+  coins: 0
+  experience: 6000

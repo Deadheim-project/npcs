@@ -1,0 +1,15 @@
+# Importado do KG Marketplace: DiariasSkuleFerreiro.cfg [Dly_Ferreiro_05]
+# Cooldown original: 30 (lido como horas)
+id: dly-ferreiro-05
+name: "Quest - Coletar Surtling"
+description: "Coletar Minério de Surtling"
+objectives:
+  - kind: Collect
+    target: "SurtlingCore"
+    amount: 30
+requiredLevel: 30
+repeatable: false
+resetHours: 30
+rewards:
+  coins: 200
+  experience: 2000

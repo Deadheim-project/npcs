@@ -1,0 +1,21 @@
+# Importado do KG Marketplace: Cidades.cfg [Bonemass]
+# Cooldown original: 999999999 (lido como horas)
+id: bonemass
+name: "Ameaça do Pantano"
+description: "Uma grande bolha é invocada em seu altar, ele é um oponente de respeito, porém sua presença me irrita, vá e faça seu trabalho saco de sangue fresco."
+objectives:
+  - kind: Kill
+    target: "Bonemass"
+    amount: 1
+requiredLevel: 0
+repeatable: false
+resetHours: 0
+requiresQuests:
+  - abom
+rewards:
+  coins: 300
+  experience: 6000
+  items:
+    - itemName: "mmo_xp_drink1"
+      amount: 10
+      quality: 1

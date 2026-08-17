@@ -1,0 +1,11 @@
+# Importado do KG Marketplace: QuestProfiles/QuestsProfiles.cfg [Morveng]
+name: ""
+forType: QuestGiver
+questGiver:
+  quests:
+    - draugr   # Necessidades sangrentas
+    - blob   # Mate as bolhas
+    - wraith   # Espectros familiares
+    - abom   # Raízes vivas
+    - bonemass   # Ameaça do Pantano
+    - jarl04   # Encontrar o Rei Skallr

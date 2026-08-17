@@ -1,0 +1,15 @@
+# Importado do KG Marketplace: TorilAesir.cfg [DLY_ASH_05vip]
+# Cooldown original: 30 (lido como horas)
+id: dly-ash-05vip
+name: "Quest - FallenValkyrie"
+description: "Anjo da Morte ..."
+objectives:
+  - kind: Kill
+    target: "FallenValkyrie"
+    amount: 2
+requiredLevel: 50
+repeatable: false
+resetHours: 30
+rewards:
+  coins: 2000
+  experience: 20000

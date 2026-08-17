@@ -1,0 +1,24 @@
+# Importado do KG Marketplace: Cidades.cfg [MistBow]
+# Cooldown original: 999999999 (lido como horas)
+id: mistbow
+name: "Arco Estala Coluna"
+description: "Arco Estala Coluna"
+objectives:
+  - kind: Collect
+    target: "Eitr"
+    amount: 10
+  - kind: Collect
+    target: "BoneFragments"
+    amount: 40
+requiredLevel: 75
+repeatable: false
+resetHours: 0
+requiresQuests:
+  - pratabow
+rewards:
+  coins: 0
+  experience: 7000
+  items:
+    - itemName: "BowSpineSnap"
+      amount: 1
+      quality: 1

@@ -1,0 +1,18 @@
+# Importado do KG Marketplace: Traders/TraderProfiles.cfg [Taverneiroexp]
+# Sem 'name': aplicar este modelo troca a lista de precos e deixa o
+# nome do NPC como esta.
+name: ""
+forType: Marketplace
+marketplace:
+  taxPercent: 0
+  sells:
+    - itemName: "MeadHealthMinor"
+      price: 15
+    - itemName: "MeadStaminaMinor"
+      price: 15
+    - itemName: "MeadPoisonResist"
+      price: 25
+    - itemName: "MeadTasty"
+      price: 15
+    - itemName: "MeadHasty"
+      price: 100

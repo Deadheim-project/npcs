@@ -1,0 +1,15 @@
+# Importado do KG Marketplace: SivHerbalista.cfg [Dly_SivHerbalista_07]
+# Cooldown original: 30 (lido como horas)
+id: dly-sivherbalista-07
+name: "Quest - Entranhas"
+description: "Colete algumas entranhas."
+objectives:
+  - kind: Collect
+    target: "Entrails"
+    amount: 30
+requiredLevel: 30
+repeatable: false
+resetHours: 30
+rewards:
+  coins: 0
+  experience: 2000

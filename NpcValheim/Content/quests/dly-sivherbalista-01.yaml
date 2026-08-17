@@ -1,0 +1,15 @@
+# Importado do KG Marketplace: SivHerbalista.cfg [Dly_SivHerbalista_01]
+# Cooldown original: 30 (lido como horas)
+id: dly-sivherbalista-01
+name: "Quest - Framboesas"
+description: "Colete algumas framboesas."
+objectives:
+  - kind: Collect
+    target: "Raspberry"
+    amount: 20
+requiredLevel: 1
+repeatable: false
+resetHours: 30
+rewards:
+  coins: 0
+  experience: 500

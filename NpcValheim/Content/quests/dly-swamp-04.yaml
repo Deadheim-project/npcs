@@ -1,0 +1,15 @@
+# Importado do KG Marketplace: Toril.cfg [DLY_SWAMP_04]
+# Cooldown original: 30 (lido como horas)
+id: dly-swamp-04
+name: "Quest - Abominações"
+description: "O troll do pantano...."
+objectives:
+  - kind: Kill
+    target: "Abomination"
+    amount: 3
+requiredLevel: 30
+repeatable: false
+resetHours: 30
+rewards:
+  coins: 500
+  experience: 4000

@@ -1,0 +1,15 @@
+# Importado do KG Marketplace: Toril.cfg [DLY_BLACKFLORESTT_05]
+# Cooldown original: 30 (lido como horas)
+id: dly-blackflorestt-05
+name: "Quest - Esqueletos!!!"
+description: "Vamos são apenas alguns esqueletos você consegue, para de fazer corpo mole."
+objectives:
+  - kind: Kill
+    target: "Skeleton"
+    amount: 20
+requiredLevel: 15
+repeatable: false
+resetHours: 30
+rewards:
+  coins: 50
+  experience: 1500

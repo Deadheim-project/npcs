@@ -1,0 +1,23 @@
+# Importado do KG Marketplace: Cidades.cfg [goblins]
+# Cooldown original: 999999999 (lido como horas)
+id: goblins
+name: "Risadinhas mortais"
+description: "Esses pequenos goblins arruaceiros aterrorizam nossos arredores, nos ajude a acabar com esta raça!"
+objectives:
+  - kind: Kill
+    target: "Goblin"
+    amount: 12
+  - kind: Kill
+    target: "GoblinBrute"
+    amount: 3
+  - kind: Kill
+    target: "GoblinShaman"
+    amount: 2
+requiredLevel: 0
+repeatable: false
+resetHours: 0
+requiresQuests:
+  - mosquito
+rewards:
+  coins: 2000
+  experience: 8000

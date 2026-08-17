@@ -1,0 +1,17 @@
+# Importado do KG Marketplace: Cidades.cfg [Abom]
+# Cooldown original: 999999999 (lido como horas)
+id: abom
+name: "Raízes vivas"
+description: "Existem algumas raízes gigantescas nos pântanos deste mundo, elas são poderosas e gosto de misturar sua seiva em meu coquetel. Pegue-as para mim"
+objectives:
+  - kind: Kill
+    target: "Abomination"
+    amount: 3
+requiredLevel: 0
+repeatable: false
+resetHours: 0
+requiresQuests:
+  - wraith
+rewards:
+  coins: 500
+  experience: 3000

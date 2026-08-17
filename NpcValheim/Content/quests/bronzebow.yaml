@@ -1,0 +1,21 @@
+# Importado do KG Marketplace: Cidades.cfg [BronzeBow]
+# Cooldown original: 999999999 (lido como horas)
+id: bronzebow
+name: "Arco de Madeira Boa"
+description: "Arco de Madeira Boa"
+objectives:
+  - kind: Collect
+    target: "Bronze"
+    amount: 5
+requiredLevel: 15
+repeatable: false
+resetHours: 0
+requiresQuests:
+  - trollcape
+rewards:
+  coins: 0
+  experience: 1000
+  items:
+    - itemName: "BowFineWood"
+      amount: 1
+      quality: 2

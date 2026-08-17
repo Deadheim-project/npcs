@@ -1,0 +1,20 @@
+# Importado do KG Marketplace: QuestProfiles/QuestsProfiles.cfg [skill]
+name: ""
+forType: QuestGiver
+questGiver:
+  quests:
+    - skill1   # Treinamento Ninja!
+    - skill2   # Socos fortes!
+    - skill3   # O Maratonista
+    - skill4   # Pulo do coelho
+    - skill5   # Esquiva
+    - skill6   # Faca
+    - skill7   # Lança
+    - skill8   # Escudo
+    - skill9   # Porrete
+    - skill10   # Machado
+    - skill11   # Armas de Haste
+    - skill12   # Espadas
+    - skill13   # Arcos
+    - skill14   # Bestas
+    - skill15   # Magias
