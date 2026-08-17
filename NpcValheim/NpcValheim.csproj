@@ -97,10 +97,17 @@
 
   <ItemGroup>
     <PackageReference Include="LiteDB" Version="5.0.19" />
-    <!-- Fixado na mesma versão que o modpack do servidor instala
-         (ValheimModding-YamlDotNet). BepInEx carrega um YamlDotNet só: se o mod
-         trouxer outra versão, uma das duas perde e quebra quem depende dela. -->
-    <PackageReference Include="YamlDotNet" Version="16.3.1">
+    <!-- Fixado EXATAMENTE na versão que o modpack do servidor instala
+         (ValheimModding-YamlDotNet 16.3.0, assembly 16.0.0.0). BepInEx carrega um
+         YamlDotNet só: se o mod trouxer outra versão, uma das duas perde.
+
+         Os colchetes não são decoração. "16.3.1" era um intervalo mínimo, e essa
+         versão nunca saiu como estável, só como prerelease, então o NuGet
+         resolvia 17.0.0 e avisava num NU1603 que passou despercebido em todo
+         build. O resultado era compilar contra uma API mais nova do que a que
+         existe em runtime: qualquer método adicionado depois da 16.3 compilaria
+         e só quebraria dentro do jogo. -->
+    <PackageReference Include="YamlDotNet" Version="[16.3.0]">
       <!-- Compila contra ela, mas não a copia para a saída: quem entrega o
            YamlDotNet em runtime é o pacote do modpack. -->
       <ExcludeAssets>runtime</ExcludeAssets>

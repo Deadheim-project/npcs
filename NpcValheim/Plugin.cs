@@ -22,7 +22,11 @@ namespace NpcValheim
         // Server -> client config sync (ServerSync/blaxxun-boop) so every player connecting
         // to a dedicated server automatically uses the host's teleporter cost/cooldown
         // instead of whatever is in their own local config file.
-        private static readonly ConfigSync ConfigSync = new ConfigSync(Guid) { DisplayName = Name, CurrentVersion = Version, ModRequired = false };
+        // Built in Awake, not in a field initialiser. As a static initialiser it ran the
+        // moment anything so much as mentioned this type, which pulled ServerSync's own
+        // static setup -- and that reaches into BepInEx internals. A plugin should do its
+        // work when BepInEx tells it to, not when the class loader happens to touch it.
+        private static ConfigSync ConfigSync;
 
         // Defaults applied to newly bound teleporters; existing ones keep whatever was set
         // via TeleporterNpc.ConfigureCost. Kept simple on purpose -- per-NPC overrides can
@@ -71,6 +75,11 @@ namespace NpcValheim
         private void Awake()
         {
             Log = Logger;
+
+            ConfigSync = new ConfigSync(Guid)
+            {
+                DisplayName = Name, CurrentVersion = Version, ModRequired = false,
+            };
 
             TeleportCostItem = Config.Bind("Teleporter", "CostItem", "",
                 "Prefab name of the item charged per teleport (empty = free)");
