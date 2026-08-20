@@ -100,7 +100,11 @@ namespace NpcValheim.Testing
             // Focus is checked after the player is on, not before: the gate is "is somebody
             // watching this happen", and that can only be true once there is a session to
             // watch. Nothing is spawned and nothing is written to the databases before here.
-            if (!ForegroundWindow.IsValheimFocused())
+            // Dedicated Linux servers have no foreground window (and no user32.dll).
+            // Requiring desktop focus there made the headless suite cancel every run.
+            // The focus guard only applies to an interactive host process; on a dedicated
+            // server, the connected-player gate above is the explicit consent signal.
+            if (!Application.isBatchMode && !ForegroundWindow.IsValheimFocused())
             {
                 Plugin.Log.LogInfo("SERVER SELFTEST: cancelled -- Valheim is not the focused " +
                     $"window (focus is on '{ForegroundWindow.FocusedProcessName()}'). " +
@@ -108,7 +112,9 @@ namespace NpcValheim.Testing
                 yield break;
             }
 
-            Plugin.Log.LogInfo("SERVER SELFTEST: player online and Valheim focused, starting");
+            Plugin.Log.LogInfo(Application.isBatchMode
+                ? "SERVER SELFTEST: player online on dedicated server, starting"
+                : "SERVER SELFTEST: player online and Valheim focused, starting");
 
             RunItemNameChecks();
             RunHoverChecks(teleporterPrefab);
