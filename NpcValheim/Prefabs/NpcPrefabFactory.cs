@@ -40,6 +40,7 @@ namespace NpcValheim.Prefabs
         // Without this, cloning "Player" here threw a NullReferenceException from deep
         // inside its original Awake chain.
         private static Transform _hiddenContainer;
+        private static Sprite _placerIcon;
 
         private static Transform HiddenContainer
         {
@@ -207,6 +208,7 @@ namespace NpcValheim.Prefabs
             piece.m_resources = Array.Empty<Piece.Requirement>();
             piece.m_groundOnly = true;
             piece.m_canBeRemoved = true;
+            piece.m_icon = GetPlacerIcon();
 
             var spawner = stub.AddComponent<NpcSpawnerStub>();
             spawner.TargetPrefabName = targetPrefabName;
@@ -214,6 +216,13 @@ namespace NpcValheim.Prefabs
             scene.m_prefabs.Add(stub);
             CustomPrefabs.Add(stub);
             Plugin.Log.LogInfo($"NpcValheim: registered placer stub '{stubPrefabName}' -> '{targetPrefabName}'");
+        }
+
+        private static Sprite GetPlacerIcon()
+        {
+            if (_placerIcon == null)
+                _placerIcon = PecaMesh.LoadIcon(PecaMesh.MailboxFolder);
+            return _placerIcon;
         }
 
         private static void StripComponent<T>(GameObject go) where T : Component
