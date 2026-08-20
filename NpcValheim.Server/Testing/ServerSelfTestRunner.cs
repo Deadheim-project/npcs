@@ -1,6 +1,7 @@
 using System.Linq;
 using System.Collections;
 using System.Collections.Generic;
+using System.Reflection;
 using UnityEngine;
 using NpcValheim.Npc;
 using NpcValheim.Persistence;
@@ -172,6 +173,34 @@ namespace NpcValheim.Testing
             return null;
         }
 
+        private static FieldInfo _peerCharacterId;
+        private static FieldInfo _peerRefPos;
+
+        private static bool TryGetSpawnedPeerPosition(out Vector3 position)
+        {
+            position = Vector3.zero;
+            var peers = ZNet.instance?.GetPeers();
+            if (peers == null) return false;
+
+            const BindingFlags fields = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
+            _peerCharacterId ??= typeof(ZNetPeer).GetField("m_characterID", fields);
+            _peerRefPos ??= typeof(ZNetPeer).GetField("m_refPos", fields);
+
+            foreach (var peer in peers)
+            {
+                if (peer == null) continue;
+                if (!(_peerCharacterId?.GetValue(peer) is ZDOID characterId) ||
+                    characterId.UserID == 0L)
+                    continue;
+                if (_peerRefPos?.GetValue(peer) is Vector3 refPos)
+                {
+                    position = refPos;
+                    return true;
+                }
+            }
+            return false;
+        }
+
         /// <summary>
         /// Holds the run until somebody is actually playing.
         ///
@@ -191,7 +220,8 @@ namespace NpcValheim.Testing
             {
                 int connected = ConnectedPlayers();
                 var worldPlayer = FirstWorldPlayer();
-                if (connected > 0 && worldPlayer != null)
+                bool spawnedPeer = TryGetSpawnedPeerPosition(out _);
+                if (connected > 0 && (worldPlayer != null || spawnedPeer))
                 {
                     Plugin.Log.LogInfo($"SERVER SELFTEST: {connected} player(s) online and character spawned");
                     // A beat so the client finishes spawning in before anything is spawned
@@ -402,9 +432,12 @@ namespace NpcValheim.Testing
             // works headless but not in a live game: that zone is not loaded, so the game
             // destroys the object mid-test and the next line reading its transform throws.
             var player = Player.m_localPlayer != null ? Player.m_localPlayer : FirstWorldPlayer();
+            bool hasPeerPosition = TryGetSpawnedPeerPosition(out var peerPosition);
             var start = player != null
                 ? player.transform.position + Vector3.right * 3f + Vector3.up * 12f
-                : new Vector3(64f, 45f, 64f);
+                : hasPeerPosition
+                    ? peerPosition + Vector3.right * 3f + Vector3.up * 12f
+                    : new Vector3(64f, 45f, 64f);
 
             GameObject npcGo = null;
             try
