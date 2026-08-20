@@ -163,6 +163,15 @@ namespace NpcValheim.Testing
             }
         }
 
+        private static Player FirstWorldPlayer()
+        {
+            var players = Player.GetAllPlayers();
+            if (players == null) return null;
+            foreach (var player in players)
+                if (player != null) return player;
+            return null;
+        }
+
         /// <summary>
         /// Holds the run until somebody is actually playing.
         ///
@@ -180,9 +189,11 @@ namespace NpcValheim.Testing
 
             while (Time.realtimeSinceStartup < deadline)
             {
-                if (ConnectedPlayers() > 0)
+                int connected = ConnectedPlayers();
+                var worldPlayer = FirstWorldPlayer();
+                if (connected > 0 && worldPlayer != null)
                 {
-                    Plugin.Log.LogInfo($"SERVER SELFTEST: {ConnectedPlayers()} player(s) online");
+                    Plugin.Log.LogInfo($"SERVER SELFTEST: {connected} player(s) online and character spawned");
                     // A beat so the client finishes spawning in before anything is spawned
                     // next to it.
                     float settle = Time.realtimeSinceStartup + 5f;
@@ -193,8 +204,9 @@ namespace NpcValheim.Testing
                 if (Time.realtimeSinceStartup >= nextHeartbeat)
                 {
                     nextHeartbeat = Time.realtimeSinceStartup + 30f;
-                    Plugin.Log.LogInfo("SERVER SELFTEST: still nobody online " +
-                        $"(t={Time.realtimeSinceStartup:0}s, focus='{ForegroundWindow.FocusedProcessName()}')");
+                    Plugin.Log.LogInfo("SERVER SELFTEST: waiting for a spawned character " +
+                        $"(connections={connected}, t={Time.realtimeSinceStartup:0}s, " +
+                        $"focus='{ForegroundWindow.FocusedProcessName()}')");
                 }
 
                 yield return null;
@@ -389,9 +401,9 @@ namespace NpcValheim.Testing
             // Next to the player when there is one. Spawning at a fixed far-away coordinate
             // works headless but not in a live game: that zone is not loaded, so the game
             // destroys the object mid-test and the next line reading its transform throws.
-            var player = Player.m_localPlayer;
+            var player = Player.m_localPlayer != null ? Player.m_localPlayer : FirstWorldPlayer();
             var start = player != null
-                ? player.transform.position + Vector3.up * 12f
+                ? player.transform.position + Vector3.right * 3f + Vector3.up * 12f
                 : new Vector3(64f, 45f, 64f);
 
             GameObject npcGo = null;
@@ -405,6 +417,22 @@ namespace NpcValheim.Testing
                 var body = npcGo.GetComponent<Rigidbody>();
                 Check("the NPC has a body to anchor", body != null);
                 if (body == null) yield break;
+
+                // Anchor deliberately runs one frame after Awake so terrain is measurable.
+                // Wait for that lifecycle instead of reading the Player prefab's initial
+                // FreezeRotation value before the coroutine has run.
+                float anchorDeadline = Time.realtimeSinceStartup + 3f;
+                while (npcGo != null && body != null &&
+                       body.constraints != RigidbodyConstraints.FreezeAll &&
+                       Time.realtimeSinceStartup < anchorDeadline)
+                    yield return null;
+
+                if (npcGo == null || body == null)
+                {
+                    Check("the test NPC survives anchoring", false,
+                        "the game destroyed it before anchoring completed");
+                    yield break;
+                }
 
                 // Frozen, not kinematic: a kinematic Character breaks the game's own grounding
                 // code and makes Unity warn on every velocity write -- 83,709 log lines in one
@@ -436,9 +464,9 @@ namespace NpcValheim.Testing
 
                 float moved = Vector3.Distance(npcGo.transform.position, before);
                 Check("the NPC does not drift once placed", moved < 0.05f, $"moved {moved:0.000}m");
-                Check("and gravity does not pull it down",
-                    Mathf.Abs(npcGo.transform.position.y - start.y) < 0.05f,
-                    $"y {start.y} -> {npcGo.transform.position.y}");
+                Check("and gravity does not pull it down after anchoring",
+                    Mathf.Abs(npcGo.transform.position.y - before.y) < 0.05f,
+                    $"y {before.y} -> {npcGo.transform.position.y}");
 
                 // The flags are what other bodies actually consult when they hit it, so they
                 // are the mechanism behind "the player can't shove him".

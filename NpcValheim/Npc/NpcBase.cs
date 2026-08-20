@@ -870,15 +870,8 @@ namespace NpcValheim.Npc
 
         public static List<string> GetHandItemNames(HandSlot slot)
         {
-            if (ObjectDB.instance == null) return new List<string>();
             var types = slot == HandSlot.Right ? RightHandTypes : LeftHandTypes;
-            return types
-                .SelectMany(type => ObjectDB.instance.GetAllItems(type, ""))
-                .Where(item => item != null)
-                .Select(item => item.name)
-                .Distinct()
-                .OrderBy(name => name)
-                .ToList();
+            return GetItemPrefabNames(types);
         }
 
         public int GetModelCount()
@@ -910,8 +903,6 @@ namespace NpcValheim.Npc
         /// <summary>All armor prefab names in the game (including DLC) for a given slot.</summary>
         public static List<string> GetArmorNamesForSlot(ArmorSlot slot)
         {
-            if (ObjectDB.instance == null) return new List<string>();
-
             var type = slot switch
             {
                 ArmorSlot.Helmet => ItemType.Helmet,
@@ -921,12 +912,41 @@ namespace NpcValheim.Npc
                 _ => ItemType.None
             };
 
-            return ObjectDB.instance.GetAllItems(type, "")
-                .Where(id => id != null)
-                .Select(id => id.name)
-                .Distinct()
-                .OrderBy(n => n)
-                .ToList();
+            return GetItemPrefabNames(new[] { type });
+        }
+
+        /// <summary>
+        /// Safe counterpart to ObjectDB.GetAllItems. Modded servers can leave a destroyed
+        /// prefab in m_items; GetAllItems touches it before callers can filter its result.
+        /// </summary>
+        private static List<string> GetItemPrefabNames(IEnumerable<ItemType> acceptedTypes)
+        {
+            var results = new List<string>();
+            if (ObjectDB.instance?.m_items == null) return results;
+
+            var types = new HashSet<ItemType>(acceptedTypes);
+            foreach (var prefab in ObjectDB.instance.m_items)
+            {
+                if (prefab == null) continue;
+
+                ItemDrop drop;
+                try
+                {
+                    drop = prefab.GetComponent<ItemDrop>();
+                }
+                catch (MissingReferenceException)
+                {
+                    continue;
+                }
+
+                if (drop?.m_itemData?.m_shared == null ||
+                    !types.Contains(drop.m_itemData.m_shared.m_itemType))
+                    continue;
+
+                results.Add(prefab.name);
+            }
+
+            return results.Distinct().OrderBy(name => name).ToList();
         }
     }
 }
