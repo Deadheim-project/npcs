@@ -482,7 +482,11 @@ namespace NpcValheim.Testing
                 // queued behind it with it, twice, before that was spotted. What actually
                 // needs proving is that the body no longer responds to physics at all, and
                 // spawning it in mid-air proves exactly that: an unanchored one falls.
-                float deadline = Time.realtimeSinceStartup + 2f;
+                // A directly-instantiated network prefab is eventually culled by the zone
+                // lifecycle because it did not come through the placement pipeline. Several
+                // physics ticks are enough to prove the constraints while staying ahead of
+                // that test-only cleanup.
+                float deadline = Time.realtimeSinceStartup + 0.25f;
                 while (Time.realtimeSinceStartup < deadline) yield return null;
 
                 // The world can take the object away underneath us (unloaded zone, a cleanup
@@ -1238,7 +1242,7 @@ namespace NpcValheim.Testing
             try
             {
                 const long playerId = 900000301L;
-                foreach (var p in QuestDatabase.GetAll(playerId)) QuestDatabase.Abandon(playerId, p.QuestId);
+                QuestDatabase.ResetPlayerForSelfTest(playerId);
                 foreach (var m in MailDatabase.GetMail(playerId)) MailDatabase.Claim(m.Id, playerId);
 
                 // The example quest is written out on first run, so there is always at least
@@ -1306,7 +1310,7 @@ namespace NpcValheim.Testing
                 RunTurnInEdgeChecks(playerId, quest);
                 RunDailyQuestChecks(playerId);
 
-                foreach (var p in QuestDatabase.GetAll(playerId)) QuestDatabase.Abandon(playerId, p.QuestId);
+                QuestDatabase.ResetPlayerForSelfTest(playerId);
                 foreach (var m in MailDatabase.GetMail(playerId)) MailDatabase.Claim(m.Id, playerId);
             }
             catch (System.Exception error)

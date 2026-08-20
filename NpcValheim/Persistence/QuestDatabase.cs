@@ -135,6 +135,15 @@ namespace NpcValheim.Persistence
             Write(quests => quests.Update(entry));
         }
 
+        /// <summary>Removes every fixture record for a synthetic player between test runs.
+        /// Production Abandon intentionally preserves completed quests, so it cannot provide
+        /// isolation for a repeatable server self-test.</summary>
+        internal static void ResetPlayerForSelfTest(long playerId)
+        {
+            if (Plugin.EnableSelfTest?.Value != true) return;
+            Write(quests => quests.DeleteMany(x => x.PlayerId == playerId));
+        }
+
         /// <summary>How long until a timed quest comes back, or zero when it is available or
         /// never resets.</summary>
         public static TimeSpan TimeUntilReset(long playerId, QuestDefinition quest)
