@@ -51,7 +51,10 @@ namespace NpcValheim.Server
                 if (!UnityEngine.Application.isBatchMode)
                 {
                     SelfTestRunner.EnsureCreated();
-                    AutoStart.EnsureCreated();
+                    // A direct-connect launch already owns the menu flow. Starting a local
+                    // world here races Valheim's +connect handling and silently moves the
+                    // self-test away from the dedicated server it was meant to exercise.
+                    if (!HasDirectConnectArgument()) AutoStart.EnsureCreated();
                 }
             }
 
@@ -72,6 +75,14 @@ namespace NpcValheim.Server
 
             if (NpcValheim.Plugin.AutoConfirmCharacterOnJoin.Value)
                 AutoConfirmCharacter.EnsureCreated(NpcValheim.Plugin.AutoJoinPassword.Value);
+        }
+
+        private static bool HasDirectConnectArgument()
+        {
+            foreach (string argument in System.Environment.GetCommandLineArgs())
+                if (string.Equals(argument, "+connect", System.StringComparison.OrdinalIgnoreCase))
+                    return true;
+            return false;
         }
     }
 }

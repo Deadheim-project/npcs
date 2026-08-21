@@ -28,6 +28,9 @@ namespace NpcValheim.Testing
 
         private static IEnumerator Run(string joinPassword)
         {
+            if (string.IsNullOrEmpty(joinPassword))
+                joinPassword = PasswordFromCommandLine();
+
             Plugin.Log.LogInfo("SELFTEST: AutoConfirmCharacter waiting for FejdStartup");
 
             float timeout = Time.realtimeSinceStartup + 60f;
@@ -126,6 +129,15 @@ namespace NpcValheim.Testing
                     Plugin.Log.LogWarning($"SELFTEST: AutoConfirmCharacter character-start attempt {attempt} threw (will retry): {Describe(e)}");
                 }
             }
+        }
+
+        private static string PasswordFromCommandLine()
+        {
+            string[] arguments = Environment.GetCommandLineArgs();
+            for (int i = 0; i + 1 < arguments.Length; i++)
+                if (string.Equals(arguments[i], "-password", StringComparison.OrdinalIgnoreCase))
+                    return arguments[i + 1];
+            return "";
         }
 
         /// <summary>
