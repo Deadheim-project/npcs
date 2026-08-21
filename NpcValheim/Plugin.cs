@@ -14,7 +14,7 @@ namespace NpcValheim
     {
         public const string Guid = "com.npcvalheim.mod";
         public const string Name = "NpcValheim";
-        public const string Version = "0.1.5";
+        public const string Version = "0.1.6";
 
         internal static ManualLogSource Log;
         private Harmony _harmony;
@@ -27,6 +27,29 @@ namespace NpcValheim
         // static setup -- and that reaches into BepInEx internals. A plugin should do its
         // work when BepInEx tells it to, not when the class loader happens to touch it.
         private static ConfigSync ConfigSync;
+
+        /// <summary>
+        /// ServerSync sends the server's admin-list result to each remote client as its
+        /// lock-exemption bit. Vanilla's LocalPlayerIsAdminOrHost does not reliably expose
+        /// that result on a dedicated-server client, even though the server already knows
+        /// the player is an admin. The NPC UI uses this client-side signal only to decide
+        /// which tabs to draw; every mutation is still authorized again by the server RPC.
+        /// </summary>
+        internal static bool LocalPlayerIsServerSyncAdmin
+        {
+            get
+            {
+                if (ConfigSync == null) return false;
+
+                // Host/single-player is the source of truth and needs no network sync.
+                if (ZNet.instance != null && ZNet.instance.IsServer()) return true;
+
+                // Before the initial package arrives ConfigSync temporarily starts as the
+                // source of truth on every process. Never treat that transient state as an
+                // admin grant on a remote client.
+                return ConfigSync.InitialSyncDone && ConfigSync.IsAdmin;
+            }
+        }
 
         // Defaults applied to newly bound teleporters; existing ones keep whatever was set
         // via TeleporterNpc.ConfigureCost. Kept simple on purpose -- per-NPC overrides can

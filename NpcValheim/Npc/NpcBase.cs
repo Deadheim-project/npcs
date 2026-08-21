@@ -260,7 +260,8 @@ namespace NpcValheim.Npc
             // Dev preview: lets the showcase render the panel exactly as a visitor sees it
             // without needing a second machine and a second Steam account (Testing.SimulateNonAdmin).
             if (Plugin.NonAdminPreviewActive) return false;
-            return ZNet.instance != null && ZNet.instance.LocalPlayerIsAdminOrHost();
+            return (ZNet.instance != null && ZNet.instance.LocalPlayerIsAdminOrHost()) ||
+                   Plugin.LocalPlayerIsServerSyncAdmin;
         }
 
         protected string GetNpcName()

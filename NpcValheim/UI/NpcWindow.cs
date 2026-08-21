@@ -111,7 +111,14 @@ namespace NpcValheim.UI
                     break;
             }
 
-            if (npc.CanLocalPlayerAdminister())
+            bool canAdminister = npc.CanLocalPlayerAdminister();
+            Plugin.Log.LogInfo(
+                $"NpcValheim UI: admin gate for '{npc.GetHoverName()}' -- " +
+                $"vanilla={ZNet.instance != null && ZNet.instance.LocalPlayerIsAdminOrHost()} " +
+                $"serversync={Plugin.LocalPlayerIsServerSyncAdmin} " +
+                $"owner={npc.OwnerId} player={player.GetPlayerID()} allowed={canAdminister}");
+
+            if (canAdminister)
             {
                 if (npc.ShowsAppearanceTab)
                     AddTab("Aparência", new AppearanceView(), npc, player);
