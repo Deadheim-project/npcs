@@ -315,7 +315,12 @@ namespace NpcValheim.Npc
                 return true;
             }
 
-            return CanAdministerAs(playerId, isAdmin, ownerId);
+            bool allowed = CanAdministerAs(playerId, isAdmin, ownerId);
+            if (!allowed)
+                Plugin.Log.LogWarning(
+                    $"NpcValheim: denied NPC mutation sender={sender} player={playerId} " +
+                    $"admin={isAdmin} owner={ownerId}");
+            return allowed;
         }
 
         /// <summary>Called by NpcSpawnerStub right after it Instantiate()s us -- we're never

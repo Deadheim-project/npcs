@@ -26,9 +26,12 @@ namespace NpcValheim.Npc
         private static FieldInfo _peerPlayerName;
         private static FieldInfo _peerCharacterId;
         private static FieldInfo _peerUid;
-        private static FieldInfo _peerSocket;
+        private static FieldInfo _peerRpc;
+        private static FieldInfo _adminList;
+        private static MethodInfo _rpcGetSocket;
         private static MethodInfo _socketGetHostName;
-        private static MethodInfo _znetIsAdmin;
+        private static MethodInfo _znetListContainsId;
+        private static MethodInfo _adminListContains;
         private static MethodInfo _routedGetServerPeerId;
         private static FieldInfo _minimapPins;
         private static FieldInfo _pinName;
@@ -269,6 +272,11 @@ namespace NpcValheim.Npc
         }
 
         /// <summary>Whether the peer behind an RPC sender id is on the server's admin list.
+        ///
+        /// Use the same path as ServerSync: peer.m_rpc.GetSocket().GetHostName() followed by
+        /// ZNet.ListContainsId(m_adminList, hostName). Reading ZNetPeer.m_socket directly used
+        /// to return null on the dedicated server, so the client received ServerSync's admin
+        /// flag and could see the Appearance tab while every mutation RPC was silently denied.
         /// A sender with no separate peer object is the host talking to itself, which counts
         /// as admin in solo/hosted play.</summary>
         public static bool IsAdmin(long senderId)
@@ -280,16 +288,32 @@ namespace NpcValheim.Npc
                 var peer = FindPeer(senderId);
                 if (peer == null) return ZNet.instance.LocalPlayerIsAdminOrHost();
 
-                _peerSocket ??= typeof(ZNetPeer).GetField("m_socket", AnyInstance);
-                var socket = _peerSocket?.GetValue(peer);
+                _peerRpc ??= typeof(ZNetPeer).GetField("m_rpc", AnyInstance);
+                var rpc = _peerRpc?.GetValue(peer);
+                if (rpc == null) return false;
+
+                _rpcGetSocket ??= rpc.GetType().GetMethod("GetSocket", AnyInstance);
+                var socket = _rpcGetSocket?.Invoke(rpc, Array.Empty<object>());
                 if (socket == null) return false;
 
                 _socketGetHostName ??= socket.GetType().GetMethod("GetHostName", AnyInstance);
                 var hostName = _socketGetHostName?.Invoke(socket, Array.Empty<object>()) as string;
                 if (string.IsNullOrEmpty(hostName)) return false;
 
-                _znetIsAdmin ??= typeof(ZNet).GetMethod("IsAdmin", AnyInstance, null, new[] { typeof(string) }, null);
-                return _znetIsAdmin != null && (bool)_znetIsAdmin.Invoke(ZNet.instance, new object[] { hostName });
+                _adminList ??= typeof(ZNet).GetField("m_adminList", AnyInstance);
+                var adminList = _adminList?.GetValue(ZNet.instance);
+                if (adminList == null) return false;
+
+                _znetListContainsId ??= typeof(ZNet).GetMethod("ListContainsId", AnyInstance);
+                if (_znetListContainsId != null)
+                    return (bool)_znetListContainsId.Invoke(ZNet.instance, new[] { adminList, hostName });
+
+                // Older game builds do not expose ListContainsId. SyncedList.Contains is the
+                // vanilla fallback used by ServerSync for those versions.
+                _adminListContains ??= adminList.GetType().GetMethod(
+                    "Contains", AnyInstance, null, new[] { typeof(string) }, null);
+                return _adminListContains != null &&
+                       (bool)_adminListContains.Invoke(adminList, new object[] { hostName });
             }
             catch (Exception e)
             {
