@@ -646,10 +646,12 @@ namespace NpcValheim.UI
 
         private void RefreshTemplates()
         {
+            Npc.RequestTemplateIndex();
+
             // Only the presets that make sense here. Offering a merchant's counter to a
             // teleporter was one wrong click away from replacing a travel network with a
             // price list.
-            var names = NpcConfigStore.ListTemplatesFor(Npc.ProfileType);
+            var names = Npc.GetServerTemplateNames();
             var signature = string.Join("|", names);
             if (signature == _templateSignature) return;
             _templateSignature = signature;

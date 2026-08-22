@@ -45,6 +45,9 @@ namespace NpcValheim.Npc
         private float _appliedScale = -1f;
         private int _appliedAppearanceRevision = int.MinValue;
         private float _nextAppearanceSync;
+        private readonly List<string> _serverTemplateNames = new List<string>();
+        private bool _serverTemplateIndexReceived;
+        private float _nextTemplateIndexRequest;
 
         protected virtual void Awake()
         {
@@ -81,6 +84,8 @@ namespace NpcValheim.Npc
             Nview.Register("RPC_SetScale", (Action<long, float>)RPC_SetScale);
             Nview.Register("RPC_SaveAsTemplate", (Action<long, string>)RPC_SaveAsTemplate);
             Nview.Register("RPC_ApplyTemplateByName", (Action<long, string>)RPC_ApplyTemplateByName);
+            Nview.Register("RPC_RequestTemplateIndex", (Action<long>)RPC_RequestTemplateIndex);
+            Nview.Register("RPC_TemplateIndex", (Action<long, string>)RPC_TemplateIndex);
             RegisterRpc();
             ApplyVisualFromZdo();
             _appliedAppearanceRevision = Nview.GetZDO().GetInt(ZdoKeys.AppearanceRevision, 0);
@@ -627,6 +632,41 @@ namespace NpcValheim.Npc
 
         // ----- Reusable templates (YAML on disk) -----
 
+        /// <summary>
+        /// Asks the NPC owner (the dedicated server) for the templates that match this NPC.
+        /// The admin UI calls this while it is open; the small retry window covers a request
+        /// made before the peer is completely ready without spamming an RPC every frame.
+        /// </summary>
+        public void RequestTemplateIndex()
+        {
+            if (_serverTemplateIndexReceived || Nview == null || !Nview.IsValid()) return;
+            if (Time.unscaledTime < _nextTemplateIndexRequest) return;
+
+            _nextTemplateIndexRequest = Time.unscaledTime + 2f;
+            Nview.InvokeRPC("RPC_RequestTemplateIndex");
+        }
+
+        public List<string> GetServerTemplateNames() => new List<string>(_serverTemplateNames);
+
+        private void RPC_RequestTemplateIndex(long sender)
+        {
+            if (!Nview.IsOwner()) return;
+
+            var names = NpcConfigStore.ListTemplatesFor(ProfileType);
+            Nview.InvokeRPC(sender, "RPC_TemplateIndex", string.Join("\n", names));
+            Plugin.Log.LogInfo($"NpcValheim: sent {names.Count} template(s) for {ProfileType} to peer {sender}");
+        }
+
+        private void RPC_TemplateIndex(long sender, string packed)
+        {
+            _serverTemplateNames.Clear();
+            _serverTemplateNames.AddRange((packed ?? "")
+                .Split(new[] { '\n' }, StringSplitOptions.RemoveEmptyEntries)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderBy(name => name, StringComparer.OrdinalIgnoreCase));
+            _serverTemplateIndexReceived = true;
+        }
+
         public void RequestSaveAsTemplate(Player requester, string templateName)
         {
             if (Nview == null || !Nview.IsValid() || !CanLocalPlayerAdminister()) return;
@@ -643,6 +683,7 @@ namespace NpcValheim.Npc
         {
             if (!CanAdminister(sender) || string.IsNullOrEmpty(templateName)) return;
             NpcConfigStore.SaveTemplate(templateName, BuildProfile());
+            _serverTemplateIndexReceived = false;
             Plugin.Log.LogInfo($"NpcValheim: saved template '{templateName}' from NPC '{GetNpcName()}'");
         }
 
