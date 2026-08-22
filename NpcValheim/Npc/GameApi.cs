@@ -30,6 +30,7 @@ namespace NpcValheim.Npc
         private static FieldInfo _adminList;
         private static MethodInfo _rpcGetSocket;
         private static MethodInfo _socketGetHostName;
+        private static MethodInfo _znetIsAdmin;
         private static MethodInfo _znetListContainsId;
         private static MethodInfo _adminListContains;
         private static MethodInfo _routedGetServerPeerId;
@@ -299,6 +300,15 @@ namespace NpcValheim.Npc
                 _socketGetHostName ??= socket.GetType().GetMethod("GetHostName", AnyInstance);
                 var hostName = _socketGetHostName?.Invoke(socket, Array.Empty<object>()) as string;
                 if (string.IsNullOrEmpty(hostName)) return false;
+
+                // Use Valheim's own admin lookup first. It normalizes platform ids
+                // (for example Steam_123 versus the bare numeric id) before checking
+                // adminlist.txt. Calling SyncedList.Contains directly skips that
+                // normalization and was denying real admins on dedicated servers.
+                _znetIsAdmin ??= typeof(ZNet).GetMethod(
+                    "IsAdmin", AnyInstance, null, new[] { typeof(string) }, null);
+                if (_znetIsAdmin != null)
+                    return (bool)_znetIsAdmin.Invoke(ZNet.instance, new object[] { hostName });
 
                 _adminList ??= typeof(ZNet).GetField("m_adminList", AnyInstance);
                 var adminList = _adminList?.GetValue(ZNet.instance);
