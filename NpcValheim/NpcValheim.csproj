@@ -125,6 +125,7 @@
 
   <ItemGroup>
     <None Include="Assets\Mailbox\**\*" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="Assets\Icons\**\*" CopyToOutputDirectory="PreserveNewest" />
     <!-- Conteudo pronto (quests e modelos de NPC importados). Vai junto com a dll: o
          ContentSeeder copia dali para npcs/ na primeira execucao. -->
     <ShippedQuests Include="Content\quests\*.yaml" />

@@ -233,14 +233,23 @@ namespace NpcValheim.Prefabs
         {
             foreach (var fileName in new[] { "Selo_Png.png", "Selo_Icon.png", "Selo_Icon.jpeg", "hud-icon.png" })
             {
-                var tex = LoadTexture(folder, fileName);
-                if (tex == null) continue;
-                PunchPureWhiteBackground(tex);
-                return Sprite.Create(tex, new Rect(0f, 0f, tex.width, tex.height), new Vector2(0.5f, 0.5f), 100f);
+                var icon = LoadIconFile(folder, fileName);
+                if (icon != null) return icon;
             }
 
             Plugin.Log.LogWarning($"NpcValheim: no hammer icon found in Assets/{folder}");
             return null;
+        }
+
+        internal static Sprite LoadIconFile(string folder, string fileName)
+        {
+            var tex = LoadTexture(folder, fileName);
+            if (tex == null) return null;
+            PunchPureWhiteBackground(tex);
+            var sprite = Sprite.Create(tex, new Rect(0f, 0f, tex.width, tex.height),
+                new Vector2(0.5f, 0.5f), 100f);
+            sprite.name = "NpcValheim_" + Path.GetFileNameWithoutExtension(fileName) + "_Icon";
+            return sprite;
         }
 
         /// <summary>

@@ -40,7 +40,7 @@ namespace NpcValheim.Prefabs
         // Without this, cloning "Player" here threw a NullReferenceException from deep
         // inside its original Awake chain.
         private static Transform _hiddenContainer;
-        private static Sprite _placerIcon;
+        private static readonly Dictionary<string, Sprite> PlacerIcons = new Dictionary<string, Sprite>();
 
         private static Transform HiddenContainer
         {
@@ -64,11 +64,11 @@ namespace NpcValheim.Prefabs
                 return;
             }
 
-            RegisterNpcType(scene, source, "NpcValheim_Teleporter", typeof(TeleporterNpc), "Teleportador");
-            RegisterNpcType(scene, source, "NpcValheim_Marketplace", typeof(MarketplaceNpc), "Mercador");
-            RegisterNpcType(scene, source, "NpcValheim_Auction", typeof(AuctionNpc), "Leilão");
+            RegisterNpcType(scene, source, "NpcValheim_Teleporter", typeof(TeleporterNpc), "Teleportador", "teleporter.png");
+            RegisterNpcType(scene, source, "NpcValheim_Marketplace", typeof(MarketplaceNpc), "Mercador", "merchant.png");
+            RegisterNpcType(scene, source, "NpcValheim_Auction", typeof(AuctionNpc), "Leilão", "auction.png");
             RegisterMailbox(scene);
-            RegisterNpcType(scene, source, "NpcValheim_QuestGiver", typeof(QuestGiverNpc), "Missões");
+            RegisterNpcType(scene, source, "NpcValheim_QuestGiver", typeof(QuestGiverNpc), "Missões", "quests.png");
         }
 
         /// <summary>
@@ -129,10 +129,11 @@ namespace NpcValheim.Prefabs
             Plugin.Log.LogInfo($"NpcValheim: registered mailbox piece '{prefabName}'");
         }
 
-        private static void RegisterNpcType(ZNetScene scene, GameObject source, string npcPrefabName, Type npcComponentType, string displayName)
+        private static void RegisterNpcType(ZNetScene scene, GameObject source, string npcPrefabName,
+            Type npcComponentType, string displayName, string iconFile)
         {
             RegisterRealNpc(scene, source, npcPrefabName, npcComponentType);
-            RegisterStub(scene, npcPrefabName, npcPrefabName + "_Placer", displayName);
+            RegisterStub(scene, npcPrefabName, npcPrefabName + "_Placer", displayName, iconFile);
         }
 
         private static void RegisterRealNpc(ZNetScene scene, GameObject source, string prefabName, Type npcComponentType)
@@ -170,7 +171,8 @@ namespace NpcValheim.Prefabs
             Plugin.Log.LogInfo($"NpcValheim: registered NPC prefab '{prefabName}'");
         }
 
-        private static void RegisterStub(ZNetScene scene, string targetPrefabName, string stubPrefabName, string displayName)
+        private static void RegisterStub(ZNetScene scene, string targetPrefabName, string stubPrefabName,
+            string displayName, string iconFile)
         {
             if (scene.m_prefabs.Any(p => p != null && p.name == stubPrefabName))
                 return;
@@ -208,7 +210,7 @@ namespace NpcValheim.Prefabs
             piece.m_resources = Array.Empty<Piece.Requirement>();
             piece.m_groundOnly = true;
             piece.m_canBeRemoved = true;
-            piece.m_icon = GetPlacerIcon();
+            piece.m_icon = GetPlacerIcon(iconFile);
 
             var spawner = stub.AddComponent<NpcSpawnerStub>();
             spawner.TargetPrefabName = targetPrefabName;
@@ -218,11 +220,12 @@ namespace NpcValheim.Prefabs
             Plugin.Log.LogInfo($"NpcValheim: registered placer stub '{stubPrefabName}' -> '{targetPrefabName}'");
         }
 
-        private static Sprite GetPlacerIcon()
+        private static Sprite GetPlacerIcon(string fileName)
         {
-            if (_placerIcon == null)
-                _placerIcon = PecaMesh.LoadIcon(PecaMesh.MailboxFolder);
-            return _placerIcon;
+            if (PlacerIcons.TryGetValue(fileName, out var icon) && icon != null) return icon;
+            icon = PecaMesh.LoadIconFile("Icons", fileName) ?? PecaMesh.LoadIcon(PecaMesh.MailboxFolder);
+            PlacerIcons[fileName] = icon;
+            return icon;
         }
 
         private static void StripComponent<T>(GameObject go) where T : Component

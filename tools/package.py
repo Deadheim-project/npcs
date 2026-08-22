@@ -72,10 +72,11 @@ def main():
             if name.endswith(".yaml"):
                 entries.append((os.path.join(source, name), "Content/%s/%s" % (folder, name)))
 
-    assets = os.path.join(PROJECT, "Assets", "Mailbox")
-    if os.path.isdir(assets):
-        for name in sorted(os.listdir(assets)):
-            entries.append((os.path.join(assets, name), "Assets/Mailbox/%s" % name))
+    for asset_folder in ("Mailbox", "Icons"):
+        assets = os.path.join(PROJECT, "Assets", asset_folder)
+        if os.path.isdir(assets):
+            for name in sorted(os.listdir(assets)):
+                entries.append((os.path.join(assets, name), "Assets/%s/%s" % (asset_folder, name)))
 
     with zipfile.ZipFile(out_path, "w", zipfile.ZIP_DEFLATED) as archive:
         for path, arcname in entries:

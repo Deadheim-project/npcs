@@ -292,15 +292,15 @@ namespace NpcValheim.Npc
         }
 
         /// <summary>
-        /// Configuration must always execute on the server. Using ZNetView's owner-targeted
-        /// overload trusted the client's local copy of the ZDO owner; after reconnect that
-        /// copy could still name the client, so the mutation handler ran locally and rejected
-        /// the same admin that ServerSync had already authenticated.
+        /// Configuration executes on the ZDO owner. NPC ZDOs are made server-owned in Awake,
+        /// so this is both the native Valheim routing path and the behavior used before the
+        /// client/test assembly split. Routing to GetServerPeerID explicitly proved brittle
+        /// across the dedicated-server routed-RPC implementation and could drop the request.
         /// </summary>
         protected void InvokeAuthoritativeRpc(string method, params object[] arguments)
         {
             if (Nview == null || !Nview.IsValid()) return;
-            Nview.InvokeRPC(GameApi.GetServerPeerId(), method, arguments);
+            Nview.InvokeRPC(method, arguments);
         }
 
         private void RPC_SetName(long sender, string name)
@@ -374,15 +374,7 @@ namespace NpcValheim.Npc
             zdo.Set(ZdoKeys.RightHand, "");
             zdo.Set(ZdoKeys.LeftHand, "");
             zdo.Set(ZdoKeys.Scale, 1f);
-            MarkAppearanceChanged(zdo);
-
-            if (!Application.isBatchMode && VisEq != null)
-            {
-                VisEq.SetModel(0);
-                VisEq.SetSkinColor(NpcCustomizationPresets.SkinTones[0]);
-                VisEq.SetHairColor(NpcCustomizationPresets.HairColors[0]);
-                transform.localScale = Vector3.one;
-            }
+            PublishAppearance(zdo, "spawn");
 
             OnPlacedExtra();
             PersistProfileSnapshot();
@@ -410,7 +402,7 @@ namespace NpcValheim.Npc
         {
             var zdo = Nview.GetZDO();
             zdo.Set(ZdoKeys.ArmorSlotKey(slot), itemName ?? "");
-            MarkAppearanceChanged(zdo);
+            PublishAppearance(zdo, "armor:" + slot);
             PersistProfileSnapshot();
         }
 
@@ -428,7 +420,7 @@ namespace NpcValheim.Npc
 
         protected void ApplyVisualFromZdo()
         {
-            if (Application.isBatchMode || VisEq == null || Nview == null || !Nview.IsValid()) return;
+            if (VisEq == null || Nview == null || !Nview.IsValid()) return;
             var zdo = Nview.GetZDO();
 
             foreach (ArmorSlot slot in Enum.GetValues(typeof(ArmorSlot)))
@@ -517,7 +509,7 @@ namespace NpcValheim.Npc
             if (!CanAdminister(sender)) return;
             var zdo = Nview.GetZDO();
             zdo.Set(ZdoKeys.Hair, prefabName ?? "");
-            MarkAppearanceChanged(zdo);
+            PublishAppearance(zdo, "hair");
             PersistProfileSnapshot();
         }
 
@@ -526,7 +518,7 @@ namespace NpcValheim.Npc
             if (!CanAdminister(sender)) return;
             var zdo = Nview.GetZDO();
             zdo.Set(ZdoKeys.Beard, prefabName ?? "");
-            MarkAppearanceChanged(zdo);
+            PublishAppearance(zdo, "beard");
             PersistProfileSnapshot();
         }
 
@@ -536,7 +528,7 @@ namespace NpcValheim.Npc
             if (modelIndex < 0 || modelIndex >= GetModelCount()) return;
             var zdo = Nview.GetZDO();
             zdo.Set(ZdoKeys.Model, modelIndex);
-            MarkAppearanceChanged(zdo);
+            PublishAppearance(zdo, "model");
             PersistProfileSnapshot();
         }
 
@@ -549,7 +541,7 @@ namespace NpcValheim.Npc
             zdo.Set(ZdoKeys.SkinPreset, presetIndex);
             zdo.Set(ZdoKeys.SkinColor, color);
             zdo.Set(ZdoKeys.SkinColorSet, true);
-            MarkAppearanceChanged(zdo);
+            PublishAppearance(zdo, "skin-preset");
             PersistProfileSnapshot();
         }
 
@@ -562,7 +554,7 @@ namespace NpcValheim.Npc
             zdo.Set(ZdoKeys.HairColorPreset, presetIndex);
             zdo.Set(ZdoKeys.HairColor, color);
             zdo.Set(ZdoKeys.HairColorSet, true);
-            MarkAppearanceChanged(zdo);
+            PublishAppearance(zdo, "hair-color-preset");
             PersistProfileSnapshot();
         }
 
@@ -572,7 +564,7 @@ namespace NpcValheim.Npc
             var zdo = Nview.GetZDO();
             zdo.Set(ZdoKeys.SkinColor, color);
             zdo.Set(ZdoKeys.SkinColorSet, true);
-            MarkAppearanceChanged(zdo);
+            PublishAppearance(zdo, "skin-color");
             PersistProfileSnapshot();
         }
 
@@ -582,7 +574,7 @@ namespace NpcValheim.Npc
             var zdo = Nview.GetZDO();
             zdo.Set(ZdoKeys.HairColor, color);
             zdo.Set(ZdoKeys.HairColorSet, true);
-            MarkAppearanceChanged(zdo);
+            PublishAppearance(zdo, "hair-color");
             PersistProfileSnapshot();
         }
 
@@ -594,7 +586,7 @@ namespace NpcValheim.Npc
 
             var zdo = Nview.GetZDO();
             zdo.Set(slot == HandSlot.Right ? ZdoKeys.RightHand : ZdoKeys.LeftHand, itemName);
-            MarkAppearanceChanged(zdo);
+            PublishAppearance(zdo, "hand:" + slot);
             PersistProfileSnapshot();
         }
 
@@ -604,14 +596,33 @@ namespace NpcValheim.Npc
             scale = Mathf.Clamp(scale, 0.5f, 2f);
             var zdo = Nview.GetZDO();
             zdo.Set(ZdoKeys.Scale, scale);
-            MarkAppearanceChanged(zdo);
+            PublishAppearance(zdo, "scale");
             PersistProfileSnapshot();
         }
 
-        private static void MarkAppearanceChanged(ZDO zdo)
+        private void PublishAppearance(ZDO zdo, string source)
         {
             int current = zdo.GetInt(ZdoKeys.AppearanceRevision, 0);
-            zdo.Set(ZdoKeys.AppearanceRevision, current == int.MaxValue ? 1 : current + 1);
+            int revision = current == int.MaxValue ? 1 : current + 1;
+            zdo.Set(ZdoKeys.AppearanceRevision, revision);
+
+            // VisEquipment owns Valheim's native visual ZDO fields. Running its setters on
+            // the authoritative peer publishes those fields through the game's normal path;
+            // our custom keys remain the durable profile and revision source. Dedicated
+            // servers still have VisEquipment even without renderers, and these setters are
+            // precisely what makes remote clients rebuild the visible equipment/model.
+            try
+            {
+                ApplyVisualFromZdo();
+                if (ZNet.instance != null && ZNet.instance.IsServer())
+                    Plugin.Log.LogInfo($"NpcValheim: appearance committed source={source} revision={revision} npc='{GetNpcName()}'");
+            }
+            catch (Exception e)
+            {
+                // The custom ZDO state and revision were already persisted. A broken visual
+                // prefab must not make the setting disappear or stop later client fallback.
+                Plugin.Log.LogWarning($"NpcValheim: native appearance publish failed source={source}: {e.Message}");
+            }
         }
 
         // ----- Reusable templates (YAML on disk) -----
@@ -725,7 +736,7 @@ namespace NpcValheim.Npc
             zdo.Set(ZdoKeys.LeftHand, IsValidHandItem(HandSlot.Left, profile.LeftHand) ? profile.LeftHand ?? "" : "");
             float scale = float.IsNaN(profile.Scale) || float.IsInfinity(profile.Scale) ? 1f : Mathf.Clamp(profile.Scale, 0.5f, 2f);
             zdo.Set(ZdoKeys.Scale, scale);
-            MarkAppearanceChanged(zdo);
+            PublishAppearance(zdo, "template");
 
             ApplyTypeSpecificProfile(profile);
             PersistProfileSnapshot();
