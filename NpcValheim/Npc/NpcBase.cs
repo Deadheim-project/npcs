@@ -276,7 +276,19 @@ namespace NpcValheim.Npc
         public void RequestSetName(Player requester, string name)
         {
             if (Nview == null || !Nview.IsValid() || !CanLocalPlayerAdminister()) return;
-            Nview.InvokeRPC("RPC_SetName", name ?? "NPC");
+            InvokeAuthoritativeRpc("RPC_SetName", name ?? "NPC");
+        }
+
+        /// <summary>
+        /// Configuration must always execute on the server. Using ZNetView's owner-targeted
+        /// overload trusted the client's local copy of the ZDO owner; after reconnect that
+        /// copy could still name the client, so the mutation handler ran locally and rejected
+        /// the same admin that ServerSync had already authenticated.
+        /// </summary>
+        protected void InvokeAuthoritativeRpc(string method, params object[] arguments)
+        {
+            if (Nview == null || !Nview.IsValid()) return;
+            Nview.InvokeRPC(GameApi.GetServerPeerId(), method, arguments);
         }
 
         private void RPC_SetName(long sender, string name)
@@ -369,7 +381,7 @@ namespace NpcValheim.Npc
         public void RequestSetArmor(Player requester, ArmorSlot slot, string itemName)
         {
             if (Nview == null || !Nview.IsValid() || !CanLocalPlayerAdminister()) return;
-            Nview.InvokeRPC("RPC_SetArmor", slot.ToString(), itemName ?? "");
+            InvokeAuthoritativeRpc("RPC_SetArmor", slot.ToString(), itemName ?? "");
         }
 
         private void RPC_SetArmor(long sender, string slotName, string itemName)
@@ -434,56 +446,56 @@ namespace NpcValheim.Npc
         public void RequestSetHair(Player requester, string prefabName)
         {
             if (Nview == null || !Nview.IsValid() || !CanLocalPlayerAdminister()) return;
-            Nview.InvokeRPC("RPC_SetHair", prefabName ?? "");
+            InvokeAuthoritativeRpc("RPC_SetHair", prefabName ?? "");
         }
 
         public void RequestSetBeard(Player requester, string prefabName)
         {
             if (Nview == null || !Nview.IsValid() || !CanLocalPlayerAdminister()) return;
-            Nview.InvokeRPC("RPC_SetBeard", prefabName ?? "");
+            InvokeAuthoritativeRpc("RPC_SetBeard", prefabName ?? "");
         }
 
         /// <summary>Gender/body model index (0..VisEquipment.m_models.Length-1).</summary>
         public void RequestSetModel(Player requester, int modelIndex)
         {
             if (Nview == null || !Nview.IsValid() || !CanLocalPlayerAdminister()) return;
-            Nview.InvokeRPC("RPC_SetModel", modelIndex);
+            InvokeAuthoritativeRpc("RPC_SetModel", modelIndex);
         }
 
         public void RequestSetSkinPreset(Player requester, int presetIndex)
         {
             if (Nview == null || !Nview.IsValid() || !CanLocalPlayerAdminister()) return;
-            Nview.InvokeRPC("RPC_SetSkinPreset", presetIndex);
+            InvokeAuthoritativeRpc("RPC_SetSkinPreset", presetIndex);
         }
 
         public void RequestSetHairColorPreset(Player requester, int presetIndex)
         {
             if (Nview == null || !Nview.IsValid() || !CanLocalPlayerAdminister()) return;
-            Nview.InvokeRPC("RPC_SetHairColorPreset", presetIndex);
+            InvokeAuthoritativeRpc("RPC_SetHairColorPreset", presetIndex);
         }
 
         public void RequestSetSkinColor(Player requester, Vector3 color)
         {
             if (Nview == null || !Nview.IsValid() || !CanLocalPlayerAdminister()) return;
-            Nview.InvokeRPC("RPC_SetSkinColor", color);
+            InvokeAuthoritativeRpc("RPC_SetSkinColor", color);
         }
 
         public void RequestSetHairColor(Player requester, Vector3 color)
         {
             if (Nview == null || !Nview.IsValid() || !CanLocalPlayerAdminister()) return;
-            Nview.InvokeRPC("RPC_SetHairColor", color);
+            InvokeAuthoritativeRpc("RPC_SetHairColor", color);
         }
 
         public void RequestSetHandItem(Player requester, HandSlot slot, string itemName)
         {
             if (Nview == null || !Nview.IsValid() || !CanLocalPlayerAdminister()) return;
-            Nview.InvokeRPC("RPC_SetHandItem", slot.ToString(), itemName ?? "");
+            InvokeAuthoritativeRpc("RPC_SetHandItem", slot.ToString(), itemName ?? "");
         }
 
         public void RequestSetScale(Player requester, float scale)
         {
             if (Nview == null || !Nview.IsValid() || !CanLocalPlayerAdminister()) return;
-            Nview.InvokeRPC("RPC_SetScale", scale);
+            InvokeAuthoritativeRpc("RPC_SetScale", scale);
         }
 
         private void RPC_SetHair(long sender, string prefabName)
@@ -583,13 +595,13 @@ namespace NpcValheim.Npc
         public void RequestSaveAsTemplate(Player requester, string templateName)
         {
             if (Nview == null || !Nview.IsValid() || !CanLocalPlayerAdminister()) return;
-            Nview.InvokeRPC("RPC_SaveAsTemplate", string.IsNullOrEmpty(templateName) ? "template" : templateName);
+            InvokeAuthoritativeRpc("RPC_SaveAsTemplate", string.IsNullOrEmpty(templateName) ? "template" : templateName);
         }
 
         public void RequestApplyTemplateByName(Player requester, string templateName)
         {
             if (Nview == null || !Nview.IsValid() || !CanLocalPlayerAdminister()) return;
-            Nview.InvokeRPC("RPC_ApplyTemplateByName", templateName ?? "");
+            InvokeAuthoritativeRpc("RPC_ApplyTemplateByName", templateName ?? "");
         }
 
         private void RPC_SaveAsTemplate(long sender, string templateName)
