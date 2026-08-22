@@ -27,6 +27,7 @@ namespace NpcValheim.Npc
         public const string RightHand = "npcv_right_hand";
         public const string LeftHand = "npcv_left_hand";
         public const string Scale = "npcv_scale";
+        public const string AppearanceRevision = "npcv_appearance_rev";
         public const string ProfileId = "npcv_profile_id";
     }
 
@@ -42,6 +43,8 @@ namespace NpcValheim.Npc
         protected ZNetView Nview;
         protected VisEquipment VisEq;
         private float _appliedScale = -1f;
+        private int _appliedAppearanceRevision = int.MinValue;
+        private float _nextAppearanceSync;
 
         protected virtual void Awake()
         {
@@ -80,6 +83,7 @@ namespace NpcValheim.Npc
             Nview.Register("RPC_ApplyTemplateByName", (Action<long, string>)RPC_ApplyTemplateByName);
             RegisterRpc();
             ApplyVisualFromZdo();
+            _appliedAppearanceRevision = Nview.GetZDO().GetInt(ZdoKeys.AppearanceRevision, 0);
             RendererDiagnostics.LogBrokenMaterials(gameObject);
 
             // Nameplate and quest markers are purely a client-side reading of state; a
@@ -181,8 +185,16 @@ namespace NpcValheim.Npc
         private void Update()
         {
             if (Nview == null || !Nview.IsValid()) return;
-            float scale = Nview.GetZDO().GetFloat(ZdoKeys.Scale, 1f);
-            if (Mathf.Abs(scale - _appliedScale) > 0.001f) ApplyScale(scale);
+            if (Application.isBatchMode || Time.unscaledTime < _nextAppearanceSync) return;
+            _nextAppearanceSync = Time.unscaledTime + 0.1f;
+
+            // Appearance is authored by the dedicated server. These are custom ZDO keys, so
+            // VisEquipment does not observe them by itself; reapply only after the server's
+            // revision reaches this client. This also makes clearing an equipped visual work.
+            int revision = Nview.GetZDO().GetInt(ZdoKeys.AppearanceRevision, 0);
+            if (revision == _appliedAppearanceRevision) return;
+            _appliedAppearanceRevision = revision;
+            ApplyVisualFromZdo();
         }
 
         /// <summary>Override to call Nview.Register(...) for this NPC's own RPCs.</summary>
@@ -352,21 +364,23 @@ namespace NpcValheim.Npc
             // call here the body model has nothing to render -- it doesn't fall back to
             // any default, it just stays invisible. Only armor/hair/beard are meant to
             // stay optional (an unset item is a valid "wearing nothing" state).
-            if (VisEq != null)
+            zdo.Set(ZdoKeys.Model, 0);
+            zdo.Set(ZdoKeys.SkinPreset, 0);
+            zdo.Set(ZdoKeys.HairColorPreset, 0);
+            zdo.Set(ZdoKeys.SkinColor, NpcCustomizationPresets.SkinTones[0]);
+            zdo.Set(ZdoKeys.SkinColorSet, true);
+            zdo.Set(ZdoKeys.HairColor, NpcCustomizationPresets.HairColors[0]);
+            zdo.Set(ZdoKeys.HairColorSet, true);
+            zdo.Set(ZdoKeys.RightHand, "");
+            zdo.Set(ZdoKeys.LeftHand, "");
+            zdo.Set(ZdoKeys.Scale, 1f);
+            MarkAppearanceChanged(zdo);
+
+            if (!Application.isBatchMode && VisEq != null)
             {
                 VisEq.SetModel(0);
                 VisEq.SetSkinColor(NpcCustomizationPresets.SkinTones[0]);
                 VisEq.SetHairColor(NpcCustomizationPresets.HairColors[0]);
-                zdo.Set(ZdoKeys.Model, 0);
-                zdo.Set(ZdoKeys.SkinPreset, 0);
-                zdo.Set(ZdoKeys.HairColorPreset, 0);
-                zdo.Set(ZdoKeys.SkinColor, NpcCustomizationPresets.SkinTones[0]);
-                zdo.Set(ZdoKeys.SkinColorSet, true);
-                zdo.Set(ZdoKeys.HairColor, NpcCustomizationPresets.HairColors[0]);
-                zdo.Set(ZdoKeys.HairColorSet, true);
-                zdo.Set(ZdoKeys.RightHand, "");
-                zdo.Set(ZdoKeys.LeftHand, "");
-                zdo.Set(ZdoKeys.Scale, 1f);
                 transform.localScale = Vector3.one;
             }
 
@@ -394,8 +408,9 @@ namespace NpcValheim.Npc
 
         private void ApplyArmorAuthoritative(ArmorSlot slot, string itemName)
         {
-            ApplyArmorVisual(slot, itemName);
-            Nview.GetZDO().Set(ZdoKeys.ArmorSlotKey(slot), itemName ?? "");
+            var zdo = Nview.GetZDO();
+            zdo.Set(ZdoKeys.ArmorSlotKey(slot), itemName ?? "");
+            MarkAppearanceChanged(zdo);
             PersistProfileSnapshot();
         }
 
@@ -413,21 +428,20 @@ namespace NpcValheim.Npc
 
         protected void ApplyVisualFromZdo()
         {
-            if (VisEq == null || Nview == null || !Nview.IsValid()) return;
+            if (Application.isBatchMode || VisEq == null || Nview == null || !Nview.IsValid()) return;
             var zdo = Nview.GetZDO();
 
             foreach (ArmorSlot slot in Enum.GetValues(typeof(ArmorSlot)))
             {
                 var itemName = zdo.GetString(ZdoKeys.ArmorSlotKey(slot), "");
-                if (!string.IsNullOrEmpty(itemName))
-                    ApplyArmorVisual(slot, itemName);
+                ApplyArmorVisual(slot, itemName);
             }
 
             var hair = zdo.GetString(ZdoKeys.Hair, "");
-            if (!string.IsNullOrEmpty(hair)) VisEq.SetHairItem(hair);
+            VisEq.SetHairItem(hair);
 
             var beard = zdo.GetString(ZdoKeys.Beard, "");
-            if (!string.IsNullOrEmpty(beard)) VisEq.SetBeardItem(beard);
+            VisEq.SetBeardItem(beard);
 
             int model = zdo.GetInt(ZdoKeys.Model, -1);
             if (model >= 0) VisEq.SetModel(model);
@@ -501,16 +515,18 @@ namespace NpcValheim.Npc
         private void RPC_SetHair(long sender, string prefabName)
         {
             if (!CanAdminister(sender)) return;
-            VisEq?.SetHairItem(prefabName);
-            Nview.GetZDO().Set(ZdoKeys.Hair, prefabName ?? "");
+            var zdo = Nview.GetZDO();
+            zdo.Set(ZdoKeys.Hair, prefabName ?? "");
+            MarkAppearanceChanged(zdo);
             PersistProfileSnapshot();
         }
 
         private void RPC_SetBeard(long sender, string prefabName)
         {
             if (!CanAdminister(sender)) return;
-            VisEq?.SetBeardItem(prefabName);
-            Nview.GetZDO().Set(ZdoKeys.Beard, prefabName ?? "");
+            var zdo = Nview.GetZDO();
+            zdo.Set(ZdoKeys.Beard, prefabName ?? "");
+            MarkAppearanceChanged(zdo);
             PersistProfileSnapshot();
         }
 
@@ -518,8 +534,9 @@ namespace NpcValheim.Npc
         {
             if (!CanAdminister(sender)) return;
             if (modelIndex < 0 || modelIndex >= GetModelCount()) return;
-            VisEq?.SetModel(modelIndex);
-            Nview.GetZDO().Set(ZdoKeys.Model, modelIndex);
+            var zdo = Nview.GetZDO();
+            zdo.Set(ZdoKeys.Model, modelIndex);
+            MarkAppearanceChanged(zdo);
             PersistProfileSnapshot();
         }
 
@@ -528,11 +545,11 @@ namespace NpcValheim.Npc
             if (!CanAdminister(sender)) return;
             if (presetIndex < 0 || presetIndex >= NpcCustomizationPresets.SkinTones.Length) return;
             var color = NpcCustomizationPresets.SkinTones[presetIndex];
-            VisEq?.SetSkinColor(color);
             var zdo = Nview.GetZDO();
             zdo.Set(ZdoKeys.SkinPreset, presetIndex);
             zdo.Set(ZdoKeys.SkinColor, color);
             zdo.Set(ZdoKeys.SkinColorSet, true);
+            MarkAppearanceChanged(zdo);
             PersistProfileSnapshot();
         }
 
@@ -541,31 +558,31 @@ namespace NpcValheim.Npc
             if (!CanAdminister(sender)) return;
             if (presetIndex < 0 || presetIndex >= NpcCustomizationPresets.HairColors.Length) return;
             var color = NpcCustomizationPresets.HairColors[presetIndex];
-            VisEq?.SetHairColor(color);
             var zdo = Nview.GetZDO();
             zdo.Set(ZdoKeys.HairColorPreset, presetIndex);
             zdo.Set(ZdoKeys.HairColor, color);
             zdo.Set(ZdoKeys.HairColorSet, true);
+            MarkAppearanceChanged(zdo);
             PersistProfileSnapshot();
         }
 
         private void RPC_SetSkinColor(long sender, Vector3 color)
         {
             if (!CanAdminister(sender) || !TryNormalizeColor(color, out color)) return;
-            VisEq?.SetSkinColor(color);
             var zdo = Nview.GetZDO();
             zdo.Set(ZdoKeys.SkinColor, color);
             zdo.Set(ZdoKeys.SkinColorSet, true);
+            MarkAppearanceChanged(zdo);
             PersistProfileSnapshot();
         }
 
         private void RPC_SetHairColor(long sender, Vector3 color)
         {
             if (!CanAdminister(sender) || !TryNormalizeColor(color, out color)) return;
-            VisEq?.SetHairColor(color);
             var zdo = Nview.GetZDO();
             zdo.Set(ZdoKeys.HairColor, color);
             zdo.Set(ZdoKeys.HairColorSet, true);
+            MarkAppearanceChanged(zdo);
             PersistProfileSnapshot();
         }
 
@@ -575,9 +592,9 @@ namespace NpcValheim.Npc
             itemName ??= "";
             if (!IsValidHandItem(slot, itemName)) return;
 
-            if (slot == HandSlot.Right) VisEq?.SetRightItem(itemName);
-            else VisEq?.SetLeftItem(itemName, 0);
-            Nview.GetZDO().Set(slot == HandSlot.Right ? ZdoKeys.RightHand : ZdoKeys.LeftHand, itemName);
+            var zdo = Nview.GetZDO();
+            zdo.Set(slot == HandSlot.Right ? ZdoKeys.RightHand : ZdoKeys.LeftHand, itemName);
+            MarkAppearanceChanged(zdo);
             PersistProfileSnapshot();
         }
 
@@ -585,9 +602,16 @@ namespace NpcValheim.Npc
         {
             if (!CanAdminister(sender) || float.IsNaN(scale) || float.IsInfinity(scale)) return;
             scale = Mathf.Clamp(scale, 0.5f, 2f);
-            Nview.GetZDO().Set(ZdoKeys.Scale, scale);
-            ApplyScale(scale);
+            var zdo = Nview.GetZDO();
+            zdo.Set(ZdoKeys.Scale, scale);
+            MarkAppearanceChanged(zdo);
             PersistProfileSnapshot();
+        }
+
+        private static void MarkAppearanceChanged(ZDO zdo)
+        {
+            int current = zdo.GetInt(ZdoKeys.AppearanceRevision, 0);
+            zdo.Set(ZdoKeys.AppearanceRevision, current == int.MaxValue ? 1 : current + 1);
         }
 
         // ----- Reusable templates (YAML on disk) -----
@@ -682,21 +706,10 @@ namespace NpcValheim.Npc
             {
                 string itemName = profile.Armor != null && profile.Armor.TryGetValue(slot.ToString(), out var v) ? v : "";
                 if (!IsValidArmorItem(slot, itemName)) itemName = "";
-                ApplyArmorVisual(slot, itemName);
                 zdo.Set(ZdoKeys.ArmorSlotKey(slot), itemName ?? "");
             }
 
             int model = profile.Model >= 0 && profile.Model < GetModelCount() ? profile.Model : 0;
-            if (VisEq != null)
-            {
-                VisEq.SetHairItem(profile.Hair ?? "");
-                VisEq.SetBeardItem(profile.Beard ?? "");
-                VisEq.SetModel(model);
-                VisEq.SetSkinColor(ProfileSkinColor(profile));
-                VisEq.SetHairColor(ProfileHairColor(profile));
-                VisEq.SetRightItem(IsValidHandItem(HandSlot.Right, profile.RightHand) ? profile.RightHand ?? "" : "");
-                VisEq.SetLeftItem(IsValidHandItem(HandSlot.Left, profile.LeftHand) ? profile.LeftHand ?? "" : "", 0);
-            }
             zdo.Set(ZdoKeys.Hair, profile.Hair ?? "");
             zdo.Set(ZdoKeys.Beard, profile.Beard ?? "");
             zdo.Set(ZdoKeys.Model, model);
@@ -712,7 +725,7 @@ namespace NpcValheim.Npc
             zdo.Set(ZdoKeys.LeftHand, IsValidHandItem(HandSlot.Left, profile.LeftHand) ? profile.LeftHand ?? "" : "");
             float scale = float.IsNaN(profile.Scale) || float.IsInfinity(profile.Scale) ? 1f : Mathf.Clamp(profile.Scale, 0.5f, 2f);
             zdo.Set(ZdoKeys.Scale, scale);
-            ApplyScale(scale);
+            MarkAppearanceChanged(zdo);
 
             ApplyTypeSpecificProfile(profile);
             PersistProfileSnapshot();
