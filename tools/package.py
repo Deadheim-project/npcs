@@ -14,6 +14,7 @@ Usage:
 """
 
 import os
+import shutil
 import subprocess
 import sys
 import zipfile
@@ -53,8 +54,10 @@ def main():
             print("build failed")
             return 1
 
-    out_path = os.path.join(ROOT, "dist", "Npcs.zip")
-    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    dist_dir = os.path.join(ROOT, "dist")
+    out_path = os.path.join(dist_dir, "Npcs.zip")
+    server_path = os.path.join(dist_dir, "server-upload", "NpcValheim")
+    os.makedirs(dist_dir, exist_ok=True)
 
     entries = []
     for name in ASSEMBLIES:
@@ -82,7 +85,18 @@ def main():
         for path, arcname in entries:
             archive.write(path, arcname)
 
+    # The dedicated server receives exactly the same tree as a player. Rebuilding this
+    # staging folder from the same entry list prevents a stale or server-only DLL from
+    # drifting away from the launcher package.
+    if os.path.isdir(server_path):
+        shutil.rmtree(server_path)
+    for path, arcname in entries:
+        destination = os.path.join(server_path, *arcname.split("/"))
+        os.makedirs(os.path.dirname(destination), exist_ok=True)
+        shutil.copy2(path, destination)
+
     print("%s  (%d files, %.1f KB)" % (out_path, len(entries), os.path.getsize(out_path) / 1024.0))
+    print("%s  (same %d files for the dedicated server)" % (server_path, len(entries)))
     return 0
 
 

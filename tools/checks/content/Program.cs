@@ -223,6 +223,34 @@ class Program
 
         System.Console.WriteLine();
         System.Console.WriteLine("== quest loading ==");
+        var validatorFixture = new QuestDefinition
+        {
+            Id = "validator-fixture",
+            Name = "Validator fixture",
+            Objectives = new System.Collections.Generic.List<QuestObjective>
+            {
+                new QuestObjective { Kind = QuestObjectiveKind.Kill, Target = "Boar", Amount = 1 }
+            },
+        };
+        Check("the quest validator admits a standard objective",
+              QuestProgressRules.Validate(validatorFixture, out var validationError), validationError ?? "");
+        var exploreFixture = new QuestObjective
+        {
+            Kind = QuestObjectiveKind.Explore,
+            Target = "-346,-118",
+            Amount = 30,
+        };
+        Check("an explore radius is not treated as thirty required arrivals",
+              QuestProgressRules.Goal(exploreFixture) == 1 &&
+              QuestProgressRules.ExploreRadius(exploreFixture) == 30);
+        Check("valid explore coordinates parse with invariant decimals",
+              QuestProgressRules.TryParseExploreTarget("-346.5, 118.25", out var explorePlace) &&
+              Math.Abs(explorePlace.x - (-346.5f)) < 0.01f &&
+              Math.Abs(explorePlace.y - 118.25f) < 0.01f);
+        Check("malformed or non-finite explore coordinates are rejected",
+              !QuestProgressRules.TryParseExploreTarget("onde fica", out _) &&
+              !QuestProgressRules.TryParseExploreTarget("NaN,10", out _) &&
+              !QuestProgressRules.TryParseExploreTarget("1000001,10", out _));
         QuestStore.Reload();
         var all = QuestStore.All;
         Check("every seeded quest loads", all.Count == 248, "got " + all.Count);

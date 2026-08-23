@@ -234,7 +234,7 @@ namespace NpcValheim.Npc
 
             // Talking to somebody is a quest objective in its own right ("take word to the
             // smith"), and opening their panel is what talking to them means here.
-            QuestGiverNpc.AnyLoaded()?.ReportTalk(GetNpcName());
+            QuestProgressNetwork.Report(QuestObjectiveKind.Talk, GetNpcName());
             return true;
         }
 

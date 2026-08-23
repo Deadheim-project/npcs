@@ -42,7 +42,8 @@ namespace NpcValheim.Patches
                 var data = drop?.m_itemData;
                 if (data?.m_dropPrefab == null) return;
 
-                QuestGiverNpc.AnyLoaded()?.ReportPickup(data.m_dropPrefab.name, Mathf.Max(1, data.m_stack));
+                QuestProgressNetwork.Report(QuestObjectiveKind.Gather,
+                    data.m_dropPrefab.name, count: Mathf.Max(1, data.m_stack));
             }
             catch (System.Exception e)
             {
@@ -77,44 +78,24 @@ namespace NpcValheim.Patches
             if (player == null || Time.time < _nextCheck) return;
             _nextCheck = Time.time + 0.5f;
 
-            var giver = QuestGiverNpc.AnyLoaded();
-            if (giver == null || !giver.HasSyncedOnce) return;
-
-            foreach (var quest in giver.CachedQuests)
+            foreach (var quest in UI.QuestJournal.CurrentQuests())
             {
                 if (quest.Status != QuestStatus.Active) continue;
 
                 foreach (var step in UI.QuestTracker.Steps(quest))
                 {
                     if (step.Kind != QuestObjectiveKind.Explore) continue;
-                    if (step.Counter >= step.Goal) continue;    // already there once
-                    if (!TryParsePlace(step.Target, out var place)) continue;
+                    if (step.IsDone(player)) continue;
+                    if (!QuestProgressRules.TryParseExploreTarget(step.Target, out var place)) continue;
 
                     // Amount doubles as the radius for this objective: "get within N metres".
                     float radius = Mathf.Max(5f, step.Goal);
                     var here = player.transform.position;
                     if ((new Vector2(here.x, here.z) - place).sqrMagnitude > radius * radius) continue;
 
-                    giver.ReportArrival(quest.Id);
+                    QuestProgressNetwork.Report(QuestObjectiveKind.Explore, "", quest.Id);
                 }
             }
-        }
-
-        /// <summary>Reads a "x,z" target from the quest yaml.</summary>
-        private static bool TryParsePlace(string target, out Vector2 place)
-        {
-            place = Vector2.zero;
-            if (string.IsNullOrEmpty(target)) return false;
-
-            var parts = target.Split(',');
-            if (parts.Length != 2) return false;
-            if (!float.TryParse(parts[0].Trim(), System.Globalization.NumberStyles.Float,
-                    System.Globalization.CultureInfo.InvariantCulture, out float x)) return false;
-            if (!float.TryParse(parts[1].Trim(), System.Globalization.NumberStyles.Float,
-                    System.Globalization.CultureInfo.InvariantCulture, out float z)) return false;
-
-            place = new Vector2(x, z);
-            return true;
         }
     }
 }

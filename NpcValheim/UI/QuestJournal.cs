@@ -37,6 +37,7 @@ namespace NpcValheim.UI
         private string _signature;
         private float _nextRefresh;
         private bool _open;
+        private long _syncedPlayerId;
 
         internal static void EnsureCreated()
         {
@@ -76,6 +77,7 @@ namespace NpcValheim.UI
         private static void OnRequest(long sender)
         {
             if (ZNet.instance == null || !ZNet.instance.IsServer()) return;
+            if (!NpcRequestGuard.AllowRate(sender, "quest-journal", 4, 5f)) return;
             long playerId = GameApi.GetPlayerId(sender);
             if (playerId == 0L) return;
 
@@ -84,7 +86,7 @@ namespace NpcValheim.UI
 
         private static void OnData(long sender, string packed)
         {
-            if (ZNet.instance != null && !ZNet.instance.IsServer() && sender != GameApi.GetServerPeerId()) return;
+            if (!ServiceNpcAuthority.IsAuthoritativeSender(sender)) return;
             _cachedQuests = QuestGiverNpc.UnpackPublic(packed);
             if (_instance != null) _instance._quests = new List<QuestEntry>(_cachedQuests);
         }
@@ -95,8 +97,25 @@ namespace NpcValheim.UI
 
             if (Player.m_localPlayer == null)
             {
+                if (_syncedPlayerId != 0L)
+                {
+                    _syncedPlayerId = 0L;
+                    _cachedQuests.Clear();
+                    _quests.Clear();
+                    _signature = null;
+                }
                 if (_open) Close();
                 return;
+            }
+
+            long currentPlayerId = Player.m_localPlayer.GetPlayerID();
+            if (currentPlayerId != _syncedPlayerId)
+            {
+                _syncedPlayerId = currentPlayerId;
+                _cachedQuests.Clear();
+                _quests.Clear();
+                _signature = null;
+                _nextRefresh = 0f;
             }
 
             // Never while another panel owns the input, or the key would type into a field.
@@ -242,7 +261,7 @@ namespace NpcValheim.UI
                     ValheimUi.CreateLabel(card,
                         step.IsDone(player)
                             ? $"<color=#6fbf5b>✔ {QuestGiverNpc.Describe(step)}</color>"
-                            : $"{QuestGiverNpc.Describe(step)}   <color=#9a9188>{step.Progress(player)}/{step.Goal}</color>",
+                            : $"{QuestGiverNpc.Describe(step)}   <color=#9a9188>{step.Progress(player)}/{step.CompletionGoal}</color>",
                         15, ValheimUi.Beige, TextAlignmentOptions.TopLeft);
 
                 if (ready)

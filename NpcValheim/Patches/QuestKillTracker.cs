@@ -1,4 +1,3 @@
-using System.Linq;
 using HarmonyLib;
 using UnityEngine;
 using NpcValheim.Npc;
@@ -14,8 +13,8 @@ namespace NpcValheim.Patches
     /// owns the counter: it only credits quests the player has actually accepted, caps the
     /// increment, and refuses turn-in below the goal (see QuestGiverNpc).
     ///
-    /// The report goes to any loaded quest giver, because the counter lives in the shared
-    /// database keyed by player, not on a particular NPC.
+    /// The report goes through the global quest endpoint. Requiring a loaded QuestGiver made
+    /// kills in remote biomes disappear, even though the quest database itself is global.
     /// </summary>
     [HarmonyPatch(typeof(Character), nameof(Character.OnDeath))]
     internal static class QuestKillTracker
@@ -35,10 +34,7 @@ namespace NpcValheim.Patches
                 string prefabName = Utils.GetPrefabName(__instance.gameObject);
                 if (string.IsNullOrEmpty(prefabName)) return;
 
-                var giver = Object.FindObjectsByType<QuestGiverNpc>(FindObjectsSortMode.None).FirstOrDefault();
-                if (giver == null) return; // no quest giver loaded nearby; nothing to credit
-
-                giver.ReportKill(prefabName, 1);
+                QuestProgressNetwork.Report(Persistence.QuestObjectiveKind.Kill, prefabName);
             }
             catch (System.Exception e)
             {

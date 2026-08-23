@@ -14,7 +14,7 @@ namespace NpcValheim
     {
         public const string Guid = "com.npcvalheim.mod";
         public const string Name = "NpcValheim";
-        public const string Version = "0.1.12";
+        public const string Version = "0.1.13";
 
         internal static ManualLogSource Log;
         private Harmony _harmony;
@@ -189,8 +189,52 @@ namespace NpcValheim
 
             _harmony = new Harmony(Guid);
             _harmony.PatchAll();
+#if DEVTOOLS
+            StartDevTools();
+#endif
             Log.LogInfo($"{Name} {Version} loaded");
         }
+
+#if DEVTOOLS
+        /// <summary>Local automation compiled into the same DLL only for development.
+        /// Production builds omit these source files entirely.</summary>
+        private static void StartDevTools()
+        {
+            if (EnableSelfTest == null) return;
+
+            if (EnableSelfTest.Value)
+            {
+                Testing.ServerSelfTestRunner.EnsureCreated();
+                if (!UnityEngine.Application.isBatchMode)
+                {
+                    Testing.SelfTestRunner.EnsureCreated();
+                    if (!HasDirectConnectArgument()) Testing.AutoStart.EnsureCreated();
+                }
+            }
+
+            if (ShowcaseMode.Value && !UnityEngine.Application.isBatchMode)
+            {
+                if (!EnableSelfTest.Value) Testing.AutoStart.EnsureCreated();
+                if (DemoScenarioMode.Value) Testing.DemoScenario.EnsureCreated();
+                else Testing.DemoShowcase.EnsureCreated();
+            }
+
+            if (AutoStartWorld.Value && !EnableSelfTest.Value && !ShowcaseMode.Value &&
+                !UnityEngine.Application.isBatchMode)
+                Testing.AutoStart.EnsureCreated();
+
+            if (AutoConfirmCharacterOnJoin.Value)
+                Testing.AutoConfirmCharacter.EnsureCreated(AutoJoinPassword.Value);
+        }
+
+        private static bool HasDirectConnectArgument()
+        {
+            foreach (string argument in System.Environment.GetCommandLineArgs())
+                if (string.Equals(argument, "+connect", System.StringComparison.OrdinalIgnoreCase))
+                    return true;
+            return false;
+        }
+#endif
 
         private void OnDestroy()
         {

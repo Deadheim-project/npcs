@@ -58,6 +58,11 @@ while IFS= read -r file; do
 done < <(find "$PAYLOAD" -type f)
 echo "  enviados $sent/$count"
 
+# Releases antigos criavam uma segunda assembly. O mod agora é deliberadamente idêntico
+# nos dois lados; apagar o resíduo evita o BepInEx carregar duas versões do mesmo código.
+ftp -Q "-DELE /BepInEx/plugins/NpcValheim/NpcValheim.Server.dll" "$REMOTE/" || true
+echo "  removida a DLL legada NpcValheim.Server.dll (se existia)"
+
 if [ "$REMOVE_KG" = 1 ]; then
   echo "removendo o KG..."
   # Apaga arquivo a arquivo: o FTP nao remove uma pasta que ainda tem conteudo.

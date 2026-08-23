@@ -112,7 +112,7 @@ namespace NpcValheim.UI
             var quests = ActiveQuests();
 
             var signature = string.Join("|", quests.Select(q =>
-                q.Id + ":" + string.Join(",", Steps(q).Select(s => $"{s.Progress(Player.m_localPlayer)}/{s.Goal}"))));
+                q.Id + ":" + string.Join(",", Steps(q).Select(s => $"{s.Progress(Player.m_localPlayer)}/{s.CompletionGoal}"))));
             if (signature != _signature)
             {
                 _signature = signature;
@@ -126,15 +126,10 @@ namespace NpcValheim.UI
         /// screen has stopped being a glance.</summary>
         private static List<QuestEntry> ActiveQuests()
         {
-            foreach (var giver in FindObjectsByType<QuestGiverNpc>(FindObjectsSortMode.None))
-            {
-                if (giver == null || !giver.HasSyncedOnce) continue;
-                return giver.CachedQuests
-                    .Where(q => q.Status == QuestStatus.Active)
-                    .Take(Mathf.Max(1, Plugin.QuestTrackerMax.Value))
-                    .ToList();
-            }
-            return new List<QuestEntry>();
+            return QuestJournal.CurrentQuests()
+                .Where(q => q.Status == QuestStatus.Active)
+                .Take(Mathf.Max(1, Plugin.QuestTrackerMax.Value))
+                .ToList();
         }
 
         /// <summary>A quest's objectives, never empty. Falls back to the single-objective
@@ -184,7 +179,7 @@ namespace NpcValheim.UI
                 {
                     int now = step.Progress(player);
                     bool done = step.IsDone(player);
-                    string text = $"{QuestGiverNpc.Describe(step)}  {now}/{step.Goal}";
+                    string text = $"{QuestGiverNpc.Describe(step)}  {now}/{step.CompletionGoal}";
 
                     // Green with a tick when finished, exactly like the tracker this is
                     // modelled on -- the completion is the moment worth showing.

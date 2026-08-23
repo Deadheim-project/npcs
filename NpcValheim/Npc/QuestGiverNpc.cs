@@ -68,6 +68,10 @@ namespace NpcValheim.Npc
         public int Goal;
         public int Counter;
 
+        /// <summary>Explore carries its radius in Goal for wire compatibility, but one
+        /// verified arrival completes it. Other objective kinds retain their normal count.</summary>
+        public int CompletionGoal => Kind == QuestObjectiveKind.Explore ? 1 : Math.Max(1, Goal);
+
         /// <summary>
         /// Whether this line is done.
         ///
@@ -77,7 +81,7 @@ namespace NpcValheim.Npc
         /// </summary>
         public bool IsDone(Player player)
         {
-            if (Kind != QuestObjectiveKind.Collect) return Counter >= Goal;
+            if (Kind != QuestObjectiveKind.Collect) return Counter >= CompletionGoal;
             return player != null &&
                    ItemNames.Count(player.GetInventory(), Target, -1) >= Goal;
         }
@@ -86,7 +90,7 @@ namespace NpcValheim.Npc
         /// counter for everything else.</summary>
         public int Progress(Player player)
         {
-            if (Kind != QuestObjectiveKind.Collect) return Counter;
+            if (Kind != QuestObjectiveKind.Collect) return Mathf.Min(CompletionGoal, Counter);
             return player == null || string.IsNullOrEmpty(Target)
                 ? 0
                 : Mathf.Min(Goal, ItemNames.Count(player.GetInventory(), Target, -1));
@@ -191,6 +195,8 @@ namespace NpcValheim.Npc
         private void RPC_CreateQuest(long sender, string packed)
         {
             if (!CanAdminister(sender)) return;
+            if (!NpcRequestGuard.AllowRate(sender, "quest-create", 2, 5f) ||
+                (packed?.Length ?? 0) > 4096) return;
 
             var p = (packed ?? "").Split(';');
             if (p.Length < 8) return;
@@ -241,6 +247,8 @@ namespace NpcValheim.Npc
         private void RPC_SetQuests(long sender, string packed)
         {
             if (!CanAdminister(sender)) return;
+            if (!NpcRequestGuard.AllowRate(sender, "quest-set-offers", 4, 5f) ||
+                (packed?.Length ?? 0) > 16384) return;
             Nview.GetZDO().Set(KeyQuests, packed ?? "");
             PersistProfileSnapshot();
             SendQuestsTo(sender);
@@ -255,14 +263,9 @@ namespace NpcValheim.Npc
             Nview.Register("RPC_AcceptQuest", (Action<long, string>)RPC_AcceptQuest);
             Nview.Register("RPC_TurnInQuest", (Action<long, string>)RPC_TurnInQuest);
             Nview.Register("RPC_AbandonQuest", (Action<long, string>)RPC_AbandonQuest);
-            Nview.Register("RPC_ReportKill", (Action<long, string, int>)RPC_ReportKill);
             Nview.Register("RPC_GrantExperience", (Action<long, int>)RPC_GrantExperience);
             Nview.Register("RPC_CollectRewards", (Action<long, string>)RPC_CollectRewards);
             Nview.Register("RPC_ClaimDelivered", (Action<long, string>)RPC_ClaimDelivered);
-            Nview.Register("RPC_ReportPickup", (Action<long, string, int>)RPC_ReportPickup);
-            Nview.Register("RPC_ReportTalk", (Action<long, string, int>)RPC_ReportTalk);
-            Nview.Register("RPC_ReportArrival", (Action<long, string, int>)RPC_ReportArrival);
-            Nview.Register("RPC_ProgressNotice", (Action<long, string, string>)RPC_ProgressNotice);
         }
 
         // ---- client-side requests ----
@@ -290,42 +293,39 @@ namespace NpcValheim.Npc
         /// <summary>Called by QuestKillTracker on the client that made the kill.</summary>
         public void ReportKill(string creatureName, int count)
         {
-            if (Nview != null && Nview.IsValid()) Nview.InvokeRPC("RPC_ReportKill", creatureName, count);
+            QuestProgressNetwork.Report(QuestObjectiveKind.Kill, creatureName, count: count);
         }
 
         /// <summary>Called on the client that picked the item up, for Gather quests.</summary>
         public void ReportPickup(string itemName, int count)
         {
-            if (Nview != null && Nview.IsValid()) Nview.InvokeRPC("RPC_ReportPickup", itemName, count);
+            QuestProgressNetwork.Report(QuestObjectiveKind.Gather, itemName, count: count);
         }
 
         /// <summary>Called when the local player opens a panel on an NPC, for Talk quests.</summary>
         public void ReportTalk(string npcName)
         {
-            if (Nview != null && Nview.IsValid()) Nview.InvokeRPC("RPC_ReportTalk", npcName ?? "", 1);
+            QuestProgressNetwork.Report(QuestObjectiveKind.Talk, npcName ?? "");
         }
 
         /// <summary>Called when the local player reaches an Explore quest's destination.</summary>
         public void ReportArrival(string questId)
         {
-            if (Nview != null && Nview.IsValid()) Nview.InvokeRPC("RPC_ReportArrival", questId ?? "", 1);
-        }
-
-        /// <summary>Any quest giver currently loaded. The counters live in one database keyed
-        /// by player, so it does not matter which one carries the message.</summary>
-        internal static QuestGiverNpc AnyLoaded()
-        {
-            foreach (var giver in FindObjectsByType<QuestGiverNpc>(FindObjectsSortMode.None))
-                if (giver != null) return giver;
-            return null;
+            QuestProgressNetwork.Report(QuestObjectiveKind.Explore, "", questId ?? "");
         }
 
         // ---- authoritative handlers ----
 
-        private void RPC_RequestQuests(long sender) => SendQuestsTo(sender);
+        private void RPC_RequestQuests(long sender)
+        {
+            if (!Nview.IsOwner() || GameApi.GetPlayerId(sender) == 0L ||
+                !NpcRequestGuard.AllowRate(sender, "quest-list", 6, 5f)) return;
+            SendQuestsTo(sender);
+        }
 
         private void RPC_QuestData(long sender, string packed)
         {
+            if (!ServiceNpcAuthority.IsAuthoritativeSender(sender)) return;
             CachedQuests = Unpack(packed);
             HasSyncedOnce = true;
         }
@@ -333,6 +333,7 @@ namespace NpcValheim.Npc
         private void RPC_AcceptQuest(long sender, string questId)
         {
             if (!Nview.IsOwner()) return;
+            if (!NpcRequestGuard.AllowRate(sender, "quest-accept", 6, 5f)) return;
             if (!Offers(questId)) return;   // this giver does not deal in that quest
             long playerId = GameApi.GetPlayerId(sender);
             if (playerId == 0L) return;
@@ -362,116 +363,12 @@ namespace NpcValheim.Npc
         private void RPC_AbandonQuest(long sender, string questId)
         {
             if (!Nview.IsOwner()) return;
+            if (!NpcRequestGuard.AllowRate(sender, "quest-abandon", 4, 5f)) return;
             long playerId = GameApi.GetPlayerId(sender);
             if (playerId == 0L) return;
 
             QuestDatabase.Abandon(playerId, questId);
             SendQuestsTo(sender);
-        }
-
-        private void RPC_ReportKill(long sender, string creatureName, int count) =>
-            CreditEvent(sender, QuestObjectiveKind.Kill, creatureName, count);
-
-        /// <summary>Reported by the client each time it picks an item up, for Gather quests.</summary>
-        private void RPC_ReportPickup(long sender, string itemName, int count) =>
-            CreditEvent(sender, QuestObjectiveKind.Gather, itemName, count);
-
-        /// <summary>Reported when the player opens a panel on an NPC, for Talk quests.</summary>
-        private void RPC_ReportTalk(long sender, string npcName, int count) =>
-            CreditEvent(sender, QuestObjectiveKind.Talk, npcName, 1);
-
-        /// <summary>Reported when the player reaches a place, for Explore quests. The client
-        /// watches its own position because the server does not simulate where a remote player
-        /// is standing frame by frame.</summary>
-        private void RPC_ReportArrival(long sender, string questId, int count) =>
-            CreditQuest(sender, questId, QuestObjectiveKind.Explore, 1);
-
-        /// <summary>
-        /// Advances every active quest of a given kind whose target matches.
-        ///
-        /// One funnel for all four event kinds: they differ only in what counts as a match,
-        /// and having a single place that decides "is this quest active, is this the right
-        /// kind, does the target match, cap the increment" is what keeps a new objective type
-        /// from quietly skipping one of those checks.
-        /// </summary>
-        private void CreditEvent(long sender, QuestObjectiveKind kind, string target, int count)
-        {
-            if (!Nview.IsOwner() || count <= 0 || count > 100) return;
-            long playerId = GameApi.GetPlayerId(sender);
-            if (playerId == 0L || string.IsNullOrEmpty(target)) return;
-
-            bool advanced = false;
-            foreach (var progress in QuestDatabase.GetAll(playerId))
-            {
-                if (progress.Status != QuestStatus.Active) continue;
-                var quest = QuestStore.Get(progress.QuestId);
-                if (quest == null) continue;
-
-                // Every matching objective is advanced, not just the first: a quest that asks
-                // for two different things counts each of them on its own line, and a quest
-                // that happens to name the same target twice should not silently lose one.
-                var steps = quest.Steps();
-                for (int i = 0; i < steps.Count; i++)
-                {
-                    var step = steps[i];
-                    if (step.Kind != kind) continue;
-                    if (!string.Equals(step.Target, target, StringComparison.OrdinalIgnoreCase)) continue;
-
-                    int now = QuestDatabase.AddProgress(playerId, quest.Id, i, count, step.Amount);
-                    advanced = true;
-                    Nview.InvokeRPC(sender, "RPC_ProgressNotice",
-                        NoticeLabel(quest, step, steps.Count), now + ";" + step.Amount);
-                }
-            }
-
-            if (advanced) SendQuestsTo(sender);
-        }
-
-        /// <summary>Advances one named quest, for events that identify the quest rather than a
-        /// target -- arriving somewhere is only meaningful against the quest that asked.</summary>
-        private void CreditQuest(long sender, string questId, QuestObjectiveKind kind, int count)
-        {
-            if (!Nview.IsOwner() || count <= 0) return;
-            long playerId = GameApi.GetPlayerId(sender);
-            if (playerId == 0L) return;
-
-            var quest = QuestStore.Get(questId);
-            if (quest == null) return;
-
-            var progress = QuestDatabase.Get(playerId, questId);
-            if (progress == null || progress.Status != QuestStatus.Active) return;
-
-            var steps = quest.Steps();
-            int index = steps.FindIndex(s => s.Kind == kind);
-            if (index < 0) return;
-
-            int now = QuestDatabase.AddProgress(playerId, questId, index, count, steps[index].Amount);
-            Nview.InvokeRPC(sender, "RPC_ProgressNotice",
-                NoticeLabel(quest, steps[index], steps.Count), now + ";" + steps[index].Amount);
-            SendQuestsTo(sender);
-        }
-
-        /// <summary>What the centre-screen progress line calls the thing that just moved. On a
-        /// single-objective quest the quest's own name says it; on a longer one the name alone
-        /// would leave the player guessing which of three counters ticked.</summary>
-        private static string NoticeLabel(QuestDefinition quest, QuestObjective step, int stepCount) =>
-            stepCount <= 1 ? quest.Name : $"{quest.Name} — {ItemNames.Display(step.Target)}";
-
-        /// <summary>Client side: tell the player their quest moved, on the same centre-screen
-        /// channel the game uses for "picked up an item" -- progress you only find by opening
-        /// a menu may as well not have happened.</summary>
-        private void RPC_ProgressNotice(long sender, string questName, string packed)
-        {
-            var player = Player.m_localPlayer;
-            if (player == null) return;
-
-            var p = (packed ?? "").Split(';');
-            if (p.Length != 2) return;
-
-            bool done = int.TryParse(p[0], out int now) && int.TryParse(p[1], out int goal) && now >= goal;
-            player.Message(MessageHud.MessageType.Center,
-                done ? $"{questName}: {p[0]}/{p[1]} — pronto para entregar"
-                     : $"{questName}: {p[0]}/{p[1]}", 0, null);
         }
 
         /// <summary>Completes a quest and pays out. Collect objectives trust the client to
@@ -480,6 +377,7 @@ namespace NpcValheim.Npc
         private void RPC_TurnInQuest(long sender, string questId)
         {
             if (!Nview.IsOwner()) return;
+            if (!NpcRequestGuard.AllowRate(sender, "quest-turn-in", 4, 5f)) return;
             if (!Offers(questId)) return;   // handing in somewhere that never offered it
             long playerId = GameApi.GetPlayerId(sender);
             if (playerId == 0L) return;
@@ -498,10 +396,11 @@ namespace NpcValheim.Npc
             for (int i = 0; i < steps.Count; i++)
             {
                 if (steps[i].Kind == QuestObjectiveKind.Collect) continue;
-                if (progress.CounterAt(i) >= steps[i].Amount) continue;
+                int goal = QuestProgressRules.Goal(steps[i]);
+                if (progress.CounterAt(i) >= goal) continue;
 
                 Plugin.Log.LogInfo($"NpcValheim: turn-in refused for '{questId}' -- " +
-                                   $"{steps[i].Target} {progress.CounterAt(i)}/{steps[i].Amount}");
+                                   $"{steps[i].Target} {progress.CounterAt(i)}/{goal}");
                 return;
             }
 
@@ -523,7 +422,7 @@ namespace NpcValheim.Npc
         /// API actually means something.</summary>
         private void RPC_GrantExperience(long sender, int amount)
         {
-            if (amount <= 0) return;
+            if (!ServiceNpcAuthority.IsAuthoritativeSender(sender) || amount <= 0) return;
             EpicMmoApi.AddExp(amount);
         }
 
@@ -585,7 +484,8 @@ namespace NpcValheim.Npc
         private void RPC_CollectRewards(long sender, string packed)
         {
             var player = Player.m_localPlayer;
-            if (player == null || string.IsNullOrEmpty(packed)) return;
+            if (!ServiceNpcAuthority.IsAuthoritativeSender(sender) || player == null ||
+                string.IsNullOrEmpty(packed) || packed.Length > 65536) return;
 
             foreach (var line in packed.Split('\n'))
             {
@@ -614,6 +514,7 @@ namespace NpcValheim.Npc
         private void RPC_ClaimDelivered(long sender, string mailId)
         {
             if (!Nview.IsOwner()) return;
+            if (!NpcRequestGuard.AllowRate(sender, "quest-claim-reward", 20, 5f)) return;
             long playerId = GameApi.GetPlayerId(sender);
             if (playerId == 0L) return;
             MailDatabase.Claim(mailId, playerId);
@@ -667,7 +568,7 @@ namespace NpcValheim.Npc
                 bool serverSideDone = true;
                 for (int i = 0; i < steps.Count && serverSideDone; i++)
                     serverSideDone = steps[i].Kind == QuestObjectiveKind.Collect ||
-                                     (progress?.CounterAt(i) ?? 0) >= steps[i].Amount;
+                                     (progress?.CounterAt(i) ?? 0) >= QuestProgressRules.Goal(steps[i]);
                 bool canTurnIn = status == QuestStatus.Active && serverSideDone;
 
                 // Prerequisites only gate picking a quest up; one already in progress stays

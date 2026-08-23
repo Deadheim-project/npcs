@@ -116,12 +116,16 @@
          ships PublicAPI/UsedImplicitly in that same namespace, which ConfigSync.cs uses. -->
   </ItemGroup>
 
-  <!-- A suite de testes e as ferramentas de demo agora vivem em NpcValheim.Server, que
-       nunca e distribuido. DevTools continua existindo so para a conveniencia de
-       desenvolvimento (CopyToPlugins) e para o zip nao trocar a dll de teste do jogo. -->
+  <!-- Há uma DLL só. As ferramentas de teste entram nela apenas no build local e são
+       removidas da distribuição usada pelo launcher e pelo servidor dedicado. -->
   <PropertyGroup>
     <DevTools Condition="'$(DevTools)' == ''">true</DevTools>
+    <DefineConstants Condition="'$(DevTools)' == 'true'">$(DefineConstants);DEVTOOLS</DefineConstants>
   </PropertyGroup>
+
+  <ItemGroup Condition="'$(DevTools)' != 'true'">
+    <Compile Remove="Testing\**\*.cs" />
+  </ItemGroup>
 
   <ItemGroup>
     <None Include="Assets\Mailbox\**\*" CopyToOutputDirectory="PreserveNewest" />

@@ -196,7 +196,7 @@ namespace NpcValheim.UI
                 int done = steps.Count(s => s.IsDone(player));
                 return $"{done} de {steps.Count} objetivos";
             }
-            return $"{steps[0].Progress(player)}/{steps[0].Goal}";
+            return $"{steps[0].Progress(player)}/{steps[0].CompletionGoal}";
         }
 
         private string ShortState(QuestEntry quest) => quest.Status switch
@@ -295,7 +295,7 @@ namespace NpcValheim.UI
 
                 lines.Add(step.IsDone(player)
                     ? $"<color=#6fbf5b>✔ {what}</color>"
-                    : $"{what}  <color=#9a9188>{step.Progress(player)}/{step.Goal}</color>");
+                    : $"{what}  <color=#9a9188>{step.Progress(player)}/{step.CompletionGoal}</color>");
             }
             return string.Join("\n", lines);
         }
@@ -340,7 +340,7 @@ namespace NpcValheim.UI
 
                 Say(step.Kind == QuestObjectiveKind.Collect
                     ? $"Você precisa de {step.Goal}x {ValheimUi.Localize(DisplayName(step.Target))}."
-                    : $"Progresso insuficiente ({step.Progress(Player)}/{step.Goal}).");
+                    : $"Progresso insuficiente ({step.Progress(Player)}/{step.CompletionGoal}).");
                 return;
             }
 

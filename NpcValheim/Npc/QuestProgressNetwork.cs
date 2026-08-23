@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Generic;
 using HarmonyLib;
 using UnityEngine;
 using NpcValheim.Persistence;
@@ -25,18 +24,19 @@ namespace NpcValheim.Npc
             Plugin.Log.LogInfo("NpcValheim: global quest progress RPCs registered");
         }
 
-        internal static void Report(QuestObjectiveKind kind, string target, string questId = "")
+        internal static void Report(QuestObjectiveKind kind, string target, string questId = "", int count = 1)
         {
             TryRegister();
             if (_registeredRpc == null || !IsReportable(kind)) return;
             target = (target ?? "").Trim();
             questId = (questId ?? "").Trim();
-            if (target.Length > 128 || questId.Length > 128) return;
+            if (target.Length > 128 || questId.Length > 128 || count < 1 || count > 100) return;
+            string eventData = count + "|" + questId.Replace('|', ' ');
             _registeredRpc.InvokeRoutedRPC(GameApi.GetServerPeerId(), RpcEvent,
-                new object[] { (int)kind, target, questId });
+                new object[] { (int)kind, target, eventData });
         }
 
-        private static void OnEvent(long sender, int rawKind, string target, string questId)
+        private static void OnEvent(long sender, int rawKind, string target, string eventData)
         {
             if (ZNet.instance == null || !ZNet.instance.IsServer() ||
                 !Enum.IsDefined(typeof(QuestObjectiveKind), rawKind)) return;
@@ -47,7 +47,7 @@ namespace NpcValheim.Npc
             long playerId = player.GetPlayerID();
             if (playerId == 0L) return;
             target = (target ?? "").Trim();
-            questId = (questId ?? "").Trim();
+            if (!TryReadEventData(eventData, out int count, out string questId)) return;
 
             if (kind == QuestObjectiveKind.Explore)
             {
@@ -57,10 +57,11 @@ namespace NpcValheim.Npc
 
             if (target.Length == 0 || target.Length > 128) return;
             if (kind == QuestObjectiveKind.Talk && !IsNearTalkTarget(player, target)) return;
-            CreditMatching(sender, playerId, kind, target);
+            CreditMatching(sender, playerId, kind, target,
+                kind == QuestObjectiveKind.Talk ? 1 : count);
         }
 
-        private static void CreditMatching(long sender, long playerId, QuestObjectiveKind kind, string target)
+        private static void CreditMatching(long sender, long playerId, QuestObjectiveKind kind, string target, int count)
         {
             foreach (var progress in QuestDatabase.GetAll(playerId))
             {
@@ -73,7 +74,9 @@ namespace NpcValheim.Npc
                     var step = steps[i];
                     if (step.Kind != kind || !string.Equals(step.Target, target, StringComparison.OrdinalIgnoreCase)) continue;
                     int goal = QuestProgressRules.Goal(step);
-                    int now = QuestDatabase.AddProgress(playerId, quest.Id, i, 1, goal);
+                    int before = progress.CounterAt(i);
+                    int now = QuestDatabase.AddProgress(playerId, quest.Id, i, count, goal);
+                    if (now <= before) continue;
                     SendNotice(sender, NoticeLabel(quest, step, steps.Count), now, goal);
                 }
             }
@@ -118,8 +121,7 @@ namespace NpcValheim.Npc
 
         private static void OnNotice(long sender, string label, string packed)
         {
-            if (ZNet.instance == null || ZNet.instance.IsServer()) return;
-            if (sender != GameApi.GetServerPeerId()) return;
+            if (!ServiceNpcAuthority.IsAuthoritativeSender(sender)) return;
             var player = Player.m_localPlayer;
             var p = (packed ?? "").Split(';');
             if (player == null || p.Length != 2 || !int.TryParse(p[0], out var now) || !int.TryParse(p[1], out var goal)) return;
@@ -133,6 +135,17 @@ namespace NpcValheim.Npc
         private static bool IsReportable(QuestObjectiveKind kind) =>
             kind == QuestObjectiveKind.Kill || kind == QuestObjectiveKind.Gather ||
             kind == QuestObjectiveKind.Talk || kind == QuestObjectiveKind.Explore;
+
+        private static bool TryReadEventData(string packed, out int count, out string questId)
+        {
+            count = 0;
+            questId = "";
+            var separator = (packed ?? "").IndexOf('|');
+            if (separator < 1 || !int.TryParse(packed.Substring(0, separator), out count) ||
+                count < 1 || count > 100) return false;
+            questId = packed.Substring(separator + 1).Trim();
+            return questId.Length <= 128;
+        }
     }
 
     [HarmonyPatch(typeof(ZNet), nameof(ZNet.Start))]

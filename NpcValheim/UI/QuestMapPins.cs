@@ -46,30 +46,25 @@ namespace NpcValheim.UI
         {
             var wanted = new Dictionary<string, Vector3>();
 
-            foreach (var giver in FindObjectsByType<QuestGiverNpc>(FindObjectsSortMode.None))
+            foreach (var quest in QuestJournal.CurrentQuests())
             {
-                if (giver == null || !giver.HasSyncedOnce) continue;
+                if (quest.Status != QuestStatus.Active) continue;
 
-                foreach (var quest in giver.CachedQuests)
+                // Per objective, because a quest that says "go there and talk to him" has
+                // two places on the map and each stops being interesting on its own.
+                foreach (var step in QuestTracker.Steps(quest))
                 {
-                    if (quest.Status != QuestStatus.Active) continue;
+                    if (step.IsDone(Player.m_localPlayer)) continue;
 
-                    // Per objective, because a quest that says "go there and talk to him" has
-                    // two places on the map and each stops being interesting on its own.
-                    foreach (var step in QuestTracker.Steps(quest))
+                    if (step.Kind == QuestObjectiveKind.Explore)
                     {
-                        if (step.Counter >= step.Goal) continue;   // done, just not handed in yet
-
-                        if (step.Kind == QuestObjectiveKind.Explore)
-                        {
-                            if (TryParsePlace(step.Target, out var place))
-                                wanted[quest.Id + "|" + step.Target] = place;
-                        }
-                        else if (step.Kind == QuestObjectiveKind.Talk)
-                        {
-                            if (TryFindNpc(step.Target, out var where))
-                                wanted[quest.Id + "|" + step.Target] = where;
-                        }
+                        if (TryParsePlace(step.Target, out var place))
+                            wanted[quest.Id + "|" + step.Target] = place;
+                    }
+                    else if (step.Kind == QuestObjectiveKind.Talk)
+                    {
+                        if (TryFindNpc(step.Target, out var where))
+                            wanted[quest.Id + "|" + step.Target] = where;
                     }
                 }
             }
@@ -107,12 +102,8 @@ namespace NpcValheim.UI
         private static string NameOf(string pinKey)
         {
             var questId = pinKey.Split('|')[0];
-            foreach (var giver in FindObjectsByType<QuestGiverNpc>(FindObjectsSortMode.None))
-            {
-                if (giver == null) continue;
-                foreach (var quest in giver.CachedQuests)
-                    if (quest.Id == questId) return quest.Name;
-            }
+            foreach (var quest in QuestJournal.CurrentQuests())
+                if (quest.Id == questId) return quest.Name;
             return questId;
         }
 
