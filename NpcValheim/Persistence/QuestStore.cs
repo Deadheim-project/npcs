@@ -2,14 +2,13 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using BepInEx;
 using YamlDotNet.Serialization;
 using YamlDotNet.Serialization.NamingConventions;
 
 namespace NpcValheim.Persistence
 {
     /// <summary>
-    /// Loads quest definitions from `BepInEx/plugins/NpcValheim/npcs/quests/*.yaml`.
+    /// Loads quest definitions from the mod's resolved `npcs/quests/*.yaml` directory.
     ///
     /// Definitions are cached after the first read so opening a quest panel doesn't hit the
     /// disk; an admin who edits the files calls Reload (or restarts) to pick them up. On
@@ -21,7 +20,7 @@ namespace NpcValheim.Persistence
         private static Dictionary<string, QuestDefinition> _cache;
 
         private static string QuestsDir =>
-            Path.Combine(Paths.PluginPath, "NpcValheim", "npcs", "quests");
+            Path.Combine(NpcStoragePaths.DataDirectory, "quests");
 
         private static readonly IDeserializer Deserializer = new DeserializerBuilder()
             .WithNamingConvention(CamelCaseNamingConvention.Instance)
@@ -64,9 +63,7 @@ namespace NpcValheim.Persistence
             if (quest == null) { error = "Quest vazia"; return false; }
             if (string.IsNullOrWhiteSpace(quest.Id)) { error = "Id obrigatório"; return false; }
             if (string.IsNullOrWhiteSpace(quest.Name)) quest.Name = quest.Id;
-            var steps = quest.Steps();
-            if (steps.Exists(s => string.IsNullOrWhiteSpace(s.Target))) { error = "Alvo obrigatório"; return false; }
-            if (steps.Exists(s => s.Amount < 1)) { error = "Quantidade tem de ser ao menos 1"; return false; }
+            if (!QuestProgressRules.Validate(quest, out error)) return false;
 
             var id = Slug(quest.Id);
             if (id.Length == 0) { error = "Id inválido"; return false; }
@@ -128,10 +125,9 @@ namespace NpcValheim.Persistence
                         // Validated against the resolved objectives, so a quest written either
                         // way -- one `target:` or a list under `objectives:` -- is judged by
                         // the same rule.
-                        var steps = quest.Steps();
-                        if (steps.Exists(s => s.Amount < 1 || string.IsNullOrWhiteSpace(s.Target)))
+                        if (!QuestProgressRules.Validate(quest, out var error))
                         {
-                            Plugin.Log.LogWarning($"NpcValheim: quest '{quest.Id}' has an objective with no target or a zero amount; skipping");
+                            Plugin.Log.LogWarning($"NpcValheim: quest '{quest.Id}' inválida ({error}); ignorando");
                             continue;
                         }
 

@@ -1,4 +1,5 @@
 using HarmonyLib;
+using NpcValheim.Npc;
 using NpcValheim.Prefabs;
 
 namespace NpcValheim.Patches
@@ -25,6 +26,26 @@ namespace NpcValheim.Patches
             {
                 if (!table.m_pieces.Contains(npcPrefab))
                     table.m_pieces.Add(npcPrefab);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Service pieces stay registered on every peer because their prefab hashes must match,
+    /// but only a confirmed local admin sees them in the Hammer. Placement is authorized
+    /// independently by ServiceNpcAuthority on the server.
+    /// </summary>
+    [HarmonyPatch(typeof(PieceTable), nameof(PieceTable.UpdateAvailable))]
+    internal static class PieceTable_UpdateAvailable_NpcAdmin_Patch
+    {
+        [HarmonyPrefix]
+        private static void Prefix()
+        {
+            bool enabled = Player.m_localPlayer != null && NpcBase.LocalPlayerIsAdmin();
+            foreach (var prefab in NpcPrefabFactory.CustomPrefabs)
+            {
+                var piece = prefab != null ? prefab.GetComponent<Piece>() : null;
+                if (piece != null) piece.m_enabled = enabled;
             }
         }
     }

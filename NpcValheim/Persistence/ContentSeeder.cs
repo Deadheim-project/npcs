@@ -1,6 +1,5 @@
 using System;
 using System.IO;
-using BepInEx;
 
 namespace NpcValheim.Persistence
 {
@@ -21,11 +20,9 @@ namespace NpcValheim.Persistence
     /// </summary>
     public static class ContentSeeder
     {
-        private static string ShippedDir =>
-            Path.Combine(Paths.PluginPath, "NpcValheim", "Content");
+        private static string ShippedDir => NpcStoragePaths.ContentDirectory;
 
-        private static string LiveDir =>
-            Path.Combine(Paths.PluginPath, "NpcValheim", "npcs");
+        private static string LiveDir => NpcStoragePaths.DataDirectory;
 
         public static void Run()
         {

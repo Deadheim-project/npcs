@@ -138,8 +138,7 @@ namespace NpcValheim.UI
                 // exact shortfall, which is more use than a dead button.
                 go.onClick.AddListener(() =>
                 {
-                    if (Teleporter != null && Teleporter.TryTeleport(Player, id))
-                        UiRoot.RequestClose();
+                    Teleporter?.TryTeleport(Player, id);
                 });
             }
         }

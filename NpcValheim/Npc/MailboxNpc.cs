@@ -28,6 +28,7 @@ namespace NpcValheim.Npc
     /// </summary>
     public class MailboxNpc : NpcBase
     {
+        private const int MaxClaimsPerRequest = 20;
         public override float NameplateHeight => 1.85f;
         public override bool ShowsAppearanceTab => false;
         protected override string DefaultNpcName => "Caixa Postal";
@@ -143,13 +144,14 @@ namespace NpcValheim.Npc
 
         private void RPC_RequestMail(long sender)
         {
-            if (!Nview.IsOwner()) return;
+            if (!NpcRequestGuard.AllowNearby(Nview, transform, sender, "mail-read", 6f, 12, 2f)) return;
             RememberSender(sender);
             SendMailTo(sender);
         }
 
         private void RPC_MailData(long sender, string packed)
         {
+            if (!NpcRequestGuard.IsResponseFromOwner(Nview, sender)) return;
             CachedMail = MailWire.Unpack(packed);
             HasSyncedOnce = true;
             MailSynced?.Invoke(CachedMail);
@@ -157,32 +159,34 @@ namespace NpcValheim.Npc
 
         private void RPC_ClaimMail(long sender, string mailId)
         {
-            if (!Nview.IsOwner()) return;
+            if (!NpcRequestGuard.AllowNearby(Nview, transform, sender, "mail-claim", 6f, 8, 2f)) return;
             long playerId = GameApi.GetPlayerId(sender);
             if (playerId == 0L) return;
 
-            var entry = MailDatabase.Claim(mailId, playerId);
-            if (entry != null) Deliver(entry, playerId);
+            if (!TryDeliverClaim(mailId, playerId))
+                ReplyStatus(sender, "Não foi possível entregar esta encomenda; ela continua guardada.");
             SendMailTo(sender);
         }
 
         private void RPC_ClaimAllMail(long sender)
         {
-            if (!Nview.IsOwner()) return;
+            if (!NpcRequestGuard.AllowNearby(Nview, transform, sender, "mail-claim-all", 6f, 2, 5f)) return;
             long playerId = GameApi.GetPlayerId(sender);
             if (playerId == 0L) return;
 
-            foreach (var entry in MailDatabase.GetMail(playerId))
+            int delivered = 0;
+            foreach (var entry in MailDatabase.GetMail(playerId).Take(MaxClaimsPerRequest))
             {
-                var claimed = MailDatabase.Claim(entry.Id, playerId);
-                if (claimed != null) Deliver(claimed, playerId);
+                if (TryDeliverClaim(entry.Id, playerId)) delivered++;
             }
+            if (delivered >= MaxClaimsPerRequest)
+                ReplyStatus(sender, $"{delivered} encomendas entregues. Abra novamente para continuar.");
             SendMailTo(sender);
         }
 
         private void RPC_RequestDirectory(long sender)
         {
-            if (!Nview.IsOwner()) return;
+            if (!NpcRequestGuard.AllowNearby(Nview, transform, sender, "mail-directory", 6f, 6, 2f)) return;
             RememberSender(sender);
             foreach (var player in GameApi.ListOnlinePlayers())
                 PlayerDirectory.Remember(player.Id, player.Name);
@@ -191,13 +195,14 @@ namespace NpcValheim.Npc
 
         private void RPC_DirectoryData(long sender, string packed)
         {
+            if (!NpcRequestGuard.IsResponseFromOwner(Nview, sender)) return;
             CachedRecipients = UnpackDirectory(packed);
             HasDirectoryOnce = true;
         }
 
         private void RPC_SendMail(long sender, string packed)
         {
-            if (!Nview.IsOwner()) return;
+            if (!NpcRequestGuard.AllowNearby(Nview, transform, sender, "mail-send", 6f, 4, 5f)) return;
             long playerId = GameApi.GetPlayerId(sender);
             if (playerId == 0L) return;
             RememberSender(sender);
@@ -240,7 +245,7 @@ namespace NpcValheim.Npc
 
         private void RPC_CreateHouse(long sender, string name)
         {
-            if (!Nview.IsOwner()) return;
+            if (!NpcRequestGuard.AllowNearby(Nview, transform, sender, "house-create", 6f, 2, 10f)) return;
             long playerId = GameApi.GetPlayerId(sender);
             if (playerId == 0L) return;
             RememberSender(sender);
@@ -268,7 +273,7 @@ namespace NpcValheim.Npc
 
         private void RPC_InviteHouse(long sender, string packed)
         {
-            if (!Nview.IsOwner()) return;
+            if (!NpcRequestGuard.AllowNearby(Nview, transform, sender, "house-invite", 6f, 4, 5f)) return;
             long playerId = GameApi.GetPlayerId(sender);
             if (playerId == 0L) return;
             RememberSender(sender);
@@ -297,7 +302,7 @@ namespace NpcValheim.Npc
 
         private void RPC_KickHouse(long sender, string packed)
         {
-            if (!Nview.IsOwner()) return;
+            if (!NpcRequestGuard.AllowNearby(Nview, transform, sender, "house-kick", 6f, 4, 5f)) return;
             long playerId = GameApi.GetPlayerId(sender);
             if (playerId == 0L) return;
 
@@ -316,11 +321,15 @@ namespace NpcValheim.Npc
             Nview.InvokeRPC(sender, "RPC_DirectoryData", PackDirectory(playerId));
         }
 
-        private void RPC_MailStatus(long sender, string message) => LastStatus = message ?? "";
+        private void RPC_MailStatus(long sender, string message)
+        {
+            if (!NpcRequestGuard.IsResponseFromOwner(Nview, sender)) return;
+            LastStatus = message ?? "";
+        }
 
         private void RPC_MarkMailRead(long sender, string mailId)
         {
-            if (!Nview.IsOwner()) return;
+            if (!NpcRequestGuard.AllowNearby(Nview, transform, sender, "mail-mark-read", 6f, 12, 2f)) return;
             RememberSender(sender);
             long playerId = GameApi.GetPlayerId(sender);
             if (playerId == 0L) return;
@@ -331,13 +340,38 @@ namespace NpcValheim.Npc
         /// <summary>Hands a parcel over in the world. Coins become a real Coins stack rather
         /// than market balance, so mail is useful without ever touching a marketplace. A
         /// written letter has nothing to drop -- claiming it just marks it read/removed.</summary>
-        private void Deliver(MailEntry entry, long recipient)
+        private bool TryDeliverClaim(string mailId, long recipient)
         {
+            string token = Guid.NewGuid().ToString("N");
+            var entry = MailDatabase.BeginClaim(mailId, recipient, token);
+            if (entry == null) return false;
+
+            if (!Deliver(entry, recipient))
+            {
+                MailDatabase.ReleaseClaim(mailId, recipient, token);
+                return false;
+            }
+
+            if (MailDatabase.CompleteClaim(mailId, recipient, token)) return true;
+
+            // Do not unlock after the world item exists: retrying could duplicate it. Keeping
+            // the persisted "delivering" state makes the exceptional case visible and safe
+            // for administrative reconciliation.
+            Plugin.Log.LogError($"NpcValheim: delivered mail {mailId} but could not finalize its claim");
+            return false;
+        }
+
+        private bool Deliver(MailEntry entry, long recipient)
+        {
+            if (entry == null || entry.PlayerId != recipient) return false;
             var dropPos = transform.position + Vector3.up + UnityEngine.Random.insideUnitSphere * 0.5f;
             if (entry.IsCoins)
-                ItemSpawner.TrySpawn(MarketplaceNpc.CoinPrefabName, entry.Coins, 1, dropPos);
+                return ItemSpawner.TrySpawn(MarketplaceNpc.CoinPrefabName, entry.Coins, 1, dropPos);
             else if (!string.IsNullOrEmpty(entry.ItemName) && entry.Amount > 0)
-                ItemSpawner.TrySpawn(entry.ItemName, entry.Amount, entry.Quality, dropPos);
+                return ItemSpawner.TrySpawn(entry.ItemName, entry.Amount, entry.Quality, dropPos);
+
+            // Written messages have no attachment. Claiming one is just an acknowledgement.
+            return entry.IsMessage;
         }
 
         /// <summary>`target` is a transient peer id -- fine for addressing the reply, wrong
@@ -391,13 +425,13 @@ namespace NpcValheim.Npc
         private static string PackDirectory(long viewerId)
         {
             var sb = new StringBuilder();
-            foreach (var player in PlayerDirectory.All())
+            foreach (var player in PlayerDirectory.All().Take(500))
             {
                 if (sb.Length > 0) sb.Append('\n');
                 sb.Append("P;").Append(player.Id.ToString(CultureInfo.InvariantCulture))
                   .Append(';').Append(MailWire.Sanitize(player.Name));
             }
-            foreach (var house in HouseDatabase.All())
+            foreach (var house in HouseDatabase.All().Take(100))
             {
                 if (sb.Length > 0) sb.Append('\n');
                 sb.Append("H;").Append(MailWire.Sanitize(house.Name)).Append(';')
@@ -415,6 +449,8 @@ namespace NpcValheim.Npc
 
             foreach (var line in packed.Split('\n'))
             {
+                if (result.Count >= 600) break;
+                if (line.Length > 512) continue;
                 var p = line.Split(';');
                 if (p.Length < 3) continue;
                 if (p[0] == "P")

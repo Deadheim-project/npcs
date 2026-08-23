@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using LiteDB;
 using NpcValheim.Persistence;
 
 class Program
@@ -27,6 +28,161 @@ class Program
         var plugin = Type.GetType("NpcValheim.Plugin, NpcValheim");
         plugin.GetField("Log", BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Public)
               .SetValue(null, new BepInEx.Logging.ManualLogSource("contentcheck"));
+    }
+
+    /// <summary>
+    /// Exercises the real LiteDB-backed market/mail implementations against throwaway files.
+    /// These are integration checks, not mocks: listing transactions, the durable outbox and
+    /// the claim state machine all run through the same public methods used by the mod.
+    /// </summary>
+    static void CheckEconomyAndMail(string root)
+    {
+        string economyRoot = Path.Combine(root, "economy");
+        Directory.CreateDirectory(economyRoot);
+        string marketPath = Path.Combine(economyRoot, "market.db");
+        string mailPath = Path.Combine(economyRoot, "mail.db");
+
+        MailDatabase.Init(mailPath);
+        MarketDatabase.Init(marketPath);
+        try
+        {
+            const long sellerId = 41001;
+            const long buyerId = 41002;
+            const string boardId = "integration-board";
+
+            System.Console.WriteLine();
+            System.Console.WriteLine("== economy transaction and outbox ==");
+
+            var listing = MarketDatabase.AddListing(
+                boardId, sellerId, "Seller", "Wood", quality: 2,
+                amount: 10, pricePerUnit: 5, duration: TimeSpan.FromHours(1));
+            Check("a valid integration listing is persisted", listing != null);
+
+            bool bought = MarketDatabase.Buy(
+                listing.Id, boardId, buyerId, amount: 4, taxPercent: 10, paid: 25,
+                out var boughtFrom, out var refund, out var buyError);
+            Check("a purchase commits", bought, buyError ?? "");
+            Check("a purchase returns only the overpayment",
+                  bought && refund == 5, "refund=" + refund);
+            Check("a partial purchase leaves the remaining stock",
+                  boughtFrom != null && boughtFrom.Amount == 6 &&
+                  MarketDatabase.GetListings(boardId).Single().Amount == 6);
+
+            var sellerMail = MailDatabase.GetMail(sellerId);
+            var buyerMail = MailDatabase.GetMail(buyerId);
+            Check("a purchase creates the seller coin delivery",
+                  sellerMail.Count == 1 && sellerMail[0].Coins == 18 &&
+                  string.IsNullOrEmpty(sellerMail[0].ItemName),
+                  sellerMail.Count == 0 ? "missing" : "coins=" + sellerMail[0].Coins);
+            Check("a purchase creates the buyer item delivery",
+                  buyerMail.Count == 1 && buyerMail[0].ItemName == "Wood" &&
+                  buyerMail[0].Quality == 2 && buyerMail[0].Amount == 4,
+                  buyerMail.Count == 0 ? "missing" : buyerMail[0].ItemName + " x" + buyerMail[0].Amount);
+            Check("a purchase produces exactly two deliveries",
+                  sellerMail.Count + buyerMail.Count == 2,
+                  "got " + (sellerMail.Count + buyerMail.Count));
+
+            int mailCountAfterBuy = MailDatabase.CountMail(sellerId) + MailDatabase.CountMail(buyerId);
+            Check("flushing an empty outbox is idempotent",
+                  MarketDatabase.FlushOutbox() == 0 && MarketDatabase.FlushOutbox() == 0 &&
+                  MailDatabase.CountMail(sellerId) + MailDatabase.CountMail(buyerId) == mailCountAfterBuy);
+
+            // Simulate the precise crash window the outbox is designed for: mail insertion
+            // committed, but the matching outbox row was not deleted before shutdown.
+            const long replayPlayerId = 41003;
+            const string replayId = "integration-outbox-replay";
+            MailDatabase.SendItem(replayPlayerId, "Replay", "Stone", 1, 7, replayId);
+            using (var marketDb = new LiteDatabase(marketPath))
+            {
+                marketDb.GetCollection<EconomyDelivery>("delivery_outbox").Insert(
+                    new EconomyDelivery
+                    {
+                        Id = replayId,
+                        PlayerId = replayPlayerId,
+                        Subject = "Replay",
+                        ItemName = "Stone",
+                        Quality = 1,
+                        Amount = 7,
+                        CreatedUtcTicks = DateTime.UtcNow.Ticks,
+                    });
+            }
+
+            int firstReplayFlush = MarketDatabase.FlushOutbox();
+            int secondReplayFlush = MarketDatabase.FlushOutbox();
+            var replayMail = MailDatabase.GetMail(replayPlayerId)
+                .Where(entry => entry.Id == replayId).ToList();
+            Check("a committed-mail outbox replay is consumed",
+                  firstReplayFlush == 1 && secondReplayFlush == 0,
+                  firstReplayFlush + "/" + secondReplayFlush);
+            Check("outbox replay cannot duplicate a parcel",
+                  replayMail.Count == 1 && replayMail[0].Amount == 7,
+                  "got " + replayMail.Count);
+
+            const long cancelOwnerId = 41004;
+            var cancelledListing = MarketDatabase.AddListing(
+                boardId, cancelOwnerId, "Owner", "FineWood", quality: 3,
+                amount: 6, pricePerUnit: 9, duration: TimeSpan.FromHours(1));
+            int cancelledAmount = MarketDatabase.CancelListing(
+                cancelledListing.Id, boardId, cancelOwnerId);
+            var cancellationMail = MailDatabase.GetMail(cancelOwnerId);
+            Check("cancelling removes the listing",
+                  cancelledAmount == 6 &&
+                  MarketDatabase.GetListings(boardId).All(x => x.Id != cancelledListing.Id));
+            Check("cancelling returns the complete item stack",
+                  cancellationMail.Count == 1 &&
+                  cancellationMail[0].ItemName == "FineWood" &&
+                  cancellationMail[0].Quality == 3 && cancellationMail[0].Amount == 6,
+                  cancellationMail.Count == 0 ? "missing" : cancellationMail[0].Amount.ToString());
+
+            System.Console.WriteLine();
+            System.Console.WriteLine("== durable mail claims ==");
+
+            const long recipientId = 42001;
+            const long intruderId = 42002;
+            var parcel = MailDatabase.SendItem(
+                recipientId, "Claim state", "Iron", quality: 2, amount: 3);
+
+            Check("another user cannot begin a claim",
+                  MailDatabase.BeginClaim(parcel.Id, intruderId, "intruder") == null &&
+                  MailDatabase.CountMail(recipientId) == 1);
+
+            var begun = MailDatabase.BeginClaim(parcel.Id, recipientId, "attempt-1");
+            Check("the recipient can begin a claim without consuming it",
+                  begun != null && MailDatabase.CountMail(recipientId) == 1);
+            Check("a competing token cannot take an in-flight claim",
+                  MailDatabase.BeginClaim(parcel.Id, recipientId, "attempt-2") == null);
+
+            MailDatabase.ReleaseClaim(parcel.Id, intruderId, "attempt-1");
+            Check("another user cannot release the claim",
+                  MailDatabase.BeginClaim(parcel.Id, recipientId, "attempt-2") == null);
+
+            MailDatabase.ReleaseClaim(parcel.Id, recipientId, "attempt-1");
+            var retried = MailDatabase.BeginClaim(parcel.Id, recipientId, "attempt-2");
+            Check("release preserves the parcel for a retry", retried != null &&
+                  retried.ItemName == "Iron" && retried.Amount == 3 &&
+                  MailDatabase.CountMail(recipientId) == 1);
+
+            Check("another user cannot complete a claim",
+                  !MailDatabase.CompleteClaim(parcel.Id, intruderId, "attempt-2") &&
+                  MailDatabase.CountMail(recipientId) == 1);
+            Check("the wrong token cannot complete a claim",
+                  !MailDatabase.CompleteClaim(parcel.Id, recipientId, "wrong-token") &&
+                  MailDatabase.CountMail(recipientId) == 1);
+            Check("the matching recipient and token consume the parcel once",
+                  MailDatabase.CompleteClaim(parcel.Id, recipientId, "attempt-2") &&
+                  MailDatabase.CountMail(recipientId) == 0 &&
+                  !MailDatabase.CompleteClaim(parcel.Id, recipientId, "attempt-2"));
+
+            var guardedParcel = MailDatabase.SendCoins(recipientId, "Guarded", 11);
+            Check("another user cannot use the legacy direct claim either",
+                  MailDatabase.Claim(guardedParcel.Id, intruderId) == null &&
+                  MailDatabase.GetMail(recipientId).Any(x => x.Id == guardedParcel.Id));
+        }
+        finally
+        {
+            MarketDatabase.Shutdown();
+            MailDatabase.Shutdown();
+        }
     }
 
     static int Main(string[] args)
@@ -126,6 +282,40 @@ class Program
         Check("a quest board lists quests that actually exist",
               board != null && board.QuestGiver.Quests.Count == 4 &&
               board.QuestGiver.Quests.All(id => QuestStore.Get(id) != null));
+
+        System.Console.WriteLine();
+        System.Console.WriteLine("== player directory identity ==");
+        using (var directoryDb = new LiteDatabase(Path.Combine(root, "directory.db")))
+        {
+            typeof(PlayerDirectory).GetMethod(
+                    "Attach", BindingFlags.NonPublic | BindingFlags.Static)
+                .Invoke(null, new object[] { directoryDb });
+
+            PlayerDirectory.Remember(1001, "Mesmo Nome");
+            PlayerDirectory.Remember(2002, "Mesmo Nome");
+
+            var stored = directoryDb.GetCollection<KnownPlayer>("players").FindAll().ToList();
+            Check("equal display names remain separate accounts", stored.Count == 2,
+                  "got " + stored.Count);
+            Check("an ambiguous display name does not select an account",
+                  PlayerDirectory.FindByName("Mesmo Nome") == null);
+
+            var firstIds = PlayerDirectory.IdsFor(1001, "Mesmo Nome");
+            Check("a name hint cannot pull in another account",
+                  firstIds.Contains(1001) && !firstIds.Contains(2002),
+                  string.Join(",", firstIds));
+
+            PlayerDirectory.Remember(1001, "Primeiro", new long[] { 3003 });
+            var authenticatedAliases = PlayerDirectory.IdsFor(3003, "Mesmo Nome");
+            Check("authenticated id overlap still joins aliases",
+                  authenticatedAliases.Contains(1001) && authenticatedAliases.Contains(3003) &&
+                  !authenticatedAliases.Contains(2002),
+                  string.Join(",", authenticatedAliases));
+            Check("remembering aliases does not delete historic rows",
+                  directoryDb.GetCollection<KnownPlayer>("players").Count() == 2);
+        }
+
+        CheckEconomyAndMail(root);
 
         System.Console.WriteLine();
         System.Console.WriteLine(failed == 0 ? $"ALL {passed} CHECKS PASSED" : $"{failed} FAILED, {passed} passed");

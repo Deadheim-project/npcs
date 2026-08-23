@@ -110,7 +110,7 @@ namespace NpcValheim.Npc
         {
             try
             {
-                var online = FindOnlinePlayer(senderId);
+                TryGetPlayer(senderId, out var online);
                 var live = online != null ? online.GetPlayerName() : null;
                 if (!string.IsNullOrWhiteSpace(live)) return live;
 
@@ -122,7 +122,7 @@ namespace NpcValheim.Npc
                     if (!string.IsNullOrWhiteSpace(peerName)) return peerName;
                 }
 
-                return LocalPlayerName();
+                return "???";
             }
             catch (Exception e)
             {
@@ -142,7 +142,7 @@ namespace NpcValheim.Npc
             if (string.IsNullOrWhiteSpace(name) || name == "???") return;
             var ids = CollectIds(senderId);
             long canonical = GetPlayerId(senderId);
-            if (canonical == 0L && ids.Count > 0) canonical = ids[0];
+            if (canonical == 0L) return;
             PlayerDirectory.Remember(canonical, name, ids);
         }
 
@@ -167,8 +167,7 @@ namespace NpcValheim.Npc
                 if (_peerCharacterId?.GetValue(peer) is ZDOID characterId) Add(characterId.UserID);
             }
 
-            var online = FindOnlinePlayer(senderId);
-            if (online != null)
+            if (TryGetPlayer(senderId, out var online))
             {
                 Add(online.GetPlayerID());
                 try { Add(online.GetZDOID().UserID); }
@@ -179,72 +178,92 @@ namespace NpcValheim.Npc
         }
 
         /// <summary>
-        /// Resolves the transient routed-RPC peer id to the stable character id stored in
-        /// ZNetPeer.m_characterID. Ledger balances and NPC ownership must never be keyed by
-        /// the routed id: it changes between connections.
+        /// Resolves an authenticated RPC sender to Player.GetPlayerID(), the stable
+        /// character id used by persistence. ZNetPeer.m_characterID is the bridge to the
+        /// live Player's exact ZDO, not the persistent id itself.
         /// </summary>
         public static long GetPlayerId(long senderId)
         {
-            try
-            {
-                var online = FindOnlinePlayer(senderId);
-                if (online != null) return online.GetPlayerID();
-
-                var peer = FindPeer(senderId);
-                if (peer == null)
-                    return Player.m_localPlayer != null ? Player.m_localPlayer.GetPlayerID() : 0L;
-
-                _peerCharacterId ??= typeof(ZNetPeer).GetField("m_characterID", AnyInstance);
-                if (_peerCharacterId?.GetValue(peer) is ZDOID characterId && characterId.UserID != 0L)
-                    return characterId.UserID;
-            }
-            catch (Exception e)
-            {
-                Plugin.Log.LogWarning($"NpcValheim: could not resolve character id for RPC peer {senderId}: {e.Message}");
-            }
-
-            return 0L;
+            return TryGetPlayer(senderId, out var player) ? player.GetPlayerID() : 0L;
         }
 
         /// <summary>
-        /// Player.GetPlayerID() is the id the mailbox files mail under. ZRoutedRpc peers
-        /// expose ZDOID.UserID, which is a different number — matching the live Player by
-        /// name is what makes the stamp and the box agree.
+        /// Resolves an RPC sender to the exact live Player authenticated by the peer/ZDO
+        /// relationship. Display names are intentionally absent from this path: names are
+        /// mutable, non-unique labels and can never authorize a mutation or select an
+        /// account. When a peer is known, only its complete m_characterID match is accepted;
+        /// without a peer (the local host path), the sender must equal an exact Player or ZDO
+        /// id already present in the live registry.
         /// </summary>
-        private static Player FindOnlinePlayer(long senderId)
+        public static bool TryGetPlayer(long senderId, out Player player)
         {
-            var all = Player.GetAllPlayers();
-            if (all == null) return null;
+            player = null;
+            if (senderId == 0L) return false;
 
-            var peer = FindPeer(senderId);
-            string peerName = null;
-            if (peer != null)
+            try
             {
-                _peerPlayerName ??= typeof(ZNetPeer).GetField("m_playerName", AnyInstance);
-                peerName = _peerPlayerName?.GetValue(peer) as string;
+                var peer = FindPeer(senderId);
+                bool hasPeer = peer != null;
+                bool hasPeerCharacter = TryGetPeerCharacterId(peer, out var peerCharacterId);
+                var all = Player.GetAllPlayers();
+                if (all == null) return false;
+
+                foreach (var candidate in all)
+                {
+                    if (candidate == null || candidate.GetComponent<NpcMarker>() != null) continue;
+
+                    long playerId = candidate.GetPlayerID();
+                    long zdoUserId = 0L;
+                    bool exactPeerCharacter = false;
+                    try
+                    {
+                        var zdoId = candidate.GetZDOID();
+                        zdoUserId = zdoId.UserID;
+                        exactPeerCharacter = hasPeerCharacter && zdoId == peerCharacterId;
+                    }
+                    catch
+                    {
+                        // A Player that has not completed spawning cannot be authenticated
+                        // through its ZDO yet, so it is not a valid result for this request.
+                    }
+
+                    if (!IdentityMatches(senderId, playerId, zdoUserId,
+                            hasPeer, hasPeerCharacter, exactPeerCharacter)) continue;
+
+                    player = candidate;
+                    return true;
+                }
+            }
+            catch (Exception e)
+            {
+                Plugin.Log?.LogWarning(
+                    $"NpcValheim: could not resolve the exact Player for RPC sender {senderId}: {e.Message}");
             }
 
-            foreach (var player in all)
-            {
-                if (player == null) continue;
-                if (player.GetPlayerID() == senderId) return player;
-                if (!string.IsNullOrEmpty(peerName) &&
-                    string.Equals(player.GetPlayerName(), peerName, StringComparison.OrdinalIgnoreCase))
-                    return player;
-                try
-                {
-                    var zdoid = player.GetZDOID();
-                    if (zdoid.UserID == senderId) return player;
-                    if (peer != null && _peerCharacterId?.GetValue(peer) is ZDOID cid && zdoid == cid)
-                        return player;
-                }
-                catch
-                {
-                    // GetZDOID can throw on a player that has not finished spawning.
-                }
-            }
+            return false;
+        }
 
-            return null;
+        /// <summary>Pure matching rule, kept separate so the fail-closed cases can be
+        /// verified outside Unity by the repository's wire checks.</summary>
+        private static bool IdentityMatches(long senderId, long playerId, long zdoUserId,
+            bool hasPeer, bool hasPeerCharacter, bool exactPeerCharacter)
+        {
+            if (senderId == 0L) return false;
+            if (hasPeer) return hasPeerCharacter && exactPeerCharacter;
+            return playerId == senderId || zdoUserId == senderId;
+        }
+
+        private static bool TryGetPeerCharacterId(ZNetPeer peer, out ZDOID characterId)
+        {
+            characterId = default;
+            if (peer == null) return false;
+
+            _peerCharacterId ??= typeof(ZNetPeer).GetField("m_characterID", AnyInstance);
+            if (!(_peerCharacterId?.GetValue(peer) is ZDOID value) || value.UserID == 0L)
+                return false;
+
+            characterId = value;
+            return true;
         }
 
         private static ZNetPeer FindPeer(long senderId)
@@ -265,8 +284,27 @@ namespace NpcValheim.Npc
                 if (!(item is ZNetPeer peer) || peer == null) continue;
                 if (_peerUid?.GetValue(peer) is long uid && uid == senderId)
                     return peer;
-                if (_peerCharacterId?.GetValue(peer) is ZDOID characterId && characterId.UserID == senderId)
-                    return peer;
+                if (!TryGetPeerCharacterId(peer, out var characterId)) continue;
+                if (characterId.UserID == senderId) return peer;
+
+                // ZNetView and routed RPCs can expose different longs. Bridge a stable
+                // Player id back to its peer only through the exact peer-character ZDO;
+                // never through the display name.
+                var players = Player.GetAllPlayers();
+                if (players == null) continue;
+                foreach (var player in players)
+                {
+                    if (player == null || player.GetComponent<NpcMarker>() != null ||
+                        player.GetPlayerID() != senderId) continue;
+                    try
+                    {
+                        if (player.GetZDOID() == characterId) return peer;
+                    }
+                    catch
+                    {
+                        // Not fully spawned, therefore not an authenticated bridge yet.
+                    }
+                }
             }
 
             return null;
@@ -278,8 +316,8 @@ namespace NpcValheim.Npc
         /// ZNet.ListContainsId(m_adminList, hostName). Reading ZNetPeer.m_socket directly used
         /// to return null on the dedicated server, so the client received ServerSync's admin
         /// flag and could see the Appearance tab while every mutation RPC was silently denied.
-        /// A sender with no separate peer object is the host talking to itself, which counts
-        /// as admin in solo/hosted play.</summary>
+        /// A missing peer now fails closed. Solo/hosted play is accepted only when the sender
+        /// exactly matches this process' routed id or its live local Player.</summary>
         public static bool IsAdmin(long senderId)
         {
             try
@@ -287,7 +325,13 @@ namespace NpcValheim.Npc
                 if (ZNet.instance == null) return false;
 
                 var peer = FindPeer(senderId);
-                if (peer == null) return ZNet.instance.LocalPlayerIsAdminOrHost();
+                if (peer == null)
+                {
+                    // A missing peer is not evidence that the caller is the host. Accept the
+                    // local path only when the sender exactly matches this process/player.
+                    if (!IsAuthenticatedLocalSender(senderId)) return false;
+                    return ZNet.instance.LocalPlayerIsAdminOrHost();
+                }
 
                 _peerRpc ??= typeof(ZNetPeer).GetField("m_rpc", AnyInstance);
                 var rpc = _peerRpc?.GetValue(peer);
@@ -377,8 +421,17 @@ namespace NpcValheim.Npc
             return _znetGetPeer?.Invoke(ZNet.instance, new object[] { senderId });
         }
 
-        private static string LocalPlayerName() =>
-            Player.m_localPlayer != null ? Player.m_localPlayer.GetPlayerName() : "???";
+        private static bool IsAuthenticatedLocalSender(long senderId)
+        {
+            if (senderId == 0L || ZNet.instance == null || !ZNet.instance.IsServer())
+                return false;
+
+            long localRpcId = LocalRpcSenderId();
+            if (localRpcId != 0L && localRpcId == senderId) return true;
+
+            return TryGetPlayer(senderId, out var player) &&
+                   player != null && player == Player.m_localPlayer;
+        }
 
         /// <summary>Everyone the server can see right now: the local host (when there is one)
         /// plus every connected peer. Used by the mailbox address book so you can pick a name
@@ -388,7 +441,8 @@ namespace NpcValheim.Npc
             var result = new List<(long, string)>();
             try
             {
-                if (Player.m_localPlayer != null)
+                if (Player.m_localPlayer != null &&
+                    Player.m_localPlayer.GetComponent<NpcMarker>() == null)
                     result.Add((Player.m_localPlayer.GetPlayerID(), Player.m_localPlayer.GetPlayerName()));
 
                 if (ZNet.instance == null) return Dedup(result);
@@ -403,10 +457,14 @@ namespace NpcValheim.Npc
                 {
                     if (!(item is ZNetPeer peer) || peer == null) continue;
                     var name = _peerPlayerName?.GetValue(peer) as string;
-                    long id = 0L;
-                    if (_peerCharacterId?.GetValue(peer) is ZDOID characterId)
-                        id = characterId.UserID;
-                    if (id == 0L || string.IsNullOrEmpty(name)) continue;
+                    _peerUid ??= typeof(ZNetPeer).GetField("m_uid", AnyInstance);
+                    long senderId = _peerUid?.GetValue(peer) is long uid ? uid : 0L;
+                    if (senderId == 0L || !TryGetPlayer(senderId, out var player)) continue;
+
+                    long id = player.GetPlayerID();
+                    if (id == 0L) continue;
+                    if (string.IsNullOrEmpty(name)) name = player.GetPlayerName();
+                    if (string.IsNullOrEmpty(name)) continue;
                     result.Add((id, name));
                 }
             }

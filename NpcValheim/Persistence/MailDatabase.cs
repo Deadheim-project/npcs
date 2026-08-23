@@ -24,6 +24,15 @@ namespace NpcValheim.Persistence
         public int Coins { get; set; }
         public DateTime CreatedUtc { get; set; }
         public bool Read { get; set; }
+        /// <summary>
+        /// Empty/"available" for normal mail and "delivering" while a mailbox owns an
+        /// in-flight claim.  The old implementation deleted the row before attempting to
+        /// spawn its attachment, so an invalid prefab or a full/failed delivery destroyed the
+        /// parcel.  Persisting the short-lived state lets the caller release the claim on
+        /// failure and delete it only after delivery succeeds.
+        /// </summary>
+        public string DeliveryState { get; set; }
+        public string DeliveryToken { get; set; }
 
         public bool IsCoins => Coins > 0 && string.IsNullOrEmpty(ItemName);
         public bool IsMessage => !IsCoins && string.IsNullOrEmpty(ItemName);
@@ -38,6 +47,11 @@ namespace NpcValheim.Persistence
     /// </summary>
     public static class MailDatabase
     {
+        public const int MaxMailPerPlayer = 500;
+        public const int MaxHouseRecipients = 100;
+        private const string Available = "available";
+        private const string Delivering = "delivering";
+        private static readonly object Gate = new object();
         private static LiteDatabase _db;
 
         private static ILiteCollection<MailEntry> Mail => _db.GetCollection<MailEntry>("mail");
@@ -56,12 +70,18 @@ namespace NpcValheim.Persistence
             _db = null;
         }
 
-        public static MailEntry SendItem(long playerId, string subject, string itemName, int quality, int amount)
+        public static MailEntry SendItem(long playerId, string subject, string itemName, int quality, int amount) =>
+            SendItem(playerId, subject, itemName, quality, amount, null);
+
+        /// <summary>Idempotent overload used by the marketplace outbox. Replaying the same
+        /// operation after a restart returns the existing parcel instead of duplicating it.</summary>
+        public static MailEntry SendItem(long playerId, string subject, string itemName, int quality, int amount,
+            string deliveryId)
         {
             if (amount <= 0 || string.IsNullOrEmpty(itemName)) return null;
             var entry = new MailEntry
             {
-                Id = Guid.NewGuid().ToString("N"),
+                Id = string.IsNullOrWhiteSpace(deliveryId) ? Guid.NewGuid().ToString("N") : deliveryId,
                 PlayerId = playerId,
                 Subject = subject,
                 ItemName = itemName,
@@ -69,17 +89,21 @@ namespace NpcValheim.Persistence
                 Amount = amount,
                 Coins = 0,
                 CreatedUtc = DateTime.UtcNow,
+                DeliveryState = Available,
             };
-            Mail.Insert(entry);
-            return entry;
+            return InsertOnce(entry);
         }
 
-        public static MailEntry SendCoins(long playerId, string subject, int coins)
+        public static MailEntry SendCoins(long playerId, string subject, int coins) =>
+            SendCoins(playerId, subject, coins, null);
+
+        /// <summary>Idempotent overload used by the marketplace outbox.</summary>
+        public static MailEntry SendCoins(long playerId, string subject, int coins, string deliveryId)
         {
             if (coins <= 0) return null;
             var entry = new MailEntry
             {
-                Id = Guid.NewGuid().ToString("N"),
+                Id = string.IsNullOrWhiteSpace(deliveryId) ? Guid.NewGuid().ToString("N") : deliveryId,
                 PlayerId = playerId,
                 Subject = subject,
                 ItemName = "",
@@ -87,9 +111,9 @@ namespace NpcValheim.Persistence
                 Amount = 0,
                 Coins = coins,
                 CreatedUtc = DateTime.UtcNow,
+                DeliveryState = Available,
             };
-            Mail.Insert(entry);
-            return entry;
+            return InsertOnce(entry);
         }
 
         public static MailEntry SendMessage(long playerId, long senderId, string senderName,
@@ -116,9 +140,22 @@ namespace NpcValheim.Persistence
                 Amount = 0,
                 Coins = 0,
                 CreatedUtc = DateTime.UtcNow,
+                DeliveryState = Available,
             };
-            Mail.Insert(entry);
-            return entry;
+            return InsertOnce(entry);
+        }
+
+        private static MailEntry InsertOnce(MailEntry entry)
+        {
+            if (entry == null || string.IsNullOrEmpty(entry.Id)) return null;
+            lock (Gate)
+            {
+                var existing = Mail.FindById(entry.Id);
+                if (existing != null) return existing;
+                if (Mail.Count(x => x.PlayerId == entry.PlayerId) >= MaxMailPerPlayer) return null;
+                Mail.Insert(entry);
+                return entry;
+            }
         }
 
         /// <summary>Posts one copy to every current member. The house is an address, not a
@@ -131,7 +168,7 @@ namespace NpcValheim.Persistence
             if (house == null) return 0;
 
             int sent = 0;
-            foreach (var memberId in house.MemberIds.Distinct())
+            foreach (var memberId in house.MemberIds.Distinct().Take(MaxHouseRecipients))
             {
                 if (SendMessage(memberId, senderId, senderName, subject, body, house.Name) != null)
                     sent++;
@@ -151,22 +188,72 @@ namespace NpcValheim.Persistence
                     result.Add(entry);
                 }
             }
-            return result.OrderBy(x => x.CreatedUtc).ToList();
+            return result.OrderBy(x => x.CreatedUtc).Take(MaxMailPerPlayer).ToList();
         }
 
         public static int CountMail(long playerId) => GetMail(playerId).Count;
 
-        /// <summary>Removes and returns one parcel, but only for its rightful recipient --
-        /// the id check is what stops a client asking for someone else's mail by guessing an
-        /// id. Returns null if it isn't theirs or is already gone.</summary>
+        /// <summary>Locks a parcel for one delivery attempt, but does not remove it. The
+        /// mailbox calls CompleteClaim only after the attachment was actually created.</summary>
+        public static MailEntry BeginClaim(string mailId, long playerId, string deliveryToken)
+        {
+            if (string.IsNullOrEmpty(mailId) || string.IsNullOrEmpty(deliveryToken)) return null;
+            lock (Gate)
+            {
+                var entry = Mail.FindById(mailId);
+                if (entry == null || entry.PlayerId != playerId) return null;
+                if (string.Equals(entry.DeliveryState, Delivering, StringComparison.OrdinalIgnoreCase))
+                    return string.Equals(entry.DeliveryToken, deliveryToken, StringComparison.Ordinal)
+                        ? entry
+                        : null;
+
+                entry.DeliveryState = Delivering;
+                entry.DeliveryToken = deliveryToken;
+                Mail.Update(entry);
+                return entry;
+            }
+        }
+
+        public static bool CompleteClaim(string mailId, long playerId, string deliveryToken)
+        {
+            lock (Gate)
+            {
+                var entry = Mail.FindById(mailId);
+                if (entry == null || entry.PlayerId != playerId) return false;
+                if (!string.Equals(entry.DeliveryState, Delivering, StringComparison.OrdinalIgnoreCase) ||
+                    !string.Equals(entry.DeliveryToken, deliveryToken, StringComparison.Ordinal)) return false;
+                return Mail.Delete(mailId);
+            }
+        }
+
+        public static void ReleaseClaim(string mailId, long playerId, string deliveryToken)
+        {
+            lock (Gate)
+            {
+                var entry = Mail.FindById(mailId);
+                if (entry == null || entry.PlayerId != playerId) return;
+                if (!string.Equals(entry.DeliveryState, Delivering, StringComparison.OrdinalIgnoreCase) ||
+                    !string.Equals(entry.DeliveryToken, deliveryToken, StringComparison.Ordinal)) return;
+                entry.DeliveryState = Available;
+                entry.DeliveryToken = "";
+                Mail.Update(entry);
+            }
+        }
+
+        /// <summary>
+        /// Administrative/rollback removal retained for quest transactions and test cleanup.
+        /// Player-facing mailbox claims must use BeginClaim/CompleteClaim so a failed spawn
+        /// cannot erase the attachment.
+        /// </summary>
         public static MailEntry Claim(string mailId, long playerId)
         {
-            var entry = Mail.FindById(mailId);
-            if (entry == null) return null;
-            var ids = PlayerDirectory.IdsFor(playerId);
-            if (!ids.Contains(entry.PlayerId)) return null;
-            Mail.Delete(mailId);
-            return entry;
+            lock (Gate)
+            {
+                var entry = Mail.FindById(mailId);
+                if (entry == null || entry.PlayerId != playerId) return null;
+                Mail.Delete(mailId);
+                return entry;
+            }
         }
 
         /// <summary>Marks a letter as seen by its recipient. The stamp +N counts only

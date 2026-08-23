@@ -27,6 +27,18 @@ class Program
         (int)Giver.GetField("FieldCount", BindingFlags.NonPublic | BindingFlags.Static)
                   .GetRawConstantValue();
 
+    static bool IdentityMatches(long senderId, long playerId, long zdoUserId,
+        bool hasPeer, bool hasPeerCharacter, bool exactPeerCharacter)
+    {
+        var method = typeof(GameApi).GetMethod(
+            "IdentityMatches", BindingFlags.NonPublic | BindingFlags.Static);
+        return method != null && (bool)method.Invoke(null, new object[]
+        {
+            senderId, playerId, zdoUserId,
+            hasPeer, hasPeerCharacter, exactPeerCharacter,
+        });
+    }
+
     static void Main()
     {
         System.Console.WriteLine("== objective encoding ==");
@@ -123,6 +135,28 @@ class Program
         Check("Counter still means objective zero", p2.Counter == p2.CounterAt(0));
         p2.SetCounterAt(-1, 9);
         Check("a negative index is ignored", p2.Counters.Count == 4);
+
+        System.Console.WriteLine();
+        System.Console.WriteLine("== authenticated player resolution ==");
+        Check("a peer resolves only through its exact character ZDO",
+              IdentityMatches(41, 99, 41, true, true, true));
+        Check("a peer cannot fall back to a coincident Player id",
+              !IdentityMatches(41, 41, 88, true, true, false));
+        Check("a peer without a character ZDO fails closed",
+              !IdentityMatches(41, 41, 41, true, false, false));
+        Check("the explicit local path accepts an exact Player id",
+              IdentityMatches(41, 41, 88, false, false, false));
+        Check("the explicit local path accepts an exact ZDO user id",
+              IdentityMatches(41, 99, 41, false, false, false));
+        Check("zero is never an authenticated sender",
+              !IdentityMatches(0, 0, 0, false, false, false));
+
+        var playerPatch = typeof(GameApi).Assembly.GetType("NpcValheim.Patches.PlayerNpcPatch");
+        var awakePostfix = playerPatch?.GetMethod(
+            "Awake", BindingFlags.NonPublic | BindingFlags.Static);
+        Check("Player.Awake has an NPC registry cleanup postfix",
+              awakePostfix != null && awakePostfix.GetCustomAttributes(false)
+                  .Any(a => a.GetType().FullName == "HarmonyLib.HarmonyPostfix"));
 
         System.Console.WriteLine();
         System.Console.WriteLine(failed == 0 ? $"ALL {passed} CHECKS PASSED" : $"{failed} FAILED, {passed} passed");

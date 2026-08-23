@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Linq;
 using System.Text;
 using UnityEngine;
 using NpcValheim.Persistence;
@@ -78,13 +79,15 @@ namespace NpcValheim.Npc
         /// the natural owner of that job. Only the ZDO owner does it, so on a dedicated
         /// server that's the server and it happens exactly once regardless of how many
         /// players are standing around.</summary>
-        private void Update()
+        protected override void Update()
         {
+            base.Update();
             if (Nview == null || !Nview.IsValid() || !Nview.IsOwner()) return;
             if (Time.time < _nextExpirySweep) return;
             _nextExpirySweep = Time.time + 60f;
 
             int returned = MarketDatabase.ReturnExpiredListings();
+            MarketDatabase.FlushOutbox();
             if (returned > 0)
                 Plugin.Log.LogInfo($"NpcValheim: {returned} expired listing(s) mailed back to their sellers");
         }
@@ -152,6 +155,7 @@ namespace NpcValheim.Npc
 
         private void RPC_SetPrice(long sender, string tagged, int price)
         {
+            if (!NpcRequestGuard.AllowNearby(Nview, transform, sender, "shop-set-price", 6f, 6, 2f)) return;
             if (!CanAdminister(sender) || string.IsNullOrEmpty(tagged) || tagged.Length < 3) return;
 
             bool selling = tagged[0] == 'S';
@@ -191,7 +195,7 @@ namespace NpcValheim.Npc
 
         private void RPC_BuyFromNpc(long sender, string itemName, string packed)
         {
-            if (!Nview.IsOwner()) return;
+            if (!NpcRequestGuard.AllowNearby(Nview, transform, sender, "shop-buy", 6f, 8, 2f)) return;
             long playerId = GameApi.GetPlayerId(sender);
             if (playerId == 0L) return;
 
@@ -245,6 +249,7 @@ namespace NpcValheim.Npc
         /// </summary>
         private void RPC_DeliverItem(long sender, string itemName, int amount)
         {
+            if (!NpcRequestGuard.IsResponseFromOwner(Nview, sender)) return;
             var player = Player.m_localPlayer;
             if (player == null || amount <= 0) return;
 
@@ -265,6 +270,7 @@ namespace NpcValheim.Npc
         /// purchase or payment for something the merchant just bought.</summary>
         private void RPC_Paid(long sender, int amount, string reason)
         {
+            if (!NpcRequestGuard.IsResponseFromOwner(Nview, sender)) return;
             var player = Player.m_localPlayer;
             if (player == null || amount <= 0) return;
 
@@ -297,7 +303,7 @@ namespace NpcValheim.Npc
 
         private void RPC_SellToNpc(long sender, string itemName, string packed)
         {
-            if (!Nview.IsOwner()) return;
+            if (!NpcRequestGuard.AllowNearby(Nview, transform, sender, "shop-sell", 6f, 8, 2f)) return;
 
             var parts = (packed ?? "").Split(';');
             if (parts.Length != 2) return;
@@ -366,7 +372,7 @@ namespace NpcValheim.Npc
 
         private void RPC_RequestMarketData(long sender)
         {
-            if (!Nview.IsOwner()) return;
+            if (!NpcRequestGuard.AllowNearby(Nview, transform, sender, "market-read", 8f, 12, 2f)) return;
             long playerId = GameApi.GetPlayerId(sender);
             if (playerId == 0L) return;
             Nview.InvokeRPC(sender, "RPC_MarketData", PackMarketData(playerId));
@@ -374,6 +380,7 @@ namespace NpcValheim.Npc
 
         private void RPC_MarketData(long sender, string packed)
         {
+            if (!NpcRequestGuard.IsResponseFromOwner(Nview, sender)) return;
             CachedListings = UnpackListings(packed);
             HasSyncedOnce = true;
         }
@@ -417,7 +424,7 @@ namespace NpcValheim.Npc
         /// `packed` = "amount;paid".</summary>
         private void RPC_Buy(long sender, string listingId, string packed)
         {
-            if (!Nview.IsOwner()) return;
+            if (!NpcRequestGuard.AllowNearby(Nview, transform, sender, "market-buy", 6f, 6, 2f)) return;
 
             long buyerId = GameApi.GetPlayerId(sender);
             if (buyerId == 0L) return;
@@ -452,7 +459,7 @@ namespace NpcValheim.Npc
         /// client-side before this RPC is sent (see MarketplacePanel).</summary>
         private void RPC_Sell(long sender, string itemName, string packed)
         {
-            if (!Nview.IsOwner()) return;
+            if (!NpcRequestGuard.AllowNearby(Nview, transform, sender, "market-sell", 6f, 4, 2f)) return;
             if (!TryUnpack(packed, out int quality, out int amount, out int pricePerUnit)) return;
             if (amount <= 0 || pricePerUnit <= 0) return;
             if (amount > 100000 || pricePerUnit > 100000000) return;
@@ -460,6 +467,7 @@ namespace NpcValheim.Npc
             var itemDrop = prefab != null ? prefab.GetComponent<ItemDrop>() : null;
             if (itemDrop?.m_itemData?.m_shared == null) return;
             if (quality < 1 || quality > Mathf.Max(1, itemDrop.m_itemData.m_shared.m_maxQuality)) return;
+            if (amount > ItemSpawner.MaxDeliverableAmount(itemName)) return;
 
             long sellerId = GameApi.GetPlayerId(sender);
             if (sellerId == 0L) return;
@@ -471,22 +479,20 @@ namespace NpcValheim.Npc
 
         private void RPC_CancelListing(long sender, string listingId)
         {
-            if (!Nview.IsOwner()) return;
+            if (!NpcRequestGuard.AllowNearby(Nview, transform, sender, "market-cancel", 6f, 6, 2f)) return;
 
             long playerId = GameApi.GetPlayerId(sender);
             if (playerId == 0L) return;
 
-            // Look the listing up before deleting it so the unsold stack can be posted back.
-            var listing = MarketDatabase.GetListings(NpcId).Find(l => l.Id == listingId);
-            int refundAmount = MarketDatabase.CancelListing(listingId, NpcId, playerId);
-            if (refundAmount > 0 && listing != null)
-                MailDatabase.SendItem(playerId, "Anúncio cancelado", listing.ItemName, listing.Quality, refundAmount);
+            // The database deletes the listing and queues the return parcel in one transaction.
+            MarketDatabase.CancelListing(listingId, NpcId, playerId);
 
             BroadcastMarketDataTo(sender);
         }
 
         private void RPC_ConfigureTax(long sender, int taxPercent)
         {
+            if (!NpcRequestGuard.AllowNearby(Nview, transform, sender, "market-tax", 6f, 4, 2f)) return;
             if (!CanAdminister(sender)) return;
             Nview.GetZDO().Set(KeyTaxPercent, Mathf.Clamp(taxPercent, 0, 100));
             PersistProfileSnapshot();
@@ -509,7 +515,7 @@ namespace NpcValheim.Npc
         private string PackMarketData(long forSenderId)
         {
             var sb = new StringBuilder();
-            foreach (var l in MarketDatabase.GetListings(NpcId))
+            foreach (var l in MarketDatabase.GetListings(NpcId).Take(MarketDatabase.MaxListingsPerBoard))
             {
                 if (sb.Length > 0) sb.Append('\n');
                 sb.Append(l.Id).Append(';')
@@ -530,6 +536,8 @@ namespace NpcValheim.Npc
 
             foreach (var line in packed.Split('\n'))
             {
+                if (result.Count >= MarketDatabase.MaxListingsPerBoard) break;
+                if (line.Length > 512) continue;
                 var p = line.Split(';');
                 if (p.Length != 7) continue;
                 result.Add(new MarketEntry

@@ -1,7 +1,6 @@
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using BepInEx;
 using YamlDotNet.Serialization;
 using YamlDotNet.Serialization.NamingConventions;
 
@@ -28,7 +27,7 @@ namespace NpcValheim.Persistence
     /// </summary>
     public static class NpcConfigStore
     {
-        private static string BaseDir => Path.Combine(Paths.PluginPath, "NpcValheim", "npcs");
+        private static string BaseDir => NpcStoragePaths.DataDirectory;
         private static string TemplatesDir => Path.Combine(BaseDir, "templates");
         private static string InstancesDir => Path.Combine(BaseDir, "instances");
 
@@ -103,7 +102,12 @@ namespace NpcValheim.Persistence
 
         public static void SaveTemplate(string name, NpcProfile profile) => Save(TemplatesDir, name, profile);
 
-        public static NpcProfile LoadTemplate(string name) => Load(TemplatesDir, name);
+        public static NpcProfile LoadTemplate(string name)
+        {
+            var profile = Load(TemplatesDir, name);
+            ApplyBundledListCompatibility(name, profile);
+            return profile;
+        }
 
         public static List<string> ListTemplates() => ListNames(TemplatesDir);
 
@@ -137,6 +141,10 @@ namespace NpcValheim.Persistence
 
             var wanted = InstancePath(profileId, profile?.Name);
             var existing = FindInstanceFile(profileId);
+            WriteAtomic(wanted, Serializer.Serialize(profile));
+
+            // Write the new mirror first. If disk I/O fails, the old readable file remains a
+            // valid recovery point instead of disappearing before its replacement exists.
             if (existing != null && !string.Equals(existing, wanted, System.StringComparison.OrdinalIgnoreCase))
             {
                 try { File.Delete(existing); }
@@ -145,8 +153,6 @@ namespace NpcValheim.Persistence
                     Plugin.Log.LogWarning($"NpcValheim: could not remove the old profile file '{existing}': {e.Message}");
                 }
             }
-
-            File.WriteAllText(wanted, Serializer.Serialize(profile));
         }
 
         public static NpcProfile LoadInstance(string profileId)
@@ -159,7 +165,7 @@ namespace NpcValheim.Persistence
         {
             Directory.CreateDirectory(dir);
             var path = Path.Combine(dir, SanitizeFileName(name) + ".yaml");
-            File.WriteAllText(path, Serializer.Serialize(profile));
+            WriteAtomic(path, Serializer.Serialize(profile));
         }
 
         private static NpcProfile Load(string dir, string name)
@@ -172,12 +178,54 @@ namespace NpcValheim.Persistence
         {
             try
             {
-                return Deserializer.Deserialize<NpcProfile>(File.ReadAllText(path));
+                var yaml = File.ReadAllText(path);
+                var profile = Deserializer.Deserialize<NpcProfile>(yaml);
+                if (profile != null)
+                    profile.Presence = NpcProfilePresence.Read(yaml);
+                return profile;
             }
             catch (System.Exception e)
             {
                 Plugin.Log.LogError($"NpcValheim: failed to parse profile yaml '{path}': {e.Message}");
                 return null;
+            }
+        }
+
+        /// <summary>
+        /// Older seeded KG catalogs predate patch semantics and omitted the empty side of a
+        /// shop (`buys` for a sell-only trader, `sells` for a buy-only trader). New bundled
+        /// templates declare those lists as [], but ContentSeeder intentionally never
+        /// overwrites an admin's live file. Borrow only that empty-list declaration from the
+        /// bundled schema, leaving every price/name/admin edit in the live file untouched.
+        /// </summary>
+        private static void ApplyBundledListCompatibility(string name, NpcProfile live)
+        {
+            if (live?.Presence == null || live.Marketplace == null) return;
+
+            var bundledPath = Path.Combine(NpcStoragePaths.ContentDirectory, "templates",
+                SanitizeFileName(name) + ".yaml");
+            if (!File.Exists(bundledPath)) return;
+
+            try
+            {
+                var yaml = File.ReadAllText(bundledPath);
+                var bundled = Deserializer.Deserialize<NpcProfile>(yaml);
+                var bundledPresence = NpcProfilePresence.Read(yaml);
+                if (bundled?.Marketplace == null) return;
+
+                if (!live.Presence.Marketplace.Contains("buys") &&
+                    bundledPresence.Marketplace.Contains("buys") &&
+                    (bundled.Marketplace.Buys == null || bundled.Marketplace.Buys.Count == 0))
+                    live.Presence.Marketplace.Add("buys");
+
+                if (!live.Presence.Marketplace.Contains("sells") &&
+                    bundledPresence.Marketplace.Contains("sells") &&
+                    (bundled.Marketplace.Sells == null || bundled.Marketplace.Sells.Count == 0))
+                    live.Presence.Marketplace.Add("sells");
+            }
+            catch (System.Exception e)
+            {
+                Plugin.Log.LogWarning($"NpcValheim: could not read bundled template schema '{name}': {e.Message}");
             }
         }
 
@@ -192,9 +240,49 @@ namespace NpcValheim.Persistence
 
         private static string SanitizeFileName(string name)
         {
+            name = string.IsNullOrWhiteSpace(name) ? "unnamed" : name.Trim();
             foreach (var c in Path.GetInvalidFileNameChars())
                 name = name.Replace(c, '_');
             return name;
+        }
+
+        private static void WriteAtomic(string path, string content)
+        {
+            var directory = Path.GetDirectoryName(path);
+            Directory.CreateDirectory(directory);
+            string temp = Path.Combine(directory,
+                "." + Path.GetFileName(path) + "." + System.Guid.NewGuid().ToString("N") + ".tmp");
+            File.WriteAllText(temp, content ?? "");
+            try
+            {
+                if (File.Exists(path))
+                {
+                    string backup = path + ".bak";
+                    try
+                    {
+                        File.Replace(temp, path, backup, true);
+                    }
+                    catch (System.PlatformNotSupportedException)
+                    {
+                        // Older Mono builds used by some Linux hosts do not expose atomic
+                        // replace. Keep compatibility without ever deleting the old file first.
+                        File.Copy(temp, path, true);
+                        File.Delete(temp);
+                    }
+                    try { if (File.Exists(backup)) File.Delete(backup); }
+                    catch { /* a backup is safe to leave behind */ }
+                }
+                else
+                {
+                    File.Move(temp, path);
+                }
+            }
+            catch
+            {
+                try { if (File.Exists(temp)) File.Delete(temp); }
+                catch { /* preserve the original exception */ }
+                throw;
+            }
         }
     }
 }

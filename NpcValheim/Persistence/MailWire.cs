@@ -11,8 +11,10 @@ namespace NpcValheim.Persistence
         public static string Pack(List<MailEntry> entries)
         {
             var sb = new StringBuilder();
+            int count = 0;
             foreach (var e in entries)
             {
+                if (count++ >= MailDatabase.MaxMailPerPlayer) break;
                 if (sb.Length > 0) sb.Append('\n');
                 sb.Append(e.Id).Append(';')
                   .Append(Sanitize(e.Subject)).Append(';')
@@ -35,6 +37,8 @@ namespace NpcValheim.Persistence
 
             foreach (var line in packed.Split('\n'))
             {
+                if (result.Count >= MailDatabase.MaxMailPerPlayer) break;
+                if (line.Length > 2048) continue;
                 var p = line.Split(';');
                 if (p.Length != 6 && p.Length != 9 && p.Length != 10) continue;
                 result.Add(new MailEntry

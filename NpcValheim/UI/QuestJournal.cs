@@ -24,7 +24,8 @@ namespace NpcValheim.UI
         private const string RpcData = "NpcValheim_JournalData";
 
         private static QuestJournal _instance;
-        private static bool _registered;
+        private static ZRoutedRpc _registeredRpc;
+        private static List<QuestEntry> _cachedQuests = new List<QuestEntry>();
 
         private GameObject _canvas;
         private RectTransform _list;
@@ -54,15 +55,20 @@ namespace NpcValheim.UI
             if (_instance._open) _instance.Close(); else _instance.Open();
         }
 
+        /// <summary>The one player-wide snapshot used by the journal, tracker, pins and
+        /// progress watchers. It is deliberately independent of any giver's streaming range.</summary>
+        internal static List<QuestEntry> CurrentQuests() => new List<QuestEntry>(_cachedQuests);
+
         /// <summary>Registered once ZRoutedRpc exists, which is after the world loads rather
         /// than at plugin start.</summary>
-        private static void TryRegister()
+        internal static void TryRegister()
         {
-            if (_registered || ZRoutedRpc.instance == null) return;
-            _registered = true;
+            var rpc = ZRoutedRpc.instance;
+            if (rpc == null || ReferenceEquals(rpc, _registeredRpc)) return;
+            _registeredRpc = rpc;
 
-            ZRoutedRpc.instance.Register(RpcRequest, (Action<long>)OnRequest);
-            ZRoutedRpc.instance.Register(RpcData, (Action<long, string>)OnData);
+            rpc.Register(RpcRequest, (Action<long>)OnRequest);
+            rpc.Register(RpcData, (Action<long, string>)OnData);
             Plugin.Log.LogInfo("NpcValheim: quest journal RPCs registered");
         }
 
@@ -78,8 +84,9 @@ namespace NpcValheim.UI
 
         private static void OnData(long sender, string packed)
         {
-            if (_instance == null) return;
-            _instance._quests = QuestGiverNpc.UnpackPublic(packed);
+            if (ZNet.instance != null && !ZNet.instance.IsServer() && sender != GameApi.GetServerPeerId()) return;
+            _cachedQuests = QuestGiverNpc.UnpackPublic(packed);
+            if (_instance != null) _instance._quests = new List<QuestEntry>(_cachedQuests);
         }
 
         private void Update()
@@ -102,8 +109,9 @@ namespace NpcValheim.UI
                 Close();
             }
 
-            if (!_open) return;
-
+            // State sync is not tied to the panel being open: exploration, talk pins and the
+            // on-screen tracker must continue to work after the player walks away from the
+            // QuestGiver that originally handed the quest out.
             if (Time.time >= _nextRefresh)
             {
                 _nextRefresh = Time.time + 3f;
@@ -114,6 +122,8 @@ namespace NpcValheim.UI
                     ZRoutedRpc.instance.InvokeRoutedRPC(Npc.GameApi.GetServerPeerId(),
                         RpcRequest, new object[0]);
             }
+
+            if (!_open) return;
 
             Refresh();
         }
@@ -163,6 +173,7 @@ namespace NpcValheim.UI
                 new Vector2(14f, -70f), new Vector2(-14f, -16f));
 
             _open = true;
+            _quests = new List<QuestEntry>(_cachedQuests);
             _signature = null;
             _nextRefresh = 0f;
             UiInputBlocker.IsOpen = true;

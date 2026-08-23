@@ -187,7 +187,7 @@ namespace NpcValheim.Npc
             return found;
         }
 
-        private void Update()
+        protected virtual void Update()
         {
             if (Nview == null || !Nview.IsValid()) return;
             if (Application.isBatchMode || Time.unscaledTime < _nextAppearanceSync) return;
@@ -399,7 +399,7 @@ namespace NpcValheim.Npc
         {
             if (!CanAdminister(sender)) return;
             if (!Enum.TryParse(slotName, out ArmorSlot slot)) return;
-            if (!string.IsNullOrEmpty(itemName) && ObjectDB.instance?.GetItemPrefab(itemName) == null) return;
+            if (!IsValidArmorItem(slot, itemName)) return;
             ApplyArmorAuthoritative(slot, itemName);
         }
 
@@ -511,7 +511,7 @@ namespace NpcValheim.Npc
 
         private void RPC_SetHair(long sender, string prefabName)
         {
-            if (!CanAdminister(sender)) return;
+            if (!CanAdminister(sender) || !IsValidVisualPrefab("Hair", prefabName)) return;
             var zdo = Nview.GetZDO();
             zdo.Set(ZdoKeys.Hair, prefabName ?? "");
             PublishAppearance(zdo, "hair");
@@ -520,7 +520,7 @@ namespace NpcValheim.Npc
 
         private void RPC_SetBeard(long sender, string prefabName)
         {
-            if (!CanAdminister(sender)) return;
+            if (!CanAdminister(sender) || !IsValidVisualPrefab("Beard", prefabName)) return;
             var zdo = Nview.GetZDO();
             zdo.Set(ZdoKeys.Beard, prefabName ?? "");
             PublishAppearance(zdo, "beard");
@@ -659,6 +659,7 @@ namespace NpcValheim.Npc
 
         private void RPC_TemplateIndex(long sender, string packed)
         {
+            if (!NpcRequestGuard.IsResponseFromOwner(Nview, sender)) return;
             _serverTemplateNames.Clear();
             _serverTemplateNames.AddRange((packed ?? "")
                 .Split(new[] { '\n' }, StringSplitOptions.RemoveEmptyEntries)
@@ -739,48 +740,151 @@ namespace NpcValheim.Npc
             return profile;
         }
 
-        /// <summary>Applies every field of `profile` authoritatively (only meaningful when
-        /// called on the owning peer) and re-persists the resulting state. Override
-        /// ApplyTypeSpecificProfile to also consume Teleporter/Marketplace settings.</summary>
+        /// <summary>Applies the fields declared by `profile` authoritatively (only meaningful
+        /// when called on the owning peer) and re-persists the resulting state. Profiles
+        /// created in code retain the historical full-replacement behavior; YAML templates
+        /// carry an exact presence map and therefore act as patches.</summary>
         private void ApplyProfileAuthoritative(NpcProfile profile)
         {
             if (profile == null || Nview == null || !Nview.IsValid()) return;
+
+            if (!string.IsNullOrWhiteSpace(profile.ForType) &&
+                !string.Equals(profile.ForType, ProfileType, StringComparison.OrdinalIgnoreCase))
+            {
+                Plugin.Log.LogWarning($"NpcValheim: refused {profile.ForType} template on {ProfileType} NPC '{GetNpcName()}'");
+                return;
+            }
+
             var zdo = Nview.GetZDO();
 
             // A profile with no name leaves the NPC's own alone -- the same rule the quest list
             // and the destination list already follow. It matters for templates that carry
             // only a price list or a set of errands: applying a merchant's stock to Halvard
             // should not turn him into "kg-ferreiro-gelo".
-            if (!string.IsNullOrWhiteSpace(profile.Name))
+            if (profile.HasField("name") && !string.IsNullOrWhiteSpace(profile.Name))
                 zdo.Set(ZdoKeys.Name, profile.Name);
 
-            foreach (ArmorSlot slot in Enum.GetValues(typeof(ArmorSlot)))
+            bool appearanceChanged = false;
+            if (profile.HasField("armor"))
             {
-                string itemName = profile.Armor != null && profile.Armor.TryGetValue(slot.ToString(), out var v) ? v : "";
-                if (!IsValidArmorItem(slot, itemName)) itemName = "";
-                zdo.Set(ZdoKeys.ArmorSlotKey(slot), itemName ?? "");
+                // A complete/legacy profile replaces every slot. In patch YAML, a non-empty
+                // map changes only the named slots, while `armor: {}` explicitly clears all.
+                bool replaceAll = !profile.HasExplicitPresence || profile.Armor == null || profile.Armor.Count == 0;
+                foreach (ArmorSlot slot in Enum.GetValues(typeof(ArmorSlot)))
+                {
+                    string itemName = "";
+                    if (!replaceAll && !TryGetArmorValue(profile.Armor, slot, out itemName))
+                        continue;
+
+                    if (replaceAll)
+                        TryGetArmorValue(profile.Armor, slot, out itemName);
+                    if (!IsValidArmorItem(slot, itemName)) itemName = "";
+                    zdo.Set(ZdoKeys.ArmorSlotKey(slot), itemName ?? "");
+                    appearanceChanged = true;
+                }
             }
 
-            int model = profile.Model >= 0 && profile.Model < GetModelCount() ? profile.Model : 0;
-            zdo.Set(ZdoKeys.Hair, profile.Hair ?? "");
-            zdo.Set(ZdoKeys.Beard, profile.Beard ?? "");
-            zdo.Set(ZdoKeys.Model, model);
-            zdo.Set(ZdoKeys.SkinPreset, profile.SkinPreset);
-            zdo.Set(ZdoKeys.HairColorPreset, profile.HairColorPreset);
-            var skinColor = ProfileSkinColor(profile);
-            var hairColor = ProfileHairColor(profile);
-            zdo.Set(ZdoKeys.SkinColor, skinColor);
-            zdo.Set(ZdoKeys.SkinColorSet, true);
-            zdo.Set(ZdoKeys.HairColor, hairColor);
-            zdo.Set(ZdoKeys.HairColorSet, true);
-            zdo.Set(ZdoKeys.RightHand, IsValidHandItem(HandSlot.Right, profile.RightHand) ? profile.RightHand ?? "" : "");
-            zdo.Set(ZdoKeys.LeftHand, IsValidHandItem(HandSlot.Left, profile.LeftHand) ? profile.LeftHand ?? "" : "");
-            float scale = float.IsNaN(profile.Scale) || float.IsInfinity(profile.Scale) ? 1f : Mathf.Clamp(profile.Scale, 0.5f, 2f);
-            zdo.Set(ZdoKeys.Scale, scale);
-            PublishAppearance(zdo, "template");
+            if (profile.HasField("hair"))
+            {
+                zdo.Set(ZdoKeys.Hair,
+                    IsValidVisualPrefab("Hair", profile.Hair) ? profile.Hair ?? "" : "");
+                appearanceChanged = true;
+            }
+            if (profile.HasField("beard"))
+            {
+                zdo.Set(ZdoKeys.Beard,
+                    IsValidVisualPrefab("Beard", profile.Beard) ? profile.Beard ?? "" : "");
+                appearanceChanged = true;
+            }
+            if (profile.HasField("model"))
+            {
+                int model = profile.Model >= 0 && profile.Model < GetModelCount() ? profile.Model : 0;
+                zdo.Set(ZdoKeys.Model, model);
+                appearanceChanged = true;
+            }
 
-            ApplyTypeSpecificProfile(profile);
+            bool skinPresetSpecified = profile.HasField("skinPreset");
+            bool skinColorSpecified = profile.HasField("skinColor");
+            if (skinPresetSpecified)
+                zdo.Set(ZdoKeys.SkinPreset, Mathf.Clamp(profile.SkinPreset, 0,
+                    NpcCustomizationPresets.SkinTones.Length - 1));
+            if (skinPresetSpecified || skinColorSpecified)
+            {
+                Vector3 skinColor;
+                if (!skinColorSpecified || !TryProfileColor(profile.SkinColor, out skinColor))
+                {
+                    int preset = zdo.GetInt(ZdoKeys.SkinPreset, 0);
+                    skinColor = NpcCustomizationPresets.SkinTones[Mathf.Clamp(preset, 0,
+                        NpcCustomizationPresets.SkinTones.Length - 1)];
+                }
+                zdo.Set(ZdoKeys.SkinColor, skinColor);
+                zdo.Set(ZdoKeys.SkinColorSet, true);
+                appearanceChanged = true;
+            }
+
+            bool hairPresetSpecified = profile.HasField("hairColorPreset");
+            bool hairColorSpecified = profile.HasField("hairColor");
+            if (hairPresetSpecified)
+                zdo.Set(ZdoKeys.HairColorPreset, Mathf.Clamp(profile.HairColorPreset, 0,
+                    NpcCustomizationPresets.HairColors.Length - 1));
+            if (hairPresetSpecified || hairColorSpecified)
+            {
+                Vector3 hairColor;
+                if (!hairColorSpecified || !TryProfileColor(profile.HairColor, out hairColor))
+                {
+                    int preset = zdo.GetInt(ZdoKeys.HairColorPreset, 0);
+                    hairColor = NpcCustomizationPresets.HairColors[Mathf.Clamp(preset, 0,
+                        NpcCustomizationPresets.HairColors.Length - 1)];
+                }
+                zdo.Set(ZdoKeys.HairColor, hairColor);
+                zdo.Set(ZdoKeys.HairColorSet, true);
+                appearanceChanged = true;
+            }
+
+            if (profile.HasField("rightHand"))
+            {
+                zdo.Set(ZdoKeys.RightHand,
+                    IsValidHandItem(HandSlot.Right, profile.RightHand) ? profile.RightHand ?? "" : "");
+                appearanceChanged = true;
+            }
+            if (profile.HasField("leftHand"))
+            {
+                zdo.Set(ZdoKeys.LeftHand,
+                    IsValidHandItem(HandSlot.Left, profile.LeftHand) ? profile.LeftHand ?? "" : "");
+                appearanceChanged = true;
+            }
+            if (profile.HasField("scale"))
+            {
+                float scale = float.IsNaN(profile.Scale) || float.IsInfinity(profile.Scale)
+                    ? 1f
+                    : Mathf.Clamp(profile.Scale, 0.5f, 2f);
+                zdo.Set(ZdoKeys.Scale, scale);
+                appearanceChanged = true;
+            }
+
+            if (appearanceChanged)
+                PublishAppearance(zdo, "template");
+
+            // Derived handlers predate patch YAML. Feed them a compatibility view where
+            // omitted nested fields stay null and explicit empty lists take their clear path.
+            ApplyTypeSpecificProfile(profile.TypeSpecificApplication(BuildProfile()));
             PersistProfileSnapshot();
+        }
+
+        private static bool TryGetArmorValue(
+            Dictionary<string, string> armor, ArmorSlot slot, out string itemName)
+        {
+            itemName = "";
+            if (armor == null) return false;
+            if (armor.TryGetValue(slot.ToString(), out itemName)) return true;
+
+            foreach (var entry in armor)
+            {
+                if (!string.Equals(entry.Key, slot.ToString(), StringComparison.OrdinalIgnoreCase)) continue;
+                itemName = entry.Value;
+                return true;
+            }
+            return false;
         }
 
         /// <summary>Dedicated-server runtime probe for the opt-in self-test. This is not an
@@ -950,6 +1054,13 @@ namespace NpcValheim.Npc
         public static List<string> GetHairNames() => GetPrefabNamesByPrefix("Hair");
 
         public static List<string> GetBeardNames() => GetPrefabNamesByPrefix("Beard");
+
+        private static bool IsValidVisualPrefab(string prefix, string prefabName)
+        {
+            if (string.IsNullOrEmpty(prefabName)) return true;
+            if (!prefabName.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) return false;
+            return ZNetScene.instance?.GetPrefab(prefabName) != null;
+        }
 
         public static List<string> GetHandItemNames(HandSlot slot)
         {

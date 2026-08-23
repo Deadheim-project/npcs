@@ -38,6 +38,22 @@ namespace NpcValheim.Persistence
         }
     }
 
+    /// <summary>A durable, idempotent delivery produced in the same LiteDB transaction as a
+    /// listing mutation. MailDatabase uses this row's id as the mail id; replaying after a
+    /// crash therefore cannot create a second parcel.</summary>
+    public class EconomyDelivery
+    {
+        [BsonId]
+        public string Id { get; set; }
+        public long PlayerId { get; set; }
+        public string Subject { get; set; }
+        public string ItemName { get; set; }
+        public int Quality { get; set; }
+        public int Amount { get; set; }
+        public int Coins { get; set; }
+        public long CreatedUtcTicks { get; set; }
+    }
+
     /// <summary>
     /// Persists marketplace listings in a LiteDB file, independent of world size / ZDO payload
     /// limits. Only ever touched from the ZDO-owning side of a marketplace NPC (i.e. the
@@ -52,6 +68,8 @@ namespace NpcValheim.Persistence
     /// </summary>
     public static class MarketDatabase
     {
+        public const int MaxListingsPerBoard = 500;
+        public const int MaxListingsPerPlayer = 50;
         // One connection per operation -- see LiteDbFile for why holding one open is what
         // broke quest progress.
         private static LiteDbFile _file;
@@ -59,7 +77,11 @@ namespace NpcValheim.Persistence
         public static void Init(string path)
         {
             _file = new LiteDbFile(path);
-            _file.Write(db => db.GetCollection<Listing>("listings").EnsureIndex(x => x.NpcId));
+            _file.Write(db =>
+            {
+                db.GetCollection<Listing>("listings").EnsureIndex(x => x.NpcId);
+                db.GetCollection<EconomyDelivery>("delivery_outbox").EnsureIndex(x => x.PlayerId);
+            });
         }
 
         public static void Shutdown() => _file = null;
@@ -87,18 +109,48 @@ namespace NpcValheim.Persistence
                 PricePerUnit = pricePerUnit,
                 ExpiresUtc = duration.HasValue ? DateTime.UtcNow + duration.Value : DateTime.MaxValue,
             };
-            Write(listings => listings.Insert(listing));
-            return listing;
+            bool inserted = false;
+            Write(listings =>
+            {
+                if (listings.Count(x => x.NpcId == npcId) >= MaxListingsPerBoard) return;
+                if (listings.Count(x => x.NpcId == npcId && x.OwnerId == ownerId) >= MaxListingsPerPlayer) return;
+                listings.Insert(listing);
+                inserted = true;
+            });
+            return inserted ? listing : null;
         }
 
-        /// <summary>Removes a listing and returns the amount that was still unsold, so the
-        /// caller can mail that stack back to the owner.</summary>
+        /// <summary>Atomically removes a listing and queues the unsold stock for return.</summary>
         public static int CancelListing(string listingId, string npcId, long requesterId)
         {
-            var listing = Read(listings => listings.FindById(listingId));
-            if (listing == null || listing.NpcId != npcId || listing.OwnerId != requesterId) return 0;
-            Write(listings => listings.Delete(listingId));
-            return listing.Amount;
+            int amount = 0;
+            _file.Write(db =>
+            {
+                var listings = db.GetCollection<Listing>("listings");
+                var listing = listings.FindById(listingId);
+                if (listing == null || listing.NpcId != npcId || listing.OwnerId != requesterId) return;
+
+                db.BeginTrans();
+                try
+                {
+                    if (!listings.Delete(listingId))
+                    {
+                        db.Rollback();
+                        return;
+                    }
+                    QueueItem(db, "market-cancel-" + listing.Id, listing.OwnerId,
+                        "Anúncio cancelado", listing.ItemName, listing.Quality, listing.Amount);
+                    db.Commit();
+                    amount = listing.Amount;
+                }
+                catch
+                {
+                    db.Rollback();
+                    throw;
+                }
+            });
+            FlushOutbox();
+            return amount;
         }
 
         /// <summary>Sweeps expired listings and mails the unsold stock back to each seller.
@@ -111,13 +163,37 @@ namespace NpcValheim.Persistence
             long nowTicks = DateTime.UtcNow.Ticks;
             var expired = Read(listings => listings.FindAll().ToList())
                 .Where(x => x.ExpiresUtcTicks != 0L && x.ExpiresUtcTicks < nowTicks).ToList();
-            foreach (var listing in expired)
+            int returned = 0;
+            foreach (var candidate in expired)
             {
-                if (listing.Amount > 0)
-                    MailDatabase.SendItem(listing.OwnerId, "AnÃºncio expirado", listing.ItemName, listing.Quality, listing.Amount);
-                Write(listings => listings.Delete(listing.Id));
+                _file.Write(db =>
+                {
+                    var listings = db.GetCollection<Listing>("listings");
+                    var listing = listings.FindById(candidate.Id);
+                    if (listing == null || listing.ExpiresUtcTicks == 0L || listing.ExpiresUtcTicks >= nowTicks) return;
+
+                    db.BeginTrans();
+                    try
+                    {
+                        if (!listings.Delete(listing.Id))
+                        {
+                            db.Rollback();
+                            return;
+                        }
+                        QueueItem(db, "market-expire-" + listing.Id, listing.OwnerId,
+                            "Anúncio expirado", listing.ItemName, listing.Quality, listing.Amount);
+                        db.Commit();
+                        returned++;
+                    }
+                    catch
+                    {
+                        db.Rollback();
+                        throw;
+                    }
+                });
             }
-            return expired.Count;
+            FlushOutbox();
+            return returned;
         }
 
         /// <summary>
@@ -137,49 +213,47 @@ namespace NpcValheim.Persistence
             refund = paid;   // nothing changes hands unless the trade goes through
             error = null;
 
-            var listing = Read(listings => listings.FindById(listingId));
-            if (listing != null && listing.NpcId != npcId) { error = "Listing belongs to another marketplace"; return false; }
-            if (listing == null) { error = "Listagem nÃ£o existe mais"; return false; }
-            if (amount <= 0 || amount > listing.Amount) { error = "Quantidade invÃ¡lida"; return false; }
-            if (listing.OwnerId == buyerId) { error = "VocÃª nÃ£o pode comprar do prÃ³prio anÃºncio"; return false; }
-
-            long longCost = (long)amount * listing.PricePerUnit;
-            if (longCost <= 0 || longCost > int.MaxValue) { error = "Valor da compra invÃ¡lido"; return false; }
-            int cost = (int)longCost;
-            taxPercent = Math.Max(0, Math.Min(100, taxPercent));
-            int sellerCredit = cost - (int)((long)cost * taxPercent / 100L);
-
-            if (paid < cost)
-            {
-                // The full amount goes back: a partial payment buys nothing, and keeping the
-                // difference would be silently charging for a failed trade.
-                error = "Pagamento insuficiente";
-                return false;
-            }
-
-            if (listing.ExpiresUtc < DateTime.UtcNow) { error = "AnÃºncio expirado"; return false; }
-
-            refund = paid - cost;
-
-            // The stock change is the only thing that needs to be atomic here, and it is a
-            // single document write. The mail that pays the seller and delivers to the buyer
-            // lives in a different file, so it was never covered by this transaction anyway --
-            // wrapping it only made the connection hold a transaction open across two
-            // databases, which is exactly the habit that exhausted LiteDB's limit.
-            listing.Amount -= amount;
-            bool soldOut = listing.Amount <= 0;
-
-            // LiteDB 5 cannot commit while a query cursor opened in the same transaction is
-            // still alive, so the document was already resolved and validated above.
+            bool completed = false;
+            Listing resultListing = null;
+            int resultRefund = paid;
+            string resultError = null;
+            string operationId = "market-buy-" + Guid.NewGuid().ToString("N");
             _file.Write(db =>
             {
                 var listings = db.GetCollection<Listing>("listings");
+                var listing = listings.FindById(listingId);
+                if (listing != null && listing.NpcId != npcId) { resultError = "Anúncio pertence a outro mercado"; return; }
+                if (listing == null) { resultError = "Listagem não existe mais"; return; }
+                if (amount <= 0 || amount > listing.Amount) { resultError = "Quantidade inválida"; return; }
+                if (listing.OwnerId == buyerId) { resultError = "Você não pode comprar do próprio anúncio"; return; }
+
+                long longCost = (long)amount * listing.PricePerUnit;
+                if (longCost <= 0 || longCost > int.MaxValue) { resultError = "Valor da compra inválido"; return; }
+                int cost = (int)longCost;
+                int boundedTax = Math.Max(0, Math.Min(100, taxPercent));
+                int sellerCredit = cost - (int)((long)cost * boundedTax / 100L);
+                if (paid < cost) { resultError = "Pagamento insuficiente"; return; }
+                if (listing.ExpiresUtc < DateTime.UtcNow) { resultError = "Anúncio expirado"; return; }
+
+                int change = paid - cost;
+                listing.Amount -= amount;
+                bool soldOut = listing.Amount <= 0;
+
                 db.BeginTrans();
                 try
                 {
                     if (soldOut) listings.Delete(listingId);
                     else listings.Update(listing);
+
+                    QueueCoins(db, operationId + "-seller", listing.OwnerId,
+                        $"Venda: {listing.ItemName} x{amount}", sellerCredit);
+                    QueueItem(db, operationId + "-buyer", buyerId,
+                        $"Compra: {listing.ItemName}", listing.ItemName, listing.Quality, amount);
                     db.Commit();
+
+                    resultListing = listing;
+                    resultRefund = change;
+                    completed = true;
                 }
                 catch
                 {
@@ -187,17 +261,68 @@ namespace NpcValheim.Persistence
                     throw;
                 }
             });
-
-            boughtFrom = listing;
-
-            // Auction-house semantics: neither side is handed anything directly. The seller is
-            // paid by mail and the buyer's goods are mailed too, which is what lets a sale
-            // complete while either party is offline -- the whole point of an auction house
-            // over a face-to-face trade.
-            MailDatabase.SendCoins(listing.OwnerId, $"Venda: {listing.ItemName} x{amount}", sellerCredit);
-            MailDatabase.SendItem(buyerId, $"Compra: {listing.ItemName}", listing.ItemName, listing.Quality, amount);
-
+            boughtFrom = resultListing;
+            refund = resultRefund;
+            error = resultError;
+            if (!completed) return false;
+            FlushOutbox();
             return true;
+        }
+
+        /// <summary>Retries committed deliveries. The mail id is the outbox id, so a crash
+        /// after inserting mail but before deleting the outbox row is harmless.</summary>
+        public static int FlushOutbox()
+        {
+            if (_file == null) return 0;
+            var pending = _file.Read(db => db.GetCollection<EconomyDelivery>("delivery_outbox")
+                .FindAll().OrderBy(x => x.CreatedUtcTicks).Take(100).ToList());
+            int delivered = 0;
+            foreach (var row in pending)
+            {
+                try
+                {
+                    MailEntry mail = row.Coins > 0
+                        ? MailDatabase.SendCoins(row.PlayerId, row.Subject, row.Coins, row.Id)
+                        : MailDatabase.SendItem(row.PlayerId, row.Subject, row.ItemName, row.Quality, row.Amount, row.Id);
+                    if (mail == null) continue;
+                    _file.Write(db => db.GetCollection<EconomyDelivery>("delivery_outbox").Delete(row.Id));
+                    delivered++;
+                }
+                catch (Exception e)
+                {
+                    NpcValheim.Plugin.Log.LogError($"NpcValheim: economy outbox delivery {row.Id} failed: {e.Message}");
+                }
+            }
+            return delivered;
+        }
+
+        private static void QueueItem(LiteDatabase db, string id, long playerId, string subject,
+            string itemName, int quality, int amount)
+        {
+            if (playerId == 0L || amount <= 0 || string.IsNullOrEmpty(itemName)) return;
+            db.GetCollection<EconomyDelivery>("delivery_outbox").Upsert(new EconomyDelivery
+            {
+                Id = id,
+                PlayerId = playerId,
+                Subject = subject,
+                ItemName = itemName,
+                Quality = Math.Max(1, quality),
+                Amount = amount,
+                CreatedUtcTicks = DateTime.UtcNow.Ticks,
+            });
+        }
+
+        private static void QueueCoins(LiteDatabase db, string id, long playerId, string subject, int coins)
+        {
+            if (playerId == 0L || coins <= 0) return;
+            db.GetCollection<EconomyDelivery>("delivery_outbox").Upsert(new EconomyDelivery
+            {
+                Id = id,
+                PlayerId = playerId,
+                Subject = subject,
+                Coins = coins,
+                CreatedUtcTicks = DateTime.UtcNow.Ticks,
+            });
         }
 
     }

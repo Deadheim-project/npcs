@@ -596,10 +596,9 @@ namespace NpcValheim.Testing
             _teleporter.RequestConfigureCost(player, MarketplaceNpc.CoinPrefabName, 4, 0f);
             yield return new WaitForSeconds(1f);
 
-            // The waypoint flow, end to end. This is the part that was broken: the key stored
-            // a position and the panel never read it, so a destination could only ever be the
-            // teleporter's own feet.
-            Step("walking to the spot travellers should arrive at, and marking it");
+            // The admin panel now accepts explicit X/Y/Z and no longer owns a global F6
+            // marker. Capture the same explicit point here for the scripted showcase.
+            Step("walking to the spot travellers should arrive at and recording its coordinates");
             player.TeleportTo(destination, player.transform.rotation, true);
             yield return WaitForTeleport();
             yield return new WaitForSeconds(1.5f);
@@ -608,10 +607,9 @@ namespace NpcValheim.Testing
             if (player == null) yield break;
 
             var marked = player.transform.position;
-            WaypointMarker.MarkHere(player);   // the same call the F6 key makes
-            yield return new WaitForSeconds(2f);
+            float markedYaw = player.transform.rotation.eulerAngles.y;
 
-            Step("walking back to the teleporter to attach the marked point");
+            Step("walking back to the teleporter to add the recorded coordinates");
             player.TeleportTo(origin, player.transform.rotation, true);
             yield return WaitForTeleport();
             yield return new WaitForSeconds(2f);
@@ -619,24 +617,19 @@ namespace NpcValheim.Testing
             player = Player.m_localPlayer;
             if (player == null) yield break;
 
-            Step("SHOWCASE waypoint -- Admin tab, with the marked point waiting to be attached");
+            _teleporter.RequestAddDestination(player, "Pedras Rúnicas", 8, marked, markedYaw);
+            yield return new WaitForSeconds(2f);
+
+            Step("SHOWCASE destination -- Admin tab with the explicit point attached");
             UiRoot.Open(_teleporter, player);
             yield return new WaitForSeconds(1.5f);
             Check(ClickButton("Admin"), "the Admin tab");
             yield return new WaitForSeconds(6f);
 
-            // Typed into the real fields and committed with the real button, so the panel's
-            // own decision (marked point vs. my feet) is what gets exercised.
-            Check(SetRowFields("Adicionar", "Pedras Rúnicas", "8"),
-                "the destination name and fare were typed into the right row");
-            yield return new WaitForSeconds(1.5f);
-            Check(ClickButton("Adicionar"), "the Adicionar button");
-            yield return new WaitForSeconds(2.5f);
-
             var bound = _teleporter.GetDestinations().FirstOrDefault(d => d.Name == "Pedras Rúnicas");
             float error = bound != null ? Vector3.Distance(bound.Position, marked) : -1f;
             Check(bound != null && error < 0.5f,
-                $"the destination landed on the marked point, not on the NPC " +
+                $"the destination landed on the explicit point, not on the NPC " +
                 $"(off by {error:0.00}m; NPC is {Vector3.Distance(origin, marked):0}m away)");
 
             // A second route, bound the plain way and priced higher, so the list shows two

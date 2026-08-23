@@ -1,7 +1,7 @@
 using System.IO;
 using UnityEngine;
 using UnityEngine.Rendering;
-using BepInEx;
+using NpcValheim.Persistence;
 
 namespace NpcValheim.Prefabs
 {
@@ -271,13 +271,7 @@ namespace NpcValheim.Prefabs
 
         private static string AssetPath(string folder, string fileName)
         {
-            var fromPlugins = Path.Combine(Paths.PluginPath, "NpcValheim", "Assets", folder, fileName);
-            if (File.Exists(fromPlugins)) return fromPlugins;
-
-            var assemblyDir = Path.GetDirectoryName(typeof(PecaMesh).Assembly.Location);
-            return string.IsNullOrEmpty(assemblyDir)
-                ? fromPlugins
-                : Path.Combine(assemblyDir, "Assets", folder, fileName);
+            return Path.Combine(NpcStoragePaths.AssetsDirectory, folder, fileName);
         }
     }
 }

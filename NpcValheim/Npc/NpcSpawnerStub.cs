@@ -42,45 +42,28 @@ namespace NpcValheim.Npc
         private System.Collections.IEnumerator PlaceNextFrame()
         {
             yield return null;
-            OnPlaced();
+            yield return RequestAuthoritativePlacement();
         }
 
-        private void OnPlaced()
+        private System.Collections.IEnumerator RequestAuthoritativePlacement()
         {
-            if (_spawned) return;
+            if (_spawned) yield break;
             _spawned = true;
 
-            var piece = GetComponent<Piece>();
-            long ownerId = piece != null ? piece.GetCreator() : 0L;
+            var nview = GetComponent<ZNetView>();
+            if (nview == null || !nview.IsValid()) yield break;
 
-            // Logged unconditionally: when placement misbehaves there is otherwise no way to
-            // tell "the hook never fired" from "it fired and the NPC came out wrong", and
-            // those need completely different fixes.
-            Plugin.Log.LogInfo($"NpcValheim: placing '{TargetPrefabName}' at {transform.position} for owner {ownerId}");
-
-            if (ZNetScene.instance != null && !string.IsNullOrEmpty(TargetPrefabName))
+            // Routed RPC and ZDO replication use separate queues. Retry briefly so the server
+            // can wait for Piece.SetCreator instead of accepting a client-supplied owner id.
+            for (int attempt = 0; attempt < 10 && this != null && nview.IsValid(); attempt++)
             {
-                var prefab = ZNetScene.instance.GetPrefab(TargetPrefabName);
-                if (prefab != null)
-                {
-                    var instance = Object.Instantiate(prefab, transform.position, transform.rotation);
-                    var npc = instance.GetComponent<NpcBase>();
-                    if (npc == null)
-                        Plugin.Log.LogError($"NpcValheim: spawned '{TargetPrefabName}' has no NpcBase component");
-                    else
-                        npc.InitializeAfterSpawn(ownerId);
-                }
-                else
-                {
-                    Plugin.Log.LogError($"NpcValheim: target prefab '{TargetPrefabName}' not found, could not spawn NPC");
-                }
+                ServiceNpcAuthority.RequestPlacement(TargetPrefabName, nview.GetZDO().m_uid);
+                yield return new WaitForSeconds(0.5f);
             }
 
-            var nview = GetComponent<ZNetView>();
-            if (nview != null && nview.IsValid())
-                nview.Destroy();
-            else
-                Object.Destroy(gameObject);
+            if (this != null && nview.IsValid())
+                Plugin.Log.LogWarning(
+                    $"NpcValheim: server did not consume placer stub '{TargetPrefabName}' after 10 attempts");
         }
     }
 }

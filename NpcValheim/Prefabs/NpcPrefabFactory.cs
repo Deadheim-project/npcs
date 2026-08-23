@@ -116,7 +116,9 @@ namespace NpcValheim.Prefabs
             piece.m_notOnWood = false;
             piece.m_noInWater = false;
             piece.m_allowedInDungeons = true;
-            piece.m_canBeRemoved = true;
+            // The real mailbox is never a Hammer piece. ServiceNpcAuthority creates and
+            // removes it after a server-side admin check, like every humanoid service NPC.
+            piece.m_canBeRemoved = false;
             piece.m_icon = PecaMesh.LoadIcon(PecaMesh.MailboxFolder);
 
             var wear = box.AddComponent<WearNTear>();
@@ -125,8 +127,8 @@ namespace NpcValheim.Prefabs
             wear.m_supports = false;
 
             scene.m_prefabs.Add(box);
-            CustomPrefabs.Add(box);
-            Plugin.Log.LogInfo($"NpcValheim: registered mailbox piece '{prefabName}'");
+            RegisterStub(scene, prefabName, prefabName + "_Placer", "Caixa Postal", "mailbox.png");
+            Plugin.Log.LogInfo($"NpcValheim: registered server-placed mailbox '{prefabName}'");
         }
 
         private static void RegisterNpcType(ZNetScene scene, GameObject source, string npcPrefabName,
@@ -209,7 +211,9 @@ namespace NpcValheim.Prefabs
             piece.m_category = Piece.PieceCategory.Misc;
             piece.m_resources = Array.Empty<Piece.Requirement>();
             piece.m_groundOnly = true;
-            piece.m_canBeRemoved = true;
+            // It normally lives for less than a network round-trip. Keeping Hammer removal
+            // disabled prevents it being torn down between the request and server validation.
+            piece.m_canBeRemoved = false;
             piece.m_icon = GetPlacerIcon(iconFile);
 
             var spawner = stub.AddComponent<NpcSpawnerStub>();

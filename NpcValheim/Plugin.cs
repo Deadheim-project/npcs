@@ -58,7 +58,6 @@ namespace NpcValheim
         internal static ConfigEntry<int> TeleportCostAmount;
         internal static ConfigEntry<float> TeleportCooldownSeconds;
         internal static ConfigEntry<int> ListingDurationHours;
-        internal static ConfigEntry<UnityEngine.KeyCode> MarkWaypointKey;
         internal static ConfigEntry<UnityEngine.KeyCode> QuestJournalKey;
         internal static ConfigEntry<bool> ShowQuestButton;
         internal static ConfigEntry<bool> ShowQuestTracker;
@@ -111,9 +110,6 @@ namespace NpcValheim
             TeleportCooldownSeconds = Config.Bind("Teleporter", "CooldownSeconds", 0f,
                 "Seconds a player must wait between uses of the same teleporter");
 
-            MarkWaypointKey = Config.Bind("Teleporter", "MarkWaypointKey", UnityEngine.KeyCode.F6,
-                "Press anywhere in the world to remember that spot, then attach it to a teleporter from its Admin tab. Needed because the panel blocks movement, so a destination can't be recorded while it is open.");
-
             QuestJournalKey = Config.Bind("Quests", "JournalKey", UnityEngine.KeyCode.J,
                 "Opens the player's quest journal from anywhere in the world.");
 
@@ -165,10 +161,12 @@ namespace NpcValheim
             ConfigSync.AddConfigEntry(TeleportCostAmount);
             ConfigSync.AddConfigEntry(TeleportCooldownSeconds);
 
-            var dbPath = Path.Combine(Paths.PluginPath, "NpcValheim", "market.db");
-            Directory.CreateDirectory(Path.GetDirectoryName(dbPath)!);
+            var databaseDirectory = NpcStoragePaths.DatabaseDirectory;
+            Directory.CreateDirectory(databaseDirectory);
+            var dbPath = Path.Combine(databaseDirectory, "market.db");
             MarketDatabase.Init(dbPath);
             MailDatabase.Init(Path.Combine(Path.GetDirectoryName(dbPath)!, "mail.db"));
+            MarketDatabase.FlushOutbox();
             QuestDatabase.Init(Path.Combine(Path.GetDirectoryName(dbPath)!, "quests.db"));
 
 
@@ -183,7 +181,6 @@ namespace NpcValheim
             // menu, and the mailbox stops being a reason to walk into town.
             if (!UnityEngine.Application.isBatchMode)
             {
-                Npc.WaypointMarker.EnsureCreated();
                 QuestJournal.EnsureCreated();
                 UI.QuestMapPins.EnsureCreated();
                 UI.QuestHudButton.EnsureCreated();

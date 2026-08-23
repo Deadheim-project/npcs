@@ -1,3 +1,6 @@
+using System;
+using System.Collections;
+using System.Reflection;
 using HarmonyLib;
 using NpcValheim.Npc;
 
@@ -14,6 +17,55 @@ namespace NpcValheim.Patches
     [HarmonyPatch(typeof(Player))]
     internal static class PlayerNpcPatch
     {
+        private const BindingFlags AnyStatic =
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static;
+
+        private static FieldInfo _playerRegistry;
+
+        /// <summary>
+        /// Player.Awake registers every Player component in Player.s_players. Our visual
+        /// clones need Awake so the body and VisEquipment are initialized, but they must not
+        /// remain in that gameplay registry: vanilla uses it for proximity, targeting,
+        /// events, noise and broadcasts intended for real players.
+        ///
+        /// Use reflection because s_players is private in the game assembly and publicizer
+        /// coverage differs between client/server installs. The public GetAllPlayers list is
+        /// retained as a compatibility fallback for game builds that rename the field.
+        /// </summary>
+        [HarmonyPatch(nameof(Player.Awake)), HarmonyPostfix]
+        private static void Awake(Player __instance)
+        {
+            if (!IsOurs(__instance)) return;
+
+            try
+            {
+                _playerRegistry ??= typeof(Player).GetField("s_players", AnyStatic);
+                if (_playerRegistry?.GetValue(null) is IList players)
+                {
+                    RemoveEvery(players, __instance);
+                    return;
+                }
+
+                // GetAllPlayers currently returns the backing List<Player>. This fallback is
+                // deliberately second: if a future build returns a copy, touching it is safe
+                // but ineffective, and the warning below makes that visible in the log.
+                var publicPlayers = Player.GetAllPlayers();
+                if (publicPlayers != null)
+                {
+                    while (publicPlayers.Remove(__instance)) { }
+                    if (!publicPlayers.Contains(__instance)) return;
+                }
+
+                Plugin.Log?.LogWarning(
+                    "NpcValheim: could not remove an NPC clone from Player.s_players");
+            }
+            catch (Exception e)
+            {
+                Plugin.Log?.LogWarning(
+                    $"NpcValheim: failed to remove an NPC clone from Player.s_players: {e.Message}");
+            }
+        }
+
         [HarmonyPatch(nameof(Player.Update)), HarmonyPrefix]
         private static bool Update(Player __instance) => !IsOurs(__instance);
 
@@ -57,6 +109,28 @@ namespace NpcValheim.Patches
         private static NpcBase Npc(Player instance) =>
             instance != null ? instance.GetComponent<NpcBase>() : null;
 
-        private static bool IsOurs(Player instance) => instance.GetComponent<NpcMarker>() != null;
+        private static void RemoveEvery(IList players, Player instance)
+        {
+            while (players.Contains(instance)) players.Remove(instance);
+        }
+
+        private static bool IsOurs(Player instance) =>
+            instance != null && instance.GetComponent<NpcMarker>() != null;
+    }
+
+    /// <summary>Service NPCs are world fixtures, not combatants. Until their visual root no
+    /// longer derives from Player, stop vanilla damage/death from deleting a configured NPC
+    /// without running the authorized removal and snapshot cleanup flow.</summary>
+    [HarmonyPatch(typeof(Character))]
+    internal static class ServiceNpcDamagePatch
+    {
+        [HarmonyPatch(nameof(Character.Damage)), HarmonyPrefix]
+        private static bool Damage(Character __instance) => !IsServiceNpc(__instance);
+
+        [HarmonyPatch(nameof(Character.OnDeath)), HarmonyPrefix]
+        private static bool OnDeath(Character __instance) => !IsServiceNpc(__instance);
+
+        private static bool IsServiceNpc(Character character) =>
+            character != null && character.GetComponent<NpcMarker>() != null;
     }
 }

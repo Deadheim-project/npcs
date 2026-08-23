@@ -1,4 +1,8 @@
+using System;
 using System.Collections.Generic;
+using System.IO;
+using YamlDotNet.RepresentationModel;
+using YamlDotNet.Serialization;
 
 namespace NpcValheim.Persistence
 {
@@ -12,6 +16,17 @@ namespace NpcValheim.Persistence
     /// </summary>
     public class NpcProfile
     {
+        /// <summary>
+        /// Exact keys that existed in the source YAML. YamlDotNet necessarily fills missing
+        /// value-type properties with 0/false and our initializers create empty collections,
+        /// so the object alone cannot tell `scale` omitted from `scale: 1`, or `sells`
+        /// omitted from `sells: []`. Template application is a patch, and needs that
+        /// distinction. Programmatically-created profiles have no presence map and retain
+        /// the historical full-profile behavior.
+        /// </summary>
+        [YamlIgnore]
+        internal NpcProfilePresence Presence { get; set; }
+
         public string Name { get; set; } = "NPC";
 
         /// <summary>
@@ -47,6 +62,144 @@ namespace NpcValheim.Persistence
         public TeleporterSettings Teleporter { get; set; }
         public MarketplaceSettings Marketplace { get; set; }
         public QuestGiverSettings QuestGiver { get; set; }
+
+        internal bool HasExplicitPresence => Presence != null;
+
+        internal bool HasField(string name) => Presence == null || Presence.Root.Contains(name);
+
+        /// <summary>
+        /// Produces the view consumed by the existing type-specific handlers. Missing
+        /// members remain null (leave current state alone); an explicitly empty list is
+        /// represented as a single ignored sentinel so legacy handlers enter their replace
+        /// branch and persist an empty value. This keeps the wire/ZDO shape compatible while
+        /// giving YAML the normal patch semantics: omitted = preserve, [] = clear.
+        /// </summary>
+        internal NpcProfile TypeSpecificApplication(NpcProfile current)
+        {
+            if (Presence == null) return this;
+
+            var result = new NpcProfile
+            {
+                Name = Name,
+                ForType = ForType,
+                Marketplace = null,
+                Teleporter = null,
+                QuestGiver = null,
+            };
+
+            if (HasField("marketplace") && Marketplace != null)
+            {
+                var existing = current?.Marketplace;
+                result.Marketplace = new MarketplaceSettings
+                {
+                    TaxPercent = Presence.Marketplace.Contains("taxPercent")
+                        ? Marketplace.TaxPercent
+                        : existing?.TaxPercent ?? 0,
+                    Buys = PriceListForApplication(Marketplace.Buys,
+                        Presence.Marketplace.Contains("buys")),
+                    Sells = PriceListForApplication(Marketplace.Sells,
+                        Presence.Marketplace.Contains("sells")),
+                };
+            }
+
+            if (HasField("teleporter") && Teleporter != null)
+            {
+                var existing = current?.Teleporter;
+                result.Teleporter = new TeleporterSettings
+                {
+                    CostItem = Presence.Teleporter.Contains("costItem")
+                        ? Teleporter.CostItem
+                        : existing?.CostItem ?? "",
+                    CostAmount = Presence.Teleporter.Contains("costAmount")
+                        ? Teleporter.CostAmount
+                        : existing?.CostAmount ?? 0,
+                    CooldownSeconds = Presence.Teleporter.Contains("cooldownSeconds")
+                        ? Teleporter.CooldownSeconds
+                        : existing?.CooldownSeconds ?? 0f,
+                    Destinations = DestinationListForApplication(Teleporter.Destinations,
+                        Presence.Teleporter.Contains("destinations")),
+                };
+            }
+
+            if (HasField("questGiver") && QuestGiver != null)
+            {
+                bool specified = Presence.QuestGiver.Contains("quests");
+                result.QuestGiver = new QuestGiverSettings
+                {
+                    // The current quest-giver contract uses an empty ZDO string for its
+                    // default/all catalog. A blank sentinel reaches that state through the
+                    // legacy handler; an omitted key stays null and does nothing.
+                    Quests = !specified ? null : QuestGiver.Quests != null && QuestGiver.Quests.Count > 0
+                        ? QuestGiver.Quests
+                        : new List<string> { "" },
+                };
+            }
+
+            return result;
+        }
+
+        private static List<ShopPrice> PriceListForApplication(List<ShopPrice> source, bool specified)
+        {
+            if (!specified) return null;
+            return source != null && source.Count > 0 ? source : new List<ShopPrice> { null };
+        }
+
+        private static List<TeleportDestinationSettings> DestinationListForApplication(
+            List<TeleportDestinationSettings> source, bool specified)
+        {
+            if (!specified) return null;
+            return source != null && source.Count > 0
+                ? source
+                : new List<TeleportDestinationSettings> { null };
+        }
+    }
+
+    /// <summary>Presence map populated from the YAML representation before defaults erase
+    /// the distinction between an omitted key and an explicitly empty/default value.</summary>
+    internal sealed class NpcProfilePresence
+    {
+        internal readonly HashSet<string> Root = Keys();
+        internal readonly HashSet<string> Marketplace = Keys();
+        internal readonly HashSet<string> Teleporter = Keys();
+        internal readonly HashSet<string> QuestGiver = Keys();
+
+        internal static NpcProfilePresence Read(string yaml)
+        {
+            var result = new NpcProfilePresence();
+            var stream = new YamlStream();
+            stream.Load(new StringReader(yaml ?? ""));
+            if (stream.Documents.Count == 0 || !(stream.Documents[0].RootNode is YamlMappingNode root))
+                return result;
+
+            AddKeys(root, result.Root);
+            AddNestedKeys(root, "marketplace", result.Marketplace);
+            AddNestedKeys(root, "teleporter", result.Teleporter);
+            AddNestedKeys(root, "questGiver", result.QuestGiver);
+            return result;
+        }
+
+        private static void AddNestedKeys(YamlMappingNode root, string key, HashSet<string> target)
+        {
+            foreach (var pair in root.Children)
+            {
+                if (!(pair.Key is YamlScalarNode scalar) ||
+                    !string.Equals(scalar.Value, key, StringComparison.OrdinalIgnoreCase) ||
+                    !(pair.Value is YamlMappingNode mapping)) continue;
+
+                AddKeys(mapping, target);
+                return;
+            }
+        }
+
+        private static void AddKeys(YamlMappingNode mapping, HashSet<string> target)
+        {
+            foreach (var key in mapping.Children.Keys)
+                if (key is YamlScalarNode scalar && !string.IsNullOrEmpty(scalar.Value))
+                    target.Add(scalar.Value);
+        }
+
+        private static HashSet<string> Keys() =>
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase);
     }
 
     /// <summary>

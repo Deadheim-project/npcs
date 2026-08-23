@@ -690,7 +690,6 @@ namespace NpcValheim.Testing
                     npc.GetDestinations().Count == 1,
                     $"got {npc.GetDestinations().Count}");
 
-                RunWaypointChecks(npc);
                 RunTemplateChecks(npc);
             }
             catch (System.Exception error)
@@ -740,48 +739,6 @@ namespace NpcValheim.Testing
             Check("an NPC's own profile file is named after it",
                 fileName.StartsWith("bjorn-o-guardiao", System.StringComparison.OrdinalIgnoreCase),
                 $"file is '{fileName}'");
-        }
-
-        // ---------- the marked waypoint an admin binds a destination to ----------
-
-        /// <summary>The marker only pays for itself if the panel actually reads it. It did not:
-        /// the key stored a position and nothing ever asked for it, so "Adicionar" kept
-        /// recording the admin's own feet -- which, with the panel blocking movement, is
-        /// always the teleporter itself. These checks pin down the handover between them.</summary>
-        private void RunWaypointChecks(TeleporterNpc npc)
-        {
-            WaypointMarker.Clear();
-            Check("with nothing marked, there is no bind point to use",
-                !WaypointMarker.TryGetBindPoint(out _, out _));
-
-            var marked = new Vector3(123.5f, 31f, -47.25f);
-            WaypointMarker.MarkAt(marked, 135f);
-
-            bool has = WaypointMarker.TryGetBindPoint(out var point, out float yaw);
-            Check("a marked point is handed back to the panel", has);
-            Check("it is the point that was marked, unchanged",
-                has && (point - marked).sqrMagnitude < 0.0001f && Mathf.Abs(yaw - 135f) < 0.01f,
-                $"got {point} yaw {yaw}");
-
-            // The real regression: binding through the profile path with that point has to
-            // land the destination there, not wherever the requester happens to be.
-            var profile = npc.BuildProfile();
-            profile.Teleporter.Destinations.Clear();
-            profile.Teleporter.Destinations.Add(new TeleportDestinationSettings
-                { Id = "w", Name = "Ponto marcado", X = point.x, Y = point.y, Z = point.z, Yaw = yaw, Cost = 7 });
-            npc.ApplyProfileForSelfTest(profile);
-
-            var bound = npc.GetDestinations().FirstOrDefault(d => d.Id == "w");
-            Check("the destination lands on the marked point",
-                bound != null && (bound.Position - marked).sqrMagnitude < 0.01f,
-                bound == null ? "missing" : bound.Position.ToString());
-            Check("and keeps the fare it was given",
-                bound != null && npc.CostOf(bound) == 7,
-                bound == null ? "missing" : $"got {npc.CostOf(bound)}");
-
-            WaypointMarker.Clear();
-            Check("attaching it consumes the mark, so the next add doesn't reuse it",
-                !WaypointMarker.TryGetBindPoint(out _, out _));
         }
 
         // ---------- merchant buying from players ----------

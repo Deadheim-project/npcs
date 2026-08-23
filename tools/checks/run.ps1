@@ -12,7 +12,7 @@ $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 
 Write-Host "compilando o mod..." -ForegroundColor Cyan
-dotnet build "$root\NpcValheim.sln" -c Release -v q --nologo | Out-Null
+dotnet build "$root\NpcValheim.sln" -c Release -v q --nologo -p:DevTools=false | Out-Null
 
 $failed = 0
 foreach ($check in @('wire', 'content')) {

@@ -5,6 +5,7 @@ name: ""
 forType: Marketplace
 marketplace:
   taxPercent: 0
+  sells: []
   buys:
     - itemName: "TrophyDeer"
       price: 5

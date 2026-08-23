@@ -28,7 +28,7 @@ namespace NpcValheim.UI
         private TMP_InputField _destinationX;
         private TMP_InputField _destinationY;
         private TMP_InputField _destinationZ;
-        private TextMeshProUGUI _waypointHint;
+        private enum CoordinateInputState { Empty, Valid, Invalid }
 
         private RectTransform _templates;
         private readonly List<GameObject> _templateRows = new List<GameObject>();
@@ -133,10 +133,9 @@ namespace NpcValheim.UI
                         return;
                     }
 
-                    // Three ways to name a place, in order of how explicit they are: typed
-                    // coordinates beat a marked point, which beats "wherever I am standing".
-                    // Whatever the admin said most deliberately is what wins.
-                    if (TryReadCoordinates(out var typed))
+                    var coordinateState = ReadCoordinates(out var typed);
+                    if (coordinateState == CoordinateInputState.Invalid) return;
+                    if (coordinateState == CoordinateInputState.Valid)
                     {
                         teleporter.RequestAddDestination(Player, _destinationName.text, cost,
                             typed, Player.transform.rotation.eulerAngles.y);
@@ -147,27 +146,16 @@ namespace NpcValheim.UI
                         return;
                     }
 
-                    if (WaypointMarker.TryGetBindPoint(out var point, out float pointYaw))
-                    {
-                        teleporter.RequestAddDestination(Player, _destinationName.text, cost, point, pointYaw);
-                        Say($"Destino '{_destinationName.text}' gravado no ponto marcado " +
-                            $"({point.x:0}, {point.z:0}).");
-                        WaypointMarker.Clear();
-                    }
-                    else
-                    {
-                        teleporter.RequestAddDestination(Player, _destinationName.text, cost);
-                        Say($"Destino '{_destinationName.text}' gravado na sua posição.");
-                    }
+                    teleporter.RequestAddDestination(Player, _destinationName.text, cost);
+                    Say($"Destino '{_destinationName.text}' gravado na sua posição.");
 
                     _destinationName.text = "";
                     _destinationSignature = null;
                 });
 
-                // Tells the admin which of the two the button is about to do, and how to get
-                // the other one.
-                _waypointHint = Dim(column, "");
-                ValheimUi.SetHeight(_waypointHint.gameObject, 20f);
+                var coordinateHint = Dim(column,
+                    "Informe X/Y/Z para um ponto remoto, ou deixe os três vazios para usar sua posição atual.");
+                ValheimUi.SetHeight(coordinateHint.gameObject, 32f);
 
                 var costRow = Row(column, 38f);
                 ValheimUi.CreateLabel(costRow, "Item/custo padrao", 15, ValheimUi.Beige, TextAlignmentOptions.Left);
@@ -212,28 +200,29 @@ namespace NpcValheim.UI
                 {
                     Dim(column, "Esta é uma casa de leilão: ela não compra nem vende, " +
                                 "apenas hospeda anúncios de jogadores e retém a taxa acima.");
-                    return;
                 }
+                else
+                {
+                    // Two lists on one counter: he deals only in what he is told to deal in.
+                    Heading(column, "Balcão (item / preço)");
+                    var buyRow = Row(column, 40f);
+                    _buyItem = ValheimUi.CreateInputField(buyRow, "", 150f, 38f);
+                    Flexible(_buyItem.gameObject);
+                    _buyPrice = ValheimUi.CreateInputField(buyRow, "1", 60f, 38f);
+                    var addBuy = ValheimUi.CreateButton(buyRow, "Ele compra", 125f, 38f, 14);
+                    var addSell = ValheimUi.CreateButton(buyRow, "Ele vende", 125f, 38f, 14);
+                    addBuy.onClick.AddListener(() => SetPrice(market, selling: false));
+                    addSell.onClick.AddListener(() => SetPrice(market, selling: true));
 
-                // Two lists on one counter: he deals only in what he is told to deal in.
-                Heading(column, "Balcão (item / preço)");
-                var buyRow = Row(column, 40f);
-                _buyItem = ValheimUi.CreateInputField(buyRow, "", 150f, 38f);
-                Flexible(_buyItem.gameObject);
-                _buyPrice = ValheimUi.CreateInputField(buyRow, "1", 60f, 38f);
-                var addBuy = ValheimUi.CreateButton(buyRow, "Ele compra", 125f, 38f, 14);
-                var addSell = ValheimUi.CreateButton(buyRow, "Ele vende", 125f, 38f, 14);
-                addBuy.onClick.AddListener(() => SetPrice(market, selling: false));
-                addSell.onClick.AddListener(() => SetPrice(market, selling: true));
-
-                // Typing the exact prefab name meant knowing it beforehand -- and on a modded
-                // server that is hundreds of names nobody has memorised. The same box now
-                // searches, matching either the prefab name or the name the player reads, and
-                // picking a result fills it in.
-                Dim(column, "Digite para buscar; clique num resultado para preencher.");
-                var searchArea = ValheimUi.CreateRect("SearchArea", column);
-                ValheimUi.SetHeight(searchArea.gameObject, 150f);
-                _itemResults = ValheimUi.CreateScrollList(searchArea, spacing: 2f);
+                    // Typing the exact prefab name meant knowing it beforehand -- and on a modded
+                    // server that is hundreds of names nobody has memorised. The same box now
+                    // searches, matching either the prefab name or the name the player reads, and
+                    // picking a result fills it in.
+                    Dim(column, "Digite para buscar; clique num resultado para preencher.");
+                    var searchArea = ValheimUi.CreateRect("SearchArea", column);
+                    ValheimUi.SetHeight(searchArea.gameObject, 150f);
+                    _itemResults = ValheimUi.CreateScrollList(searchArea, spacing: 2f);
+                }
             }
 
             if (Npc is QuestGiverNpc giver) BuildQuestMaker(column, giver);
@@ -251,13 +240,36 @@ namespace NpcValheim.UI
                 _templateSignature = null;
             });
 
+            var remove = ValheimUi.CreateButton(column, "Remover NPC", 0f, 40f, 15);
+            ValheimUi.SetHeight(remove.gameObject, 40f);
+            bool removalArmed = false;
+            remove.onClick.AddListener(() =>
+            {
+                if (!removalArmed)
+                {
+                    removalArmed = true;
+                    remove.GetComponentInChildren<TextMeshProUGUI>().text = "Confirmar remoção";
+                    Say("Clique novamente para remover este NPC e seu snapshot.");
+                    return;
+                }
+
+                if (!ServiceNpcAuthority.RequestRemoval(Npc))
+                {
+                    removalArmed = false;
+                    Say("Não foi possível enviar a remoção ao servidor.");
+                    return;
+                }
+
+                UiRoot.RequestClose();
+            });
+
             // ---- right: destinations (teleporters) above saved templates ----
             var right = ValheimUi.CreateRect("Right", frame);
             ValheimUi.Anchor(right, new Vector2(0.55f, 0f), new Vector2(1f, 1f),
                 new Vector2(8f, 12f), new Vector2(-16f, -12f));
 
             bool isTeleporter = Npc is TeleporterNpc;
-            bool isMarket = Npc is MarketplaceNpc;
+            bool isMarket = Npc is MarketplaceNpc shop && shop.HasShop;
             // Teleporters and merchants each have a second list to manage, so the pane is
             // split; everything else gives the whole pane to templates.
             float split = isTeleporter || isMarket ? 0.5f : 0f;
@@ -318,7 +330,6 @@ namespace NpcValheim.UI
         public override void Refresh()
         {
             RefreshItemSearch();
-            RefreshWaypointHint();
             RefreshDestinations();
             RefreshBuyList();
             RefreshTemplates();
@@ -510,10 +521,11 @@ namespace NpcValheim.UI
         /// <summary>Reads the three coordinate boxes. All three have to be filled and valid --
         /// a half-typed coordinate is a mistake, not an instruction, and falling back to the
         /// admin's position on a typo would bind a destination somewhere they never meant.</summary>
-        private bool TryReadCoordinates(out Vector3 position)
+        private CoordinateInputState ReadCoordinates(out Vector3 position)
         {
             position = Vector3.zero;
-            if (_destinationX == null || _destinationY == null || _destinationZ == null) return false;
+            if (_destinationX == null || _destinationY == null || _destinationZ == null)
+                return CoordinateInputState.Invalid;
 
             var culture = CultureInfo.InvariantCulture;
             var style = NumberStyles.Float;
@@ -523,36 +535,20 @@ namespace NpcValheim.UI
             string x = (_destinationX.text ?? "").Trim().Replace(',', '.');
             string y = (_destinationY.text ?? "").Trim().Replace(',', '.');
             string z = (_destinationZ.text ?? "").Trim().Replace(',', '.');
-            if (x.Length == 0 && y.Length == 0 && z.Length == 0) return false;
+            if (x.Length == 0 && y.Length == 0 && z.Length == 0) return CoordinateInputState.Empty;
 
             if (!float.TryParse(x, style, culture, out float px) ||
                 !float.TryParse(y, style, culture, out float py) ||
                 !float.TryParse(z, style, culture, out float pz))
             {
                 Say("Coordenadas incompletas: preencha X, Y e Z, ou deixe os três vazios.");
-                return false;
+                return CoordinateInputState.Invalid;
             }
 
             position = new Vector3(px, py, pz);
-            return true;
-        }
-
-        private void RefreshWaypointHint()
-        {
-            if (_waypointHint == null) return;
-
-            if (_destinationX != null && (_destinationX.text ?? "").Trim().Length > 0)
-            {
-                _waypointHint.text = "<color=#ffd24a>Usando as coordenadas digitadas.</color> " +
-                                     "Limpe X/Y/Z para voltar ao ponto marcado ou à sua posição.";
-                return;
-            }
-
-            _waypointHint.text = WaypointMarker.HasWaypoint
-                ? $"<color=#ffd24a>Ponto marcado em ({WaypointMarker.Position.x:0}, " +
-                  $"{WaypointMarker.Position.z:0})</color> — será usado ao adicionar."
-                : $"Sem ponto marcado: usará sua posição atual. Pressione " +
-                  $"<color=#ffd24a>{Plugin.MarkWaypointKey.Value}</color> onde quer chegar.";
+            return TeleporterNpc.IsValidDestinationPosition(position)
+                ? CoordinateInputState.Valid
+                : CoordinateInputState.Invalid;
         }
 
         private void RefreshBuyList()

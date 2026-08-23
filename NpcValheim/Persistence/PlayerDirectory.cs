@@ -28,7 +28,6 @@ namespace NpcValheim.Persistence
         {
             _db = db;
             Players.EnsureIndex(x => x.Name);
-            CollapseDuplicates();
         }
 
         public static void Remember(long playerId, string name) =>
@@ -50,7 +49,7 @@ namespace NpcValheim.Persistence
             }
             if (incoming.Count == 0) return;
 
-            Merge(clean, incoming);
+            MergeByAuthenticatedIds(clean, playerId, incoming);
         }
 
         /// <summary>
@@ -64,19 +63,23 @@ namespace NpcValheim.Persistence
             AddId(ids, playerId);
             if (_db == null) return ids;
 
-            void Include(KnownPlayer player)
+            // Keep the old parameter for binary/source compatibility, but never use a name
+            // to expand an identity. Walk only rows connected by authenticated id overlap.
+            _ = nameHint;
+            var snapshot = Snapshot();
+            bool changed;
+            do
             {
-                if (player == null) return;
-                AddId(ids, player.Id);
-                if (player.AliasIds == null) return;
-                foreach (var alias in player.AliasIds)
-                    AddId(ids, alias);
-            }
+                changed = false;
+                foreach (var player in snapshot)
+                {
+                    if (player == null || !Intersects(player, ids)) continue;
+                    int before = ids.Count;
+                    AddIdentityIds(ids, player);
+                    if (ids.Count != before) changed = true;
+                }
+            } while (changed);
 
-            Include(FindById(playerId));
-            string name = (nameHint ?? "").Trim();
-            if (!string.IsNullOrEmpty(name) && name != "???")
-                Include(FindByName(name));
             return ids;
         }
 
@@ -84,68 +87,75 @@ namespace NpcValheim.Persistence
         {
             if (_db == null || string.IsNullOrWhiteSpace(name)) return null;
             var wanted = name.Trim();
-            return Snapshot()
+            var matches = All()
                 .Where(p => string.Equals(p.Name, wanted, StringComparison.OrdinalIgnoreCase))
                 .OrderByDescending(p => p.LastSeenUtc)
-                .FirstOrDefault();
+                .Take(2)
+                .ToList();
+
+            // Duplicate display names are ambiguous, not proof that two rows are one person.
+            return matches.Count == 1 ? matches[0] : null;
         }
 
         public static KnownPlayer FindById(long playerId)
         {
             if (_db == null || playerId == 0L) return null;
-            foreach (var player in Snapshot())
-            {
-                if (player.Id == playerId) return player;
-                if (player.AliasIds != null && player.AliasIds.Contains(playerId)) return player;
-            }
-            return null;
+            return Snapshot()
+                .Where(player => player != null && ContainsId(player, playerId))
+                .OrderByDescending(player => player.LastSeenUtc)
+                .FirstOrDefault();
         }
 
-        public static List<KnownPlayer> All() =>
-            Snapshot()
-                .GroupBy(p => p.Name, StringComparer.OrdinalIgnoreCase)
-                .Select(g => g.OrderByDescending(p => p.LastSeenUtc).First())
-                .OrderBy(p => p.Name)
-                .ToList();
+        public static List<KnownPlayer> All()
+        {
+            var result = new List<KnownPlayer>();
+            var seenIds = new HashSet<long>();
+
+            // Keep one display row per connected identity, never per display name. Historic
+            // duplicate rows remain in LiteDB and continue to be readable; this is only the
+            // directory view, not a destructive migration.
+            foreach (var player in Snapshot().OrderByDescending(p => p.LastSeenUtc))
+            {
+                if (player == null) continue;
+                var connected = IdsFor(player.Id);
+                if (connected.Any(seenIds.Contains)) continue;
+                result.Add(player);
+                foreach (var id in connected) seenIds.Add(id);
+            }
+
+            return result.OrderBy(p => p.Name).ThenBy(p => p.Id).ToList();
+        }
 
         private static List<KnownPlayer> Snapshot() =>
             _db == null ? new List<KnownPlayer>() : Players.FindAll().ToList();
 
-        private static void CollapseDuplicates()
+        private static void MergeByAuthenticatedIds(string clean, long canonicalId,
+            HashSet<long> incoming)
         {
-            var groups = Snapshot()
-                .Where(p => p != null && !string.IsNullOrWhiteSpace(p.Name))
-                .GroupBy(p => p.Name.Trim(), StringComparer.OrdinalIgnoreCase)
-                .Where(g => g.Count() > 1)
-                .ToList();
-
-            foreach (var group in groups)
+            var snapshot = Snapshot();
+            var connectedIds = new HashSet<long>(incoming);
+            var matches = new List<KnownPlayer>();
+            bool changed;
+            do
             {
-                var incoming = new HashSet<long>();
-                foreach (var player in group)
+                changed = false;
+                foreach (var player in snapshot)
                 {
-                    if (player.Id != 0L) incoming.Add(player.Id);
-                    if (player.AliasIds == null) continue;
-                    foreach (var alias in player.AliasIds)
-                        if (alias != 0L) incoming.Add(alias);
-                }
-                Merge(group.Key, incoming);
-                NpcValheim.Plugin.Log.LogInfo($"NpcValheim: merged {group.Count()} directory rows named '{group.Key}'");
-            }
-        }
+                    if (player == null || matches.Contains(player) ||
+                        !Intersects(player, connectedIds)) continue;
 
-        private static void Merge(string clean, HashSet<long> incoming)
-        {
-            var matches = Snapshot()
-                .Where(p => p != null && (
-                    string.Equals(p.Name, clean, StringComparison.OrdinalIgnoreCase) ||
-                    incoming.Contains(p.Id) ||
-                    (p.AliasIds != null && p.AliasIds.Any(incoming.Contains))))
-                .ToList();
+                    matches.Add(player);
+                    int before = connectedIds.Count;
+                    AddIdentityIds(connectedIds, player);
+                    if (connectedIds.Count != before) changed = true;
+                }
+            } while (changed);
 
             if (matches.Count == 0)
             {
-                long primary = incoming.First();
+                long primary = canonicalId != 0L
+                    ? canonicalId
+                    : incoming.OrderBy(id => id).First();
                 Players.Insert(new KnownPlayer
                 {
                     Id = primary,
@@ -161,23 +171,32 @@ namespace NpcValheim.Persistence
             keep.LastSeenUtc = DateTime.UtcNow;
             keep.AliasIds ??= new List<long>();
 
-            foreach (var other in matches)
-            {
-                if (other.Id == keep.Id) continue;
-                AddId(keep.AliasIds, other.Id);
-                if (other.AliasIds != null)
-                {
-                    foreach (var alias in other.AliasIds)
-                        AddId(keep.AliasIds, alias);
-                }
-                Players.Delete(other.Id);
-            }
-
-            foreach (var id in incoming)
+            // Do not delete historic rows. Add the authenticated connected component to the
+            // newest row; IdsFor can still read older layouts transitively.
+            foreach (var id in connectedIds)
                 AddId(keep.AliasIds, id);
 
             keep.AliasIds.RemoveAll(id => id == 0L || id == keep.Id);
             Players.Update(keep);
+        }
+
+        private static bool ContainsId(KnownPlayer player, long id) =>
+            id != 0L && (player.Id == id ||
+                         (player.AliasIds != null && player.AliasIds.Contains(id)));
+
+        private static bool Intersects(KnownPlayer player, IEnumerable<long> ids)
+        {
+            foreach (var id in ids)
+                if (ContainsId(player, id)) return true;
+            return false;
+        }
+
+        private static void AddIdentityIds(ICollection<long> ids, KnownPlayer player)
+        {
+            if (player.Id != 0L && !ids.Contains(player.Id)) ids.Add(player.Id);
+            if (player.AliasIds == null) return;
+            foreach (var alias in player.AliasIds)
+                if (alias != 0L && !ids.Contains(alias)) ids.Add(alias);
         }
 
         private static void AddId(List<long> ids, long id)
