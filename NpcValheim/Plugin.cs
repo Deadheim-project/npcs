@@ -14,7 +14,7 @@ namespace NpcValheim
     {
         public const string Guid = "com.npcvalheim.mod";
         public const string Name = "NpcValheim";
-        public const string Version = "0.1.13";
+        public const string Version = "0.1.14";
 
         internal static ManualLogSource Log;
         private Harmony _harmony;
@@ -82,6 +82,9 @@ namespace NpcValheim
         internal static ConfigEntry<string> WorldName;
         internal static ConfigEntry<bool> AutoStartWorld;
         internal static ConfigEntry<bool> DemoScenarioMode;
+#if DEVTOOLS
+        internal static ConfigEntry<bool> RemotePlacementProbeMode;
+#endif
 
         /// <summary>Runtime switch behind SimulateNonAdmin, rather than reading the config
         /// directly: the showcase has to dress the NPCs up as an admin *before* dropping to
@@ -92,7 +95,12 @@ namespace NpcValheim
         /// the showcase too -- Hugin walking into frame mid-capture is exactly the kind of
         /// noise those patches exist to remove.</summary>
         internal static bool TestModeActive =>
-            (EnableSelfTest != null && EnableSelfTest.Value) || (ShowcaseMode != null && ShowcaseMode.Value);
+            (EnableSelfTest != null && EnableSelfTest.Value) ||
+            (ShowcaseMode != null && ShowcaseMode.Value)
+#if DEVTOOLS
+            || (RemotePlacementProbeMode != null && RemotePlacementProbeMode.Value)
+#endif
+            ;
 
         private void Awake()
         {
@@ -156,6 +164,11 @@ namespace NpcValheim
                 "Auto-clicks past the password and character-selection screens. Meant to pair with a `+connect ip:port password` launch for a fully hands-off join. Dev use only.");
             AutoJoinPassword = Config.Bind("Testing", "AutoJoinPassword", "",
                 "Password to auto-submit on the server password screen when AutoConfirmCharacterOnJoin is on (should match the +connect launch arg).");
+
+#if DEVTOOLS
+            RemotePlacementProbeMode = Config.Bind("Testing", "RemotePlacementProbeMode", false,
+                "Places and removes one Marketplace NPC through the real dedicated-server RPC, logs REMOTE PROBE PASS/FAIL, then quits. Dev use only.");
+#endif
 
             ConfigSync.AddConfigEntry(TeleportCostItem);
             ConfigSync.AddConfigEntry(TeleportCostAmount);
@@ -225,6 +238,9 @@ namespace NpcValheim
 
             if (AutoConfirmCharacterOnJoin.Value)
                 Testing.AutoConfirmCharacter.EnsureCreated(AutoJoinPassword.Value);
+
+            if (RemotePlacementProbeMode.Value && !UnityEngine.Application.isBatchMode)
+                Testing.RemotePlacementProbe.EnsureCreated();
         }
 
         private static bool HasDirectConnectArgument()

@@ -28,14 +28,15 @@ class Program
                   .GetRawConstantValue();
 
     static bool IdentityMatches(long senderId, long playerId, long zdoUserId,
-        bool hasPeer, bool hasPeerCharacter, bool exactPeerCharacter)
+        bool hasPeer, bool hasPeerCharacter, bool exactPeerCharacter,
+        bool exactNetworkOwner = false)
     {
         var method = typeof(GameApi).GetMethod(
             "IdentityMatches", BindingFlags.NonPublic | BindingFlags.Static);
         return method != null && (bool)method.Invoke(null, new object[]
         {
             senderId, playerId, zdoUserId,
-            hasPeer, hasPeerCharacter, exactPeerCharacter,
+            hasPeer, hasPeerCharacter, exactPeerCharacter, exactNetworkOwner,
         });
     }
 
@@ -140,10 +141,14 @@ class Program
         System.Console.WriteLine("== authenticated player resolution ==");
         Check("a peer resolves only through its exact character ZDO",
               IdentityMatches(41, 99, 41, true, true, true));
+        Check("a peer resolves through exact server-owned Player ZDO",
+              IdentityMatches(41, 99, 88, true, false, false, true));
         Check("a peer cannot fall back to a coincident Player id",
               !IdentityMatches(41, 41, 88, true, true, false));
         Check("a peer without a character ZDO fails closed",
               !IdentityMatches(41, 41, 41, true, false, false));
+        Check("a peer cannot use another Player's network-owned ZDO",
+              !IdentityMatches(41, 99, 88, true, false, false, false));
         Check("the explicit local path accepts an exact Player id",
               IdentityMatches(41, 41, 88, false, false, false));
         Check("the explicit local path accepts an exact ZDO user id",

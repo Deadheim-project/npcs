@@ -215,11 +215,22 @@ namespace NpcValheim.Npc
                     long playerId = candidate.GetPlayerID();
                     long zdoUserId = 0L;
                     bool exactPeerCharacter = false;
+                    bool exactNetworkOwner = false;
                     try
                     {
                         var zdoId = candidate.GetZDOID();
                         zdoUserId = zdoId.UserID;
                         exactPeerCharacter = hasPeerCharacter && zdoId == peerCharacterId;
+
+                        // On current dedicated servers m_characterID can still be unset (or
+                        // lag one replication step behind) after the Player is already live.
+                        // The Player ZDO's owner is another server-maintained bridge to the
+                        // authenticated routed peer. Unlike a display name, character id
+                        // supplied in an RPC, or Piece creator field, clients cannot use this
+                        // check to select some other live Player.
+                        var nview = candidate.GetComponent<ZNetView>();
+                        var zdo = nview != null && nview.IsValid() ? nview.GetZDO() : null;
+                        exactNetworkOwner = hasPeer && zdo != null && zdo.GetOwner() == senderId;
                     }
                     catch
                     {
@@ -228,7 +239,8 @@ namespace NpcValheim.Npc
                     }
 
                     if (!IdentityMatches(senderId, playerId, zdoUserId,
-                            hasPeer, hasPeerCharacter, exactPeerCharacter)) continue;
+                            hasPeer, hasPeerCharacter, exactPeerCharacter,
+                            exactNetworkOwner)) continue;
 
                     player = candidate;
                     return true;
@@ -246,10 +258,12 @@ namespace NpcValheim.Npc
         /// <summary>Pure matching rule, kept separate so the fail-closed cases can be
         /// verified outside Unity by the repository's wire checks.</summary>
         private static bool IdentityMatches(long senderId, long playerId, long zdoUserId,
-            bool hasPeer, bool hasPeerCharacter, bool exactPeerCharacter)
+            bool hasPeer, bool hasPeerCharacter, bool exactPeerCharacter,
+            bool exactNetworkOwner)
         {
             if (senderId == 0L) return false;
-            if (hasPeer) return hasPeerCharacter && exactPeerCharacter;
+            if (hasPeer)
+                return (hasPeerCharacter && exactPeerCharacter) || exactNetworkOwner;
             return playerId == senderId || zdoUserId == senderId;
         }
 
