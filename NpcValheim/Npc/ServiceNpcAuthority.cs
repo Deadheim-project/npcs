@@ -183,6 +183,9 @@ namespace NpcValheim.Npc
             if (!GameApi.IsAdmin(sender))
             {
                 Plugin.Log.LogWarning($"NpcValheim: denied administrative NPC mutation from peer {sender}");
+                // Silence here reads in-game as "the button does nothing", which is the same
+                // thing a bug looks like. Say which of the two it is.
+                SendStatus(sender, "O servidor não reconhece você como admin.");
                 return;
             }
 

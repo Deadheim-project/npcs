@@ -14,6 +14,14 @@ namespace NpcValheim.Npc
     {
         public static void LogBrokenMaterials(GameObject go)
         {
+            // Only a client can have this bug, and only a client can answer the question.
+            // A headless server loads no shaders at all, so every material it holds reports
+            // Hidden/InternalErrorShader -- the diagnostic fires on every NPC that spawns and
+            // says "renders as solid magenta" about a machine that renders nothing. On a busy
+            // world that was a third of the dedicated server's console, drowning the lines
+            // that do mean something.
+            if (Application.isBatchMode) return;
+
             var renderers = go.GetComponentsInChildren<Renderer>(true);
             bool foundAny = false;
 

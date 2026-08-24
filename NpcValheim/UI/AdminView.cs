@@ -317,11 +317,11 @@ namespace NpcValheim.UI
             }
             if (!int.TryParse(_buyPrice.text, out int price) || price < 0) { Say("Preco invalido."); return; }
 
+            // No result message here: only the server knows whether the change took, and it
+            // answers with one either way (see MarketplaceNpc.RPC_SetPrice). Printing success
+            // straight after the click is how an admin ends up staring at a merchant that
+            // "não compra nada" right after being told it does.
             market.RequestSetPrice(Player, item, price, selling);
-            string side = selling ? "vender" : "comprar";
-            Say(price > 0
-                ? $"O NPC passa a {side} {ItemNames.Display(item)} por {price}/un."
-                : $"{ItemNames.Display(item)} removido da lista de {side}.");
             _buyItem.text = "";
             _buySignature = null;
         }

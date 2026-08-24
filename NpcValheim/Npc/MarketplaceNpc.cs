@@ -175,22 +175,57 @@ namespace NpcValheim.Npc
             }
         }
 
+        /// <summary>
+        /// Admin-side write to one half of the counter.
+        ///
+        /// Every exit reports itself. This used to `return` on each refusal while the admin
+        /// panel had already printed "O NPC passa a comprar X" the moment the button was
+        /// clicked, so a change that never happened looked exactly like one that did -- and a
+        /// merchant left with an empty buy list shows "não compra nada" with no way to tell
+        /// whether the price was rejected or never sent. The server is the only side that
+        /// knows, so it is the side that speaks.
+        /// </summary>
         private void RPC_SetPrice(long sender, string tagged, int price)
         {
-            if (!NpcRequestGuard.AllowNearby(Nview, transform, sender, "shop-set-price", 6f, 6, 2f)) return;
-            if (!CanAdminister(sender) || string.IsNullOrEmpty(tagged) || tagged.Length < 3) return;
+            // CanAdminister reclaims server ownership; AllowNearby tests IsOwner, so it has to
+            // run after, not before.
+            if (!CanAdminister(sender)) return;
+
+            if (!NpcRequestGuard.AllowNearby(Nview, transform, sender, "shop-set-price", 6f, 6, 2f))
+            {
+                Plugin.Log.LogWarning($"NpcValheim: refused a counter change from peer {sender} -- out of range of the NPC, or too many in a row");
+                ServiceNpcAuthority.SendStatus(sender, "Fique perto do NPC para mudar o balcão.");
+                return;
+            }
+
+            if (string.IsNullOrEmpty(tagged) || tagged.Length < 3) return;
 
             bool selling = tagged[0] == 'S';
             string itemName = tagged.Substring(2);
-            if (ObjectDB.instance?.GetItemPrefab(itemName) == null) return;
+            if (ObjectDB.instance?.GetItemPrefab(itemName) == null)
+            {
+                ServiceNpcAuthority.SendStatus(sender, $"O servidor não conhece o item '{itemName}'.");
+                return;
+            }
 
             string key = selling ? KeySellPrices : KeyBuyPrices;
             var prices = GetPriceTable(key);
             if (price <= 0) prices.Remove(itemName);
             else if (prices.Count < 60 || prices.ContainsKey(itemName)) prices[itemName] = Mathf.Min(price, 1000000);
-            else return; // keeps the packed ZDO string bounded
+            else
+            {
+                // keeps the packed ZDO string bounded
+                ServiceNpcAuthority.SendStatus(sender, "Este lado do balcão já tem 60 itens.");
+                return;
+            }
 
             SavePriceTable(key, prices);
+
+            string side = selling ? "vende" : "compra";
+            Plugin.Log.LogInfo($"NpcValheim: '{GetHoverName()}' {side} {itemName} por {price} (peer {sender})");
+            ServiceNpcAuthority.SendStatus(sender, price > 0
+                ? $"O NPC {side} {ItemNames.Display(itemName)} por {price}/un."
+                : $"{ItemNames.Display(itemName)} removido do balcão.");
         }
 
         private void SavePriceTable(string key, Dictionary<string, int> prices)
