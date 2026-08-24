@@ -498,8 +498,14 @@ namespace NpcValheim.Npc
             }
             if (!Offers(questId))
             {
-                // this giver does not deal in that quest
-                Plugin.Log.LogWarning($"NpcValheim: '{GetHoverName()}' does not offer '{questId}' (peer {sender})");
+                // This giver does not deal in that quest. Naming the giver is not enough to
+                // act on: every one of them is called 'NPC', several stand together, and the
+                // question is always "which board did the client think it was reading?".
+                // The ZDO id ties the refusal to the exact NPC whose list was sent.
+                var offered = GetOfferedQuestIds();
+                Plugin.Log.LogWarning(
+                    $"NpcValheim: '{GetHoverName()}' [{Nview.GetZDO().m_uid}] does not offer '{questId}' (peer {sender}); " +
+                    $"it offers {offered.Count}: {string.Join(", ", offered.GetRange(0, Mathf.Min(10, offered.Count)))}");
                 ServiceNpcAuthority.SendStatus(sender, "Este NPC não oferece essa missão.");
                 return;
             }
@@ -791,7 +797,11 @@ namespace NpcValheim.Npc
 
             // Materialised once: it is both counted for the log and packed below.
             var offered = new List<QuestDefinition>(OfferedQuests());
-            Plugin.Log.LogInfo($"NpcValheim: sent {offered.Count} quest(s) from '{GetHoverName()}' to peer {target}");
+            // The ZDO id, not just the name: several givers called 'NPC' stand together and
+            // the counts alone cannot say which board a client was shown.
+            Plugin.Log.LogInfo(
+                $"NpcValheim: sent {offered.Count} quest(s) from '{GetHoverName()}' [{Nview.GetZDO().m_uid}] to peer {target}" +
+                (offered.Count > 0 ? $" -- first: {offered[0].Id}" : ""));
             ServiceNpcAuthority.SendQuestResponse(target, this, "data",
                 Pack(GameApi.GetPlayerId(target), offered));
         }
