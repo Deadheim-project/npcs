@@ -43,6 +43,74 @@ echo "enviando : $PAYLOAD  ($count arquivos)"
 echo "destino  : BepInEx/plugins/NpcValheim"
 [ "$REMOVE_KG" = 1 ] && echo "removendo: KGvalheim-Marketplace_And_Server_NPCs_Revamped"
 
+# O que ja esta la, para nao reenviar byte igual.
+#
+# Sem isto o deploy manda os 376 arquivos toda vez, um curl (uma conexao de FTP inteira)
+# por arquivo. O peso esta nos 363 yaml minusculos de quests/templates, que praticamente
+# nunca mudam: entre dois releases o que muda e a DLL. E como o find desce nas subpastas
+# primeiro, a DLL -- o unico arquivo que importa para o restart -- era a ultima a subir,
+# depois de ~9 minutos de reescrita de arquivos identicos.
+#
+# A listagem inteira sai numa unica conexao: um curl por pasta ja custaria mais do que o
+# envio. O "#FIM <url>" que o -w escreve apos cada listagem diz de qual pasta era o bloco
+# anterior.
+declare -A REMOTE_SIZES
+skipped=0
+
+load_remote_sizes() {
+  local urls=() rel
+  while IFS= read -r rel; do
+    if [ "$rel" = "." ]; then urls+=("$REMOTE/"); else urls+=("$REMOTE/$rel/"); fi
+  done < <(cd "$PAYLOAD" && find . -type d | sed 's|^\./||')
+  [ "${#urls[@]}" -gt 0 ] || return 0
+
+  # Pasta que ainda nao existe no servidor faz o curl sair diferente de zero; aqui isso
+  # so quer dizer "nada para comparar", entao a falha e tolerada de proposito.
+  local listing
+  listing="$(ftp -w '#FIM %{url_effective}
+' "${urls[@]}" 2>/dev/null || true)"
+
+  # O awk ja junta pasta+arquivo num campo so. Emitir a pasta separada deixava a linha
+  # dos arquivos da raiz comecando por TAB, e o `read` com IFS=TAB come o campo vazio da
+  # frente -- o tamanho ia parar no nome e nenhum arquivo da raiz (as duas DLLs, as unicas
+  # que mudam de verdade) casava nunca.
+  local path size
+  while IFS=$'\t' read -r path size; do
+    [ -n "$path" ] && [ -n "$size" ] || continue
+    REMOTE_SIZES["$path"]="$size"
+  done < <(printf '%s' "$listing" | tr -d '\r' | awk -v base="$REMOTE/" '
+      $1 == "#FIM" {
+        dir = $2
+        sub(base, "", dir)
+        sub("/$", "", dir)
+        for (i = 1; i <= n; i++) print (dir == "" ? name[i] : dir "/" name[i]) "\t" size[i]
+        n = 0
+        next
+      }
+      NF >= 9 && $1 !~ /^d/ { n++; name[n] = $NF; size[n] = $5 }
+    ')
+}
+
+echo "conferindo o que ja esta no servidor..."
+load_remote_sizes
+echo "  ${#REMOTE_SIZES[@]} arquivo(s) ja no destino"
+
+# Decide antes de escrever, para a simulacao poder mostrar exatamente a mesma lista que
+# o --apply vai enviar. Um dry run que nao diz o que mudaria nao serve para autorizar.
+PENDING=()
+while IFS= read -r file; do
+  rel="${file#$PAYLOAD/}"
+  if [ "${REMOTE_SIZES[$rel]:-}" = "$(stat -c %s "$file")" ]; then
+    skipped=$((skipped + 1))
+    continue
+  fi
+  PENDING+=("$file")
+done < <(find "$PAYLOAD" -type f)
+
+echo "  a enviar: ${#PENDING[@]}   iguais: $skipped"
+for file in "${PENDING[@]:0:12}"; do echo "    ${file#$PAYLOAD/}"; done
+[ "${#PENDING[@]}" -gt 12 ] && echo "    ... e mais $(( ${#PENDING[@]} - 12 ))"
+
 if [ "$APPLY" != 1 ]; then
   echo
   echo "(simulacao -- nada foi escrito. repita com --apply)"
@@ -50,13 +118,13 @@ if [ "$APPLY" != 1 ]; then
 fi
 
 sent=0
-while IFS= read -r file; do
+for file in "${PENDING[@]}"; do
   rel="${file#$PAYLOAD/}"
   ftp --ftp-create-dirs -T "$file" "$REMOTE/$rel"
   sent=$((sent + 1))
-  [ $((sent % 50)) -eq 0 ] && echo "  ... $sent/$count"
-done < <(find "$PAYLOAD" -type f)
-echo "  enviados $sent/$count"
+  [ $((sent % 25)) -eq 0 ] && echo "  ... $sent/${#PENDING[@]}"
+done
+echo "  enviados $sent, iguais $skipped (de $count)"
 
 # Releases antigos criavam uma segunda assembly. O mod agora é deliberadamente idêntico
 # nos dois lados; apagar o resíduo evita o BepInEx carregar duas versões do mesmo código.

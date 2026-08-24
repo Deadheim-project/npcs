@@ -31,6 +31,7 @@ namespace NpcValheim.Npc
         private TextMeshProUGUI _name;
         private TextMeshProUGUI _marker;
         private float _nextQuestPoll;
+        private float _questPollInterval = 2f;
         private bool _loggedMarker;
 
         private void Awake()
@@ -153,7 +154,20 @@ namespace NpcValheim.Npc
         private void PollQuestsOccasionally()
         {
             if (Time.time < _nextQuestPoll) return;
-            _nextQuestPoll = Time.time + (_questGiver.HasSyncedOnce ? 15f : 2f);
+
+            // Backs off while unsynced instead of retrying at 2s forever. A fixed fast retry
+            // turns a failed sync into a permanent load: the NPCs that did not sync are
+            // exactly the ones that keep asking, so the harder the server struggles the more
+            // it is asked. On the live server that kept several givers polling every 2s
+            // indefinitely, and each request materialised the NPC again on the server.
+            //
+            // The jitter matters as much as the interval: without it, every giver a player
+            // walks up to polls on the same frame forever, and they arrive as a burst rather
+            // than spread out.
+            _questPollInterval = _questGiver.HasSyncedOnce
+                ? 15f
+                : Mathf.Min(_questPollInterval * 1.6f, 15f);
+            _nextQuestPoll = Time.time + _questPollInterval + UnityEngine.Random.value;
             _questGiver.RequestQuests();
         }
 

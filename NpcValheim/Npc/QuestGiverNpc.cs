@@ -374,8 +374,16 @@ namespace NpcValheim.Npc
 
         private void RPC_RequestQuests(long sender)
         {
-            if (!Nview.IsOwner() || GameApi.GetPlayerId(sender) == 0L ||
-                !NpcRequestGuard.AllowRate(sender, "quest-list", 6, 5f)) return;
+            if (!Nview.IsOwner() || GameApi.GetPlayerId(sender) == 0L) return;
+
+            // Budgeted per giver, not per player. Sharing one "quest-list" bucket across every
+            // giver in range meant the limit counted NPCs rather than misbehaviour: each one
+            // polls on its own timer, so four givers standing together spent 10 requests per
+            // 5s against a limit of 6 and most were dropped. The ones that were dropped are
+            // the ones that never sync, and an unsynced giver polls faster -- so past about
+            // three givers in a town, none of them could ever sync. Keyed by ZDO id, a giver
+            // can only ever throttle itself.
+            if (!NpcRequestGuard.AllowRate(sender, "quest-list:" + Nview.GetZDO().m_uid, 6, 5f)) return;
             SendQuestsTo(sender);
         }
 
