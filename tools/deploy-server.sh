@@ -100,6 +100,19 @@ echo "  ${#REMOTE_SIZES[@]} arquivo(s) ja no destino"
 PENDING=()
 while IFS= read -r file; do
   rel="${file#$PAYLOAD/}"
+
+  # As DLLs vao sempre, sem comparar. O FTP so oferece o tamanho para comparar, e duas
+  # builds seguidas do mesmo codigo caem no mesmo numero de bytes com frequencia: o
+  # 0.1.28 tinha exatamente o tamanho do 0.1.27, foi dado como igual, e o servidor
+  # reiniciou ainda no 0.1.27 -- um deploy que diz "enviados 0" e mente. Sao dois
+  # arquivos e alguns segundos; o palpite nao vale o risco.
+  case "$rel" in
+    *.dll)
+      PENDING+=("$file")
+      continue
+      ;;
+  esac
+
   if [ "${REMOTE_SIZES[$rel]:-}" = "$(stat -c %s "$file")" ]; then
     skipped=$((skipped + 1))
     continue
