@@ -187,16 +187,13 @@ namespace NpcValheim.Npc
         /// </summary>
         private void RPC_SetPrice(long sender, string tagged, int price)
         {
-            // CanAdminister reclaims server ownership; AllowNearby tests IsOwner, so it has to
-            // run after, not before.
+            // Admin identity is the boundary here, not standing distance. This used to also
+            // require the sender within 6m of the NPC, and that is what refused every price
+            // an admin set on the live server -- while a proximity radius protects nothing
+            // that CanAdminister has not already settled: the sender is in adminlist.txt or
+            // the mutation never got here. Only the flood limit is worth keeping.
             if (!CanAdminister(sender)) return;
-
-            if (!NpcRequestGuard.AllowNearby(Nview, transform, sender, "shop-set-price", 6f, 6, 2f))
-            {
-                Plugin.Log.LogWarning($"NpcValheim: refused a counter change from peer {sender} -- out of range of the NPC, or too many in a row");
-                ServiceNpcAuthority.SendStatus(sender, "Fique perto do NPC para mudar o balcão.");
-                return;
-            }
+            if (!NpcRequestGuard.AllowRate(sender, "shop-set-price", 10, 2f)) return;
 
             if (string.IsNullOrEmpty(tagged) || tagged.Length < 3) return;
 
@@ -360,7 +357,8 @@ namespace NpcValheim.Npc
 
         private void RPC_SellToNpc(long sender, string itemName, string packed)
         {
-            if (!NpcRequestGuard.AllowNearby(Nview, transform, sender, "shop-sell", 6f, 8, 2f)) return;
+            // Wrong machine entirely -- the owning peer is handling this, stay out of it.
+            if (Nview == null || !Nview.IsValid() || !Nview.IsOwner()) return;
 
             var parts = (packed ?? "").Split(';');
             if (parts.Length != 2) return;
@@ -368,6 +366,17 @@ namespace NpcValheim.Npc
             // A vanilla stack tops out in the hundreds; anything past this is a malformed or
             // hostile client, not a real sale.
             if (amount <= 0 || amount > 10000) return;
+
+            // Parsed before the guard runs on purpose: the seller's client has already taken
+            // the stack out of their inventory, so a refusal here has to know what to give
+            // back. This was the last path that could still destroy an item -- walking a step
+            // too far between clicking and the packet landing was enough.
+            if (!NpcRequestGuard.AllowNearby(Nview, transform, sender, "shop-sell", out string refusal, 6f, 8, 2f))
+            {
+                Plugin.Log.LogWarning($"NpcValheim: refused a sale from peer {sender} -- {refusal}");
+                ReturnItem(sender, itemName, quality, amount, "Venda recusada");
+                return;
+            }
 
             long playerId = GameApi.GetPlayerId(sender);
             if (playerId == 0L) return;
@@ -605,8 +614,9 @@ namespace NpcValheim.Npc
 
         private void RPC_ConfigureTax(long sender, int taxPercent)
         {
-            if (!NpcRequestGuard.AllowNearby(Nview, transform, sender, "market-tax", 6f, 4, 2f)) return;
+            // Admin-only, so the same reasoning as RPC_SetPrice: proximity is not the boundary.
             if (!CanAdminister(sender)) return;
+            if (!NpcRequestGuard.AllowRate(sender, "market-tax", 6, 2f)) return;
             Nview.GetZDO().Set(KeyTaxPercent, Mathf.Clamp(taxPercent, 0, 100));
             PersistProfileSnapshot();
         }

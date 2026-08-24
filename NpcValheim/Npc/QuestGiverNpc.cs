@@ -722,9 +722,20 @@ namespace NpcValheim.Npc
 
         private void SendQuestsTo(long target)
         {
-            if (!Nview.IsOwner()) return;
+            if (!Nview.IsOwner())
+            {
+                // The client shows "quests=0 synced=False" for exactly this, and used to show
+                // it silently -- a giver that was never asked looks identical to one with
+                // nothing to offer.
+                Plugin.Log.LogWarning($"NpcValheim: '{GetHoverName()}' cannot answer peer {target} -- this machine does not own it");
+                return;
+            }
+
+            // Materialised once: it is both counted for the log and packed below.
+            var offered = new List<QuestDefinition>(OfferedQuests());
+            Plugin.Log.LogInfo($"NpcValheim: sent {offered.Count} quest(s) from '{GetHoverName()}' to peer {target}");
             ServiceNpcAuthority.SendQuestResponse(target, this, "data",
-                Pack(GameApi.GetPlayerId(target), OfferedQuests()));
+                Pack(GameApi.GetPlayerId(target), offered));
         }
 
         // Wire format, one quest per line:

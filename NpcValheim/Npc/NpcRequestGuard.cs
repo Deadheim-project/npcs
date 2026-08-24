@@ -19,14 +19,52 @@ namespace NpcValheim.Npc
         private static float _nextCleanup;
 
         public static bool AllowNearby(ZNetView view, Transform npc, long sender, string operation,
-            float maxDistance = 6f, int burst = 8, float seconds = 2f)
+            float maxDistance = 6f, int burst = 8, float seconds = 2f) =>
+            AllowNearby(view, npc, sender, operation, out _, maxDistance, burst, seconds);
+
+        /// <summary>
+        /// Same check, but names the condition that refused it.
+        ///
+        /// A refusal that only reports "not allowed" is indistinguishable from a bug. The live
+        /// 0.1.22 log said "out of range of the NPC, or too many in a row" and could not tell
+        /// an admin standing at the counter from one who had walked away -- or from a sender
+        /// whose character the server failed to resolve at all, which is a different problem
+        /// with a different fix.
+        /// </summary>
+        public static bool AllowNearby(ZNetView view, Transform npc, long sender, string operation,
+            out string reason, float maxDistance = 6f, int burst = 8, float seconds = 2f)
         {
-            if (view == null || !view.IsValid() || !view.IsOwner()) return false;
-            if (!GameApi.TryGetPlayer(sender, out var player) || player == null) return false;
-            if (player.IsDead() || player.IsTeleporting()) return false;
-            if (npc == null || !IsFinite(npc.position) || !IsFinite(player.transform.position)) return false;
-            if ((player.transform.position - npc.position).sqrMagnitude > maxDistance * maxDistance) return false;
-            return AllowRate(sender, operation, burst, seconds);
+            reason = null;
+            if (view == null || !view.IsValid()) { reason = "the NPC has no valid network view here"; return false; }
+            if (!view.IsOwner()) { reason = "this machine does not own the NPC"; return false; }
+
+            if (!GameApi.TryGetPlayer(sender, out var player) || player == null)
+            {
+                reason = "the server could not resolve the sender's character";
+                return false;
+            }
+            if (player.IsDead()) { reason = "the sender is dead"; return false; }
+            if (player.IsTeleporting()) { reason = "the sender is teleporting"; return false; }
+
+            if (npc == null || !IsFinite(npc.position) || !IsFinite(player.transform.position))
+            {
+                reason = "a position is not a finite number";
+                return false;
+            }
+
+            float distance = Vector3.Distance(player.transform.position, npc.position);
+            if (distance > maxDistance)
+            {
+                reason = $"the sender is {distance:0.0}m from the NPC, limit is {maxDistance:0.0}m";
+                return false;
+            }
+
+            if (!AllowRate(sender, operation, burst, seconds))
+            {
+                reason = $"more than {burst} '{operation}' within {seconds:0.#}s";
+                return false;
+            }
+            return true;
         }
 
         public static bool AllowRate(long sender, string operation, int burst, float seconds)
