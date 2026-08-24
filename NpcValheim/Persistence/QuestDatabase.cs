@@ -126,24 +126,6 @@ namespace NpcValheim.Persistence
             return QuestStatus.NotStarted;
         }
 
-        /// <summary>Test-only: writes a progress record back as-is, so the suite can wind a
-        /// completion timestamp backwards instead of waiting 24 real hours. Gated on the dev
-        /// flag and unreachable from any client.</summary>
-        internal static void SaveForSelfTest(QuestProgress entry)
-        {
-            if (Plugin.EnableSelfTest?.Value != true || entry == null) return;
-            Write(quests => quests.Update(entry));
-        }
-
-        /// <summary>Removes every fixture record for a synthetic player between test runs.
-        /// Production Abandon intentionally preserves completed quests, so it cannot provide
-        /// isolation for a repeatable server self-test.</summary>
-        internal static void ResetPlayerForSelfTest(long playerId)
-        {
-            if (Plugin.EnableSelfTest?.Value != true) return;
-            Write(quests => quests.DeleteMany(x => x.PlayerId == playerId));
-        }
-
         /// <summary>How long until a timed quest comes back, or zero when it is available or
         /// never resets.</summary>
         public static TimeSpan TimeUntilReset(long playerId, QuestDefinition quest)
@@ -162,15 +144,17 @@ namespace NpcValheim.Persistence
             var existing = Get(playerId, questId);
             if (existing != null && existing.Status == QuestStatus.Active) return existing;
 
-            var entry = new QuestProgress
+            // Reuse the durable record for repeatable quests. Replacing it used to erase
+            // TimesCompleted, which made every later reward reuse completion number one.
+            var entry = existing ?? new QuestProgress
             {
                 Key = QuestProgress.MakeKey(playerId, questId),
                 PlayerId = playerId,
                 QuestId = questId,
-                Counters = new List<int>(),
-                Status = QuestStatus.Active,
-                UpdatedUtc = DateTime.UtcNow,
             };
+            entry.Counters = new List<int>();
+            entry.Status = QuestStatus.Active;
+            entry.UpdatedUtc = DateTime.UtcNow;
             Write(quests => quests.Upsert(entry));
             return entry;
         }

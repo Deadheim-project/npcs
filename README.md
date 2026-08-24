@@ -327,8 +327,7 @@ eles — são clones de `Player`, então o `EnemyHud` os tratava como qualquer l
 
 Uma única regra decide tudo — as abas do menu **e** o que o servidor aceita por
 RPC. Está em `NpcBase.CanAdministerAs(playerId, isAdmin, ownerId)`, uma função
-pura justamente pra que os dois lados decidam pelo mesmo código e pra que o
-autoteste consiga exercitá-la sem precisar de um segundo peer conectado:
+pura justamente pra que os dois lados decidam pelo mesmo código:
 
 | Quem | Abas visíveis |
 |---|---|
@@ -357,22 +356,6 @@ Contrapartida assumida: se um NPC for parar num estado sem dono (o normal é o
 `Piece.GetCreator()` gravar quem colocou), quem o colocou perde o acesso e
 precisa de um admin pra readotar. É o lado seguro do trade-off num servidor
 público.
-
-### Como isso foi verificado
-
-Seis asserções no `ServerSelfTestRunner` cobrem dono / visitante / admin /
-órfão / remetente não resolvido, mais duas provando que o visitante continua
-comprando no mercado e aceitando missões. Além disso a suíte foi rodada com a
-regra **antiga** restaurada de propósito, como controle negativo: falhou
-exatamente em `an ownerless NPC is NOT open to a passer-by` (52 passed, 1
-failed), o que mostra que o teste pega o bug em vez de só acompanhar o código.
-
-Para ver o menu do visitante sem precisar de uma segunda conta Steam, o
-`ShowcaseMode` tem o par `Testing.SimulateNonAdmin`: ele monta a cena com
-direitos de admin (senão nem conseguiria vestir os NPCs) e só então entrega os
-NPCs a outro `playerId` e derruba o admin. Daí em diante o painel toma
-exatamente os mesmos ramos que um visitante de verdade toma — nada é
-simulado na UI.
 
 ## Sobre clonar o "Player" em vez de um NPC comum
 
@@ -407,15 +390,16 @@ criatura do zero. Não integrei.
 dotnet build
 ```
 
-O `.csproj` copia a DLL automaticamente para
+Para instalar a DLL explicitamente após o build, use
+`dotnet build -p:CopyToPlugins=true`. O alvo copia para
 `C:\Program Files (x86)\Steam\steamapps\common\Valheim\BepInEx\plugins\NpcValheim\`
-após cada build (ver `CopyToPlugins` target). Se o Valheim estiver instalado
+ao fim da compilação. Se o Valheim estiver instalado
 em outro caminho, defina a variável de ambiente `VALHEIM_PATH` antes de
 buildar.
 
 ## Como testar
 
-1. `dotnet build` (a DLL já vai para a pasta de plugins)
+1. `dotnet build -p:CopyToPlugins=true`
 2. Abra o Valheim normalmente (BepInEx já está instalado)
 3. Entre num mundo, pegue o **Martelo**, categoria **Misc** — os dois NPCs
    aparecem lá como peças colocáveis
@@ -506,12 +490,6 @@ jogo pela JotunnDoc) pra conferir duas coisas sem precisar adivinhar:
   está documentada em `MailboxNpc.SendMailTo`.
 - **`TryTeleport` estourava NRE** — um teleporte destrói e recria o `Player`, e
   quem guardava a referência recebia um objeto destruído.
-- **Cada ciclo de teste no cliente custava 5+ minutos**: o `AutoStart` pegava o
-  mundo de índice 0 às cegas, e quando esse mundo ainda não tinha `.db` o jogo
-  gerava mapa, terreno e localizações inteiros antes do teste começar. Agora
-  ele escolhe por nome (`Testing.WorldName`) ou, na falta, o primeiro mundo já
-  gerado (`World.CheckDbFile()`). Caiu para ~25s.
-
 ## O que ainda vale ficar de olho
 
 - O `Player` vem com itens padrão (`Torch`, `ArmorRagsChest`) que podem
@@ -524,126 +502,6 @@ jogo pela JotunnDoc) pra conferir duas coisas sem precisar adivinhar:
 - Depósito e venda confiam no cliente para a metade "você realmente tinha
   isso" (um servidor não consegue inspecionar o inventário de um cliente); o
   livro-caixa em si é autoritativo no servidor
-
-## Autoteste automatizado (dev only)
-
-Ligue `EnableSelfTest = true` em `BepInEx/config/com.npcvalheim.mod.cfg`
-(seção `[Testing]`) e abra o jogo. **Zero cliques do início ao fim:**
-
-- `Testing/AutoStart.cs` pula o menu principal — monta a lista de mundos,
-  seleciona o primeiro, inicia e confirma o personagem. Chama tudo por
-  `System.Reflection` porque vários membros do `FejdStartup` não são de fato
-  acessíveis em runtime (mesmo problema descrito acima). O detalhe que fazia
-  isso falhar: `SetSelectedWorld` indexa elementos de UI que só existem depois
-  de `UpdateWorldList` rodar.
-- `Testing/SelfTestRunner.cs` roda assim que o jogador nasce: spawna os dois
-  tipos de NPC, exercita abrir o painel, gravar destino + teleportar, trocar
-  armadura/capa, RGB, itens nas mãos e escala, o ciclo completo de
-  venda/compra (com comprador simulado),
-  depósito/saque/saque-a-descoberto, a sincronização de mercado por RPC,
-  configuração de admin, e salvar/aplicar modelo YAML. Cada verificação vira
-  uma linha `SELFTEST PASS`/`SELFTEST FAIL` no `LogOutput.log`.
-
-Última execução client-side completa: **35 passed, 0 failed**. As cinco novas
-verificações cobrem capa, RGB exato, duas mãos, escala e reaplicação de toda a
-aparência por YAML; as outras 30 continuam cobrindo teleporte, mercado,
-autoridade, sincronização e persistência.
-
-### Suíte headless (servidor dedicado) — caminho principal de verificação
-
-Em `-batchmode` o mesmo flag executa `Testing/ServerSelfTestRunner.cs` no
-lugar da suíte de cliente. Última execução: **81 passed, 0 failed**.
-
-### Aparência com itens de outros mods
-
-Os seletores varrem o `ObjectDB` em runtime em vez de carregar lista fixa, então
-itens de outros mods deveriam aparecer sozinhos. "Deveriam" é a parte que valia
-medir — rodei a suíte com e sem mods de equipamento instalados:
-
-| Slot | Sem mods | Com Historical Heritage + Hunter Legacy |
-|---|---|---|
-| Capacete | 42 | 63 |
-| Peitoral | 52 | 73 |
-| Pernas | 21 | 42 |
-| Capa/Ombro | 11 | 31 |
-| Mão direita | 360 | 463 |
-| Mão esquerda | 21 | 25 |
-
-E não é só listar: a suíte pega o primeiro, o do meio e o último item de cada
-slot, equipa no NPC e confere que ficou gravado — com os mods carregados, itens
-como `ArmorCrusaderChestDO` e `ArmorDemonHunterChestDO` passam. Bônus: a Jötunn
-estava carregada junto e nada quebrou, o que é um bom sinal de convivência já que
-este mod não depende dela.
-
-Ela cobre aparência (capa, RGB exato, duas mãos, escala, nome — tudo através
-de `ObjectDB`/`VisEquipment`/ZDO e round-trip do perfil), **permissões** (dono,
-visitante, admin, NPC órfão, remetente não resolvido), o livro-caixa do mercado
-(anúncio, compra com taxa aplicada, autocompra rejeitada, compra cruzada entre
-mercados rejeitada, saldo insuficiente, depósito, saque, saque-a-descoberto,
-cancelamento por não-dono, devolução do estoque), o correio (pagamento e
-mercadoria por carta, posse da carta, expiração) e as missões (aceitar, teto do
-contador, entrega, abandono, ponte EpicMMO).
-
-Por que ela é o caminho principal: num servidor dedicado é exatamente ali que
-economia, permissão e missões são autoritativas em produção, então testar nesse
-runtime vale mais do que testar no cliente. E ela não depende do Steam.
-
-Rodar:
-
-```bash
-cd /d/ValheimDedicatedServer && ./valheim_server.exe -nographics -batchmode -name SelfTest -port 2456 -world SelfTest -password secret123
-```
-
-### Roteiro de demonstração (`Testing.DemoScenarioMode`)
-
-`Testing/DemoScenario.cs` roda a coisa toda de ponta a ponta sem ninguém tocar
-no teclado: monta os quatro NPCs (Halvard, Sigrún, Ylva, Bjorn), segura a cena
-para as placas e o `!` aparecerem, anuncia itens em nome de outro jogador,
-compra dele, mostra a carta chegando, anuncia um item do próprio jogador,
-aceita uma missão (o `!` vira `?`) e usa o teleportador.
-
-A "outra jogadora" é real do ponto de vista da economia: Ragnhild é um id de
-personagem separado, com saldo e anúncios próprios, e a compra passa pelo RPC
-normal. O único fingimento é que ela não está conectada — que é exatamente o
-caso para o qual uma auction house existe.
-
-Foi esse roteiro que expôs os três bugs sérios listados acima. Nenhum deles
-aparecia na suíte headless, porque ela exercita as bases de dados diretamente e
-esses três viviam na costura entre cliente, RPC e inventário.
-
-### O que foi cortado do ciclo
-
-`Patches/FastTestPatches.cs` (tudo condicionado a `EnableSelfTest`, então o
-jogo normal fica intacto):
-
-- **Hugin, o corvo** — `Raven.CheckSpawn` bloqueado e `m_tutorialsEnabled`
-  desligado. O monólogo de tutorial dele era, de longe, o maior custo: bloqueia
-  o começo de toda rodada
-- **Intro** (`Game.ShowIntro`) e **tutoriais** (`Player.ShowTutorial`) pulados
-
-### Armadilhas ao escrever novos casos
-
-Todas já produziram resultado falso nesta suíte:
-
-- **Saldos em valores absolutos** — o livro-caixa é um arquivo que sobrevive
-  entre execuções; compare deltas
-- **Afirmar no frame seguinte a um RPC** — eles passam por uma fila; espere
-  `RpcSettle`
-- **Trocar "esperar a condição" por "dormir N segundos"** — foi isso que
-  quebrou o teste de teleporte ao acelerar o ciclo. O jogo recusa teleportar
-  nos primeiros segundos após o spawn (`Player.m_teleportCooldown` — nascer é,
-  para o jogo, um teleporte), e a espera fixa de 2s original mascarava isso por
-  acidente. O teste agora tenta até o jogo liberar. Quando o certo é uma
-  condição do jogo, espere pela condição: fica mais rápido *e* mais confiável
-
-## Servidor dedicado de teste
-
-A instalação oficial em `C:\Program Files (x86)\Steam\steamapps\common\Valheim
-dedicated server` foi reparada e tem BepInEx + NpcValheim. Esta build passou um
-boot e o autoteste de aparência reais no mundo isolado `NpcFashionTest`,
-registrando os dois NPCs e os dois placer stubs sem exception. O servidor e o
-cliente de teste foram encerrados ao final; nenhum processo Valheim ficou
-rodando.
 
 ## Estrutura
 

@@ -135,7 +135,7 @@ namespace NpcValheim.UI
             if (giver == null) return;
 
             // Only rebuild the list when the data actually changed.
-            var signature = Signature(giver.CachedQuests);
+            var signature = Signature(giver.CachedQuests, Player);
             if (signature != _lastSignature)
             {
                 _lastSignature = signature;
@@ -309,7 +309,7 @@ namespace NpcValheim.UI
             var quest = Selected();
             if (quest == null) return;
             Giver.RequestAccept(quest.Id);
-            Say($"Missão aceita: {quest.Name}");
+            Say("Solicitando missão...");
         }
 
         private void OnAbandon()
@@ -317,23 +317,19 @@ namespace NpcValheim.UI
             var quest = Selected();
             if (quest == null) return;
             Giver.RequestAbandon(quest.Id);
-            Say("Missão abandonada.");
+            Say("Solicitando abandono...");
         }
 
-        /// <summary>Collect quests hand the items over from the client, because a server
-        /// cannot reach into a remote inventory -- same split the sell form uses.</summary>
+        /// <summary>Collect quests are checked locally because the server cannot inspect a
+        /// remote inventory. The items stay put until the authoritative completion response
+        /// arrives, so a refused or lost request cannot destroy them.</summary>
         private void OnTurnIn()
         {
             var quest = Selected();
             if (quest == null) return;
 
             var steps = QuestTracker.Steps(quest);
-            var inventory = Player.GetInventory();
 
-            // Checked in full before anything is removed. Taking the items objective by
-            // objective as we go would, on a quest asking for two things, eat the first one
-            // and then refuse -- the player would be down the items and still holding the
-            // quest.
             foreach (var step in steps)
             {
                 if (step.IsDone(Player)) continue;
@@ -344,12 +340,14 @@ namespace NpcValheim.UI
                 return;
             }
 
-            foreach (var step in steps)
-                if (step.Kind == QuestObjectiveKind.Collect)
-                    ItemNames.Remove(inventory, step.Target, step.Goal, -1);
+            if (!QuestGiverNpc.CanCompleteNow(quest, Player))
+            {
+                Say("Você não possui o total de itens exigido pela missão.");
+                return;
+            }
 
             Giver.RequestTurnIn(quest.Id);
-            Say("Missão entregue; a recompensa vai para a sua bolsa.");
+            Say("Verificando entrega...");
         }
 
         private QuestEntry Selected()
@@ -368,12 +366,24 @@ namespace NpcValheim.UI
             return shared != null ? shared.m_name : prefabName;
         }
 
-        private static string Signature(List<QuestEntry> quests)
+        private static string Signature(List<QuestEntry> quests, Player player)
         {
             var sb = new System.Text.StringBuilder();
             foreach (var quest in quests)
-                sb.Append(quest.Id).Append(':').Append((int)quest.Status).Append(':')
-                  .Append(quest.Counter).Append('|');
+            {
+                sb.Append(quest.Id).Append(':').Append(quest.Name).Append(':')
+                  .Append((int)quest.Status).Append(':')
+                  .Append(quest.Locked ? '1' : '0').Append(':')
+                  .Append(quest.LevelLocked ? '1' : '0').Append(':')
+                  .Append(quest.RequiredLevel).Append(':').Append(quest.LockReason).Append('[');
+
+                foreach (var step in QuestTracker.Steps(quest))
+                    sb.Append((int)step.Kind).Append(':').Append(step.Target).Append(':')
+                      .Append(step.Goal).Append(':').Append(step.Counter).Append(':')
+                      .Append(step.Progress(player)).Append(',');
+
+                sb.Append("]|");
+            }
             return sb.ToString();
         }
     }

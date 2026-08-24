@@ -236,7 +236,6 @@ namespace NpcValheim.UI
             {
                 if (string.IsNullOrEmpty(_templateName.text)) { Say("Dê um nome ao modelo primeiro."); return; }
                 Npc.RequestSaveAsTemplate(Player, _templateName.text);
-                Say($"Modelo '{_templateName.text}' salvo.");
                 _templateSignature = null;
             });
 
@@ -675,7 +674,6 @@ namespace NpcValheim.UI
                 apply.onClick.AddListener(() =>
                 {
                     Npc.RequestApplyTemplateByName(Player, captured);
-                    Say($"Modelo '{captured}' aplicado.");
                 });
             }
         }

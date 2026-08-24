@@ -20,9 +20,13 @@ namespace NpcValheim.Npc
     {
         private const string RpcPlace = "NpcValheim_PlaceServiceNpc";
         private const string RpcRemove = "NpcValheim_RemoveServiceNpc";
+        private const string RpcMutate = "NpcValheim_MutateServiceNpc";
+        private const string RpcTemplateIndex = "NpcValheim_ServiceNpcTemplateIndex";
+        private const string RpcQuestAction = "NpcValheim_QuestGiverAction";
+        private const string RpcQuestResponse = "NpcValheim_QuestGiverResponse";
+        private const string RpcQuestPlayerResponse = "NpcValheim_QuestPlayerResponse";
+        private const string RpcConsumeStub = "NpcValheim_ConsumeServiceNpcStub";
         private const string RpcStatus = "NpcValheim_ServiceNpcStatus";
-        private const float MaxPlacementDistance = 50f;
-        private const float MaxRemovalDistance = 15f;
         private const float MaxWorldCoordinate = 1000000f;
 
         private static readonly HashSet<string> AllowedTargets = new HashSet<string>(StringComparer.Ordinal)
@@ -46,6 +50,12 @@ namespace NpcValheim.Npc
             ProcessedStubs.Clear();
             rpc.Register(RpcPlace, (Action<long, string, ZDOID>)RPC_Place);
             rpc.Register(RpcRemove, (Action<long, ZDOID>)RPC_Remove);
+            rpc.Register<ZPackage>(RpcMutate, RPC_Mutate);
+            rpc.Register(RpcTemplateIndex, (Action<long, ZDOID, string>)RPC_TemplateIndex);
+            rpc.Register<ZPackage>(RpcQuestAction, RPC_QuestAction);
+            rpc.Register<ZPackage>(RpcQuestResponse, RPC_QuestResponse);
+            rpc.Register<ZPackage>(RpcQuestPlayerResponse, RPC_QuestPlayerResponse);
+            rpc.Register(RpcConsumeStub, (Action<long, ZDOID>)RPC_ConsumeStub);
             rpc.Register(RpcStatus, (Action<long, string>)RPC_Status);
             Plugin.Log.LogInfo("NpcValheim: server-authoritative service NPC RPCs registered");
         }
@@ -72,6 +82,174 @@ namespace NpcValheim.Npc
             return true;
         }
 
+        internal static bool RequestMutation(NpcBase npc, string method, object[] arguments)
+        {
+            TryRegister();
+            var nview = npc != null ? npc.GetComponent<ZNetView>() : null;
+            if (_registeredRpc == null || nview == null || !nview.IsValid() ||
+                string.IsNullOrEmpty(method)) return false;
+
+            arguments ??= Array.Empty<object>();
+            if (arguments.Length > 4) return false;
+
+            var package = new ZPackage();
+            package.Write(nview.GetZDO().m_uid);
+            package.Write(method);
+            package.Write(arguments.Length);
+            foreach (object argument in arguments)
+            {
+                switch (argument)
+                {
+                    case string text:
+                        package.Write((byte)1);
+                        package.Write(text);
+                        break;
+                    case int integer:
+                        package.Write((byte)2);
+                        package.Write(integer);
+                        break;
+                    case float number:
+                        package.Write((byte)3);
+                        package.Write(number);
+                        break;
+                    case Vector3 vector:
+                        package.Write((byte)4);
+                        package.Write(vector);
+                        break;
+                    default:
+                        return false;
+                }
+            }
+
+            _registeredRpc.InvokeRoutedRPC(GameApi.GetServerPeerId(), RpcMutate, package);
+            return true;
+        }
+
+        internal static bool RequestQuestAction(QuestGiverNpc npc, string action, string payload = "")
+        {
+            TryRegister();
+            var nview = npc != null ? npc.GetComponent<ZNetView>() : null;
+            if (_registeredRpc == null || nview == null || !nview.IsValid() ||
+                string.IsNullOrEmpty(action)) return false;
+
+            var package = new ZPackage();
+            package.Write(nview.GetZDO().m_uid);
+            package.Write(action);
+            package.Write(payload ?? "");
+            _registeredRpc.InvokeRoutedRPC(GameApi.GetServerPeerId(), RpcQuestAction, package);
+            return true;
+        }
+
+        internal static void SendQuestResponse(
+            long peer, QuestGiverNpc npc, string response, string payload)
+        {
+            var nview = npc != null ? npc.GetComponent<ZNetView>() : null;
+            if (!IsServer() || nview == null || !nview.IsValid() || peer == 0L ||
+                string.IsNullOrEmpty(response)) return;
+
+            var package = new ZPackage();
+            package.Write(nview.GetZDO().m_uid);
+            package.Write(response);
+            package.Write(payload ?? "");
+            ZRoutedRpc.instance?.InvokeRoutedRPC(peer, RpcQuestResponse, package);
+        }
+
+        /// <summary>Sends a quest result to the player without depending on the giver still
+        /// being instantiated on that client. Completion, item consumption and experience
+        /// must survive the NPC leaving the active zone while the server handles the request.</summary>
+        internal static void SendQuestPlayerResponse(long peer, string response, string payload)
+        {
+            if (!IsServer() || peer == 0L || string.IsNullOrEmpty(response)) return;
+
+            var package = new ZPackage();
+            package.Write(response);
+            package.Write(payload ?? "");
+            ZRoutedRpc.instance?.InvokeRoutedRPC(peer, RpcQuestPlayerResponse, package);
+        }
+
+        internal static void SendTemplateIndex(long peer, NpcBase npc, string packed)
+        {
+            var nview = npc != null ? npc.GetComponent<ZNetView>() : null;
+            if (!IsServer() || nview == null || !nview.IsValid() || peer == 0L) return;
+
+            ZRoutedRpc.instance?.InvokeRoutedRPC(peer, RpcTemplateIndex,
+                new object[] { nview.GetZDO().m_uid, packed ?? "" });
+        }
+
+        private static void RPC_Mutate(long sender, ZPackage package)
+        {
+            if (!IsServer() || package == null) return;
+            if (!NpcRequestGuard.AllowRate(sender, "service-mutate", burst: 30, seconds: 3f)) return;
+            if (!GameApi.IsAdmin(sender))
+            {
+                Plugin.Log.LogWarning($"NpcValheim: denied administrative NPC mutation from peer {sender}");
+                return;
+            }
+
+            try
+            {
+                ZDOID npcId = package.ReadZDOID();
+                string method = package.ReadString();
+                int count = package.ReadInt();
+                if (npcId.IsNone() || string.IsNullOrEmpty(method) || count < 0 || count > 4) return;
+
+                var arguments = new object[count];
+                for (int i = 0; i < count; i++)
+                {
+                    switch (package.ReadByte())
+                    {
+                        case 1: arguments[i] = package.ReadString(); break;
+                        case 2: arguments[i] = package.ReadInt(); break;
+                        case 3: arguments[i] = package.ReadSingle(); break;
+                        case 4: arguments[i] = package.ReadVector3(); break;
+                        default: return;
+                    }
+                }
+
+                if (!TryResolveNpc(npcId, out _, out var npc))
+                {
+                    Plugin.Log.LogWarning($"NpcValheim: mutation target {npcId} is not a service NPC");
+                    return;
+                }
+
+                if (!npc.DispatchAdminMutation(sender, method, arguments))
+                    Plugin.Log.LogWarning($"NpcValheim: refused unknown administrative mutation '{method}'");
+            }
+            catch (Exception e)
+            {
+                Plugin.Log.LogWarning($"NpcValheim: invalid administrative mutation from peer {sender}: {e.Message}");
+                SendStatus(sender, "Falha ao alterar o NPC. Consulte o log do servidor.");
+            }
+        }
+
+        private static void RPC_QuestAction(long sender, ZPackage package)
+        {
+            if (!IsServer() || package == null) return;
+            if (!NpcRequestGuard.AllowRate(sender, "quest-giver-action", burst: 40, seconds: 3f)) return;
+
+            try
+            {
+                ZDOID npcId = package.ReadZDOID();
+                string action = package.ReadString();
+                string payload = package.ReadString();
+                if (npcId.IsNone() || string.IsNullOrEmpty(action) || action.Length > 64 ||
+                    (payload?.Length ?? 0) > 65536) return;
+
+                if (!TryResolveNpc(npcId, out _, out var npc) || !(npc is QuestGiverNpc giver))
+                {
+                    Plugin.Log.LogWarning($"NpcValheim: quest action target {npcId} is not a quest giver");
+                    return;
+                }
+
+                if (!giver.DispatchQuestAction(sender, action, payload))
+                    Plugin.Log.LogWarning($"NpcValheim: refused unknown quest giver action '{action}'");
+            }
+            catch (Exception e)
+            {
+                Plugin.Log.LogWarning($"NpcValheim: invalid quest giver action from peer {sender}: {e.Message}");
+            }
+        }
+
         private static void RPC_Place(long sender, string targetPrefabName, ZDOID stubId)
         {
             if (!IsServer()) return;
@@ -83,12 +261,6 @@ namespace NpcValheim.Npc
             if (!GameApi.IsAdmin(sender))
             {
                 RejectPlacement(sender, stubZdo, stubId, "Apenas administradores podem colocar NPCs de serviço.");
-                return;
-            }
-
-            if (!TryGetAuthenticatedPlayer(sender, out long playerId, out var player))
-            {
-                RejectPlacement(sender, stubZdo, stubId, "Não foi possível confirmar o jogador que colocou o NPC.");
                 return;
             }
 
@@ -105,9 +277,8 @@ namespace NpcValheim.Npc
 
             bool targetMatchesStub = stub != null &&
                                      string.Equals(stub.TargetPrefabName, targetPrefabName, StringComparison.Ordinal);
-            if (!AllowedTargets.Contains(targetPrefabName) || !targetMatchesStub || creator != playerId ||
-                !IsFinite(position) || !IsFinite(rotation) ||
-                (player.transform.position - position).sqrMagnitude > MaxPlacementDistance * MaxPlacementDistance)
+            if (!AllowedTargets.Contains(targetPrefabName) || !targetMatchesStub ||
+                !IsFinite(position) || !IsFinite(rotation))
             {
                 RejectPlacement(sender, stubZdo, stubId, "Colocação de NPC recusada pelo servidor.");
                 return;
@@ -126,21 +297,22 @@ namespace NpcValheim.Npc
             {
                 instance = UnityEngine.Object.Instantiate(targetPrefab, position, rotation);
                 var npc = instance.GetComponent<NpcBase>();
-                npc.InitializeAfterSpawn(playerId);
+                npc.InitializeAfterSpawn(creator);
 
                 // Static service pieces (currently the mailbox) retain Piece for wear and
                 // metadata, but removal goes through the authorized flow below.
                 var realPiece = instance.GetComponent<Piece>();
                 if (realPiece != null)
                 {
-                    realPiece.SetCreator(playerId);
+                    realPiece.SetCreator(creator);
                     realPiece.m_canBeRemoved = false;
                 }
 
                 DestroyZdoObject(stubZdo);
+                SendConsumeStub(sender, stubId);
                 SendStatus(sender, $"{npc.GetHoverName()} colocado.");
                 Plugin.Log.LogInfo(
-                    $"NpcValheim: admin {playerId} placed '{targetPrefabName}' at {position}");
+                    $"NpcValheim: admin peer {sender} placed '{targetPrefabName}' for creator {creator} at {position}");
             }
             catch (Exception e)
             {
@@ -155,19 +327,8 @@ namespace NpcValheim.Npc
         {
             if (!IsServer() || !GameApi.IsAdmin(sender)) return;
             if (!NpcRequestGuard.AllowRate(sender, "service-remove", burst: 2, seconds: 3f)) return;
-            if (!TryGetAuthenticatedPlayer(sender, out long playerId, out var player)) return;
 
-            var instance = ZNetScene.instance?.FindInstance(npcId);
-            var npc = instance != null ? instance.GetComponent<NpcBase>() : null;
-            if (npc == null) return;
-
-            if (!IsFinite(instance.transform.position) ||
-                (player.transform.position - instance.transform.position).sqrMagnitude >
-                MaxRemovalDistance * MaxRemovalDistance)
-            {
-                SendStatus(sender, "Chegue mais perto do NPC para removê-lo.");
-                return;
-            }
+            if (!TryResolveNpc(npcId, out var instance, out var npc)) return;
 
             string profileId = npc.ProfileId;
             string displayName = npc.GetHoverName();
@@ -186,7 +347,57 @@ namespace NpcValheim.Npc
 
             ZNetScene.instance.Destroy(instance);
             SendStatus(sender, $"{displayName} removido.");
-            Plugin.Log.LogInfo($"NpcValheim: admin {playerId} removed NPC '{displayName}' ({npcId})");
+            Plugin.Log.LogInfo($"NpcValheim: admin peer {sender} removed NPC '{displayName}' ({npcId})");
+        }
+
+        private static void RPC_TemplateIndex(long sender, ZDOID npcId, string packed)
+        {
+            if (!IsAuthoritativeSender(sender) || npcId.IsNone()) return;
+
+            var instance = ZNetScene.instance?.FindInstance(npcId);
+            var npc = instance != null ? instance.GetComponent<NpcBase>() : null;
+            npc?.ReceiveServerTemplateIndex(packed);
+        }
+
+        private static void RPC_QuestResponse(long sender, ZPackage package)
+        {
+            if (!IsAuthoritativeSender(sender) || package == null) return;
+
+            try
+            {
+                ZDOID npcId = package.ReadZDOID();
+                string response = package.ReadString();
+                string payload = package.ReadString();
+                if (npcId.IsNone() || string.IsNullOrEmpty(response) || response.Length > 64 ||
+                    (payload?.Length ?? 0) > 1048576) return;
+
+                var instance = ZNetScene.instance?.FindInstance(npcId);
+                var giver = instance != null ? instance.GetComponent<QuestGiverNpc>() : null;
+                giver?.ReceiveQuestResponse(response, payload);
+            }
+            catch (Exception e)
+            {
+                Plugin.Log.LogWarning($"NpcValheim: invalid quest giver response: {e.Message}");
+            }
+        }
+
+        private static void RPC_QuestPlayerResponse(long sender, ZPackage package)
+        {
+            if (!IsAuthoritativeSender(sender) || package == null) return;
+
+            try
+            {
+                string response = package.ReadString();
+                string payload = package.ReadString();
+                if (string.IsNullOrEmpty(response) || response.Length > 64 ||
+                    (payload?.Length ?? 0) > 1048576) return;
+
+                QuestGiverNpc.ReceivePlayerResponse(response, payload);
+            }
+            catch (Exception e)
+            {
+                Plugin.Log.LogWarning($"NpcValheim: invalid player quest response: {e.Message}");
+            }
         }
 
         private static void RPC_Status(long sender, string message)
@@ -195,10 +406,22 @@ namespace NpcValheim.Npc
             Player.m_localPlayer?.Message(MessageHud.MessageType.Center, message, 0, null);
         }
 
+        private static void RPC_ConsumeStub(long sender, ZDOID stubId)
+        {
+            if (!IsAuthoritativeSender(sender) || stubId.IsNone()) return;
+            var instance = ZNetScene.instance?.FindInstance(stubId);
+            if (instance == null) return;
+
+            var nview = instance.GetComponent<ZNetView>();
+            if (nview != null && nview.IsValid() && nview.IsOwner()) nview.Destroy();
+            else UnityEngine.Object.Destroy(instance);
+        }
+
         private static void RejectPlacement(long sender, ZDO stubZdo, ZDOID stubId, string reason)
         {
             ProcessedStubs.Add(stubId);
             DestroyZdoObject(stubZdo);
+            SendConsumeStub(sender, stubId);
             SendStatus(sender, reason);
             Plugin.Log.LogWarning($"NpcValheim: denied service NPC placement from peer {sender}: {reason}");
         }
@@ -207,24 +430,58 @@ namespace NpcValheim.Npc
         {
             if (zdo == null) return;
             var instance = ZNetScene.instance?.FindInstance(zdo.m_uid);
-            if (instance != null) ZNetScene.instance.Destroy(instance);
-            else ZDOMan.instance?.DestroyZDO(zdo);
-        }
-
-        private static void SendStatus(long peer, string message)
-        {
-            ZRoutedRpc.instance?.InvokeRoutedRPC(peer, RpcStatus, new object[] { message ?? "" });
-        }
-
-        internal static bool TryGetAuthenticatedPlayer(long sender, out long playerId, out Player player)
-        {
-            if (!GameApi.TryGetPlayer(sender, out player) || player == null)
+            var nview = instance != null ? instance.GetComponent<ZNetView>() : null;
+            if (nview != null && nview.IsValid())
             {
-                playerId = 0L;
+                nview.ClaimOwnership();
+                ZNetScene.instance.Destroy(instance);
+                return;
+            }
+
+            // ZDOMan.DestroyZDO is deliberately a no-op for foreign-owned objects. There is
+            // no loaded ZNetView to claim through here, so transfer this server-validated
+            // stub directly before queuing its network deletion.
+            zdo.SetOwner(ZDOMan.GetSessionID());
+            ZDOMan.instance?.DestroyZDO(zdo);
+        }
+
+        internal static bool TryResolveNpc(ZDOID npcId, out GameObject instance, out NpcBase npc)
+        {
+            instance = null;
+            npc = null;
+            if (npcId.IsNone() || ZDOMan.instance == null || ZNetScene.instance == null)
+                return false;
+
+            var zdo = ZDOMan.instance.GetZDO(npcId);
+            if (zdo == null) return false;
+
+            var prefab = ZNetScene.instance.GetPrefab(zdo.GetPrefab());
+            if (prefab == null || !AllowedTargets.Contains(prefab.name) ||
+                prefab.GetComponent<NpcBase>() == null) return false;
+
+            long serverSession = ZDOMan.GetSessionID();
+            if (zdo.GetOwner() != serverSession) zdo.SetOwner(serverSession);
+
+            instance = GameApi.EnsureZdoInstance(zdo);
+            var nview = instance != null ? instance.GetComponent<ZNetView>() : null;
+            if (nview == null || !nview.IsValid() || nview.GetZDO().m_uid != npcId)
+            {
+                instance = null;
                 return false;
             }
-            playerId = player.GetPlayerID();
-            return playerId != 0L;
+
+            npc = instance != null ? instance.GetComponent<NpcBase>() : null;
+            return npc != null;
+        }
+
+        private static void SendConsumeStub(long peer, ZDOID stubId)
+        {
+            ZRoutedRpc.instance?.InvokeRoutedRPC(peer, RpcConsumeStub, new object[] { stubId });
+        }
+
+        internal static void SendStatus(long peer, string message)
+        {
+            ZRoutedRpc.instance?.InvokeRoutedRPC(peer, RpcStatus, new object[] { message ?? "" });
         }
 
         internal static bool IsAuthoritativeSender(long sender)
@@ -257,26 +514,6 @@ namespace NpcValheim.Npc
     {
         [HarmonyPostfix]
         private static void Postfix() => ServiceNpcAuthority.TryRegister();
-    }
-
-    /// <summary>The owner field is retained as provenance, not as authority over a public
-    /// service. Keep all existing NpcBase checks and narrow successful mutations to a server-
-    /// verified admin.</summary>
-    [HarmonyPatch(typeof(NpcBase), "CanAdminister")]
-    internal static class NpcBase_CanAdminister_ServiceAdmin_Patch
-    {
-        [HarmonyPostfix]
-        private static void Postfix(NpcBase __instance, long sender, ref bool __result)
-        {
-            if (!__result || __instance == null || ZNet.instance == null || !ZNet.instance.IsServer() ||
-                !GameApi.IsAdmin(sender) || !GameApi.TryGetPlayer(sender, out var player) || player == null)
-            {
-                __result = false;
-                return;
-            }
-
-            __result = (player.transform.position - __instance.transform.position).sqrMagnitude <= 100f;
-        }
     }
 
     [HarmonyPatch(typeof(NpcBase), nameof(NpcBase.CanLocalPlayerAdminister))]

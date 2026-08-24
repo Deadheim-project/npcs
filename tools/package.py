@@ -28,16 +28,11 @@ ASSEMBLIES = ["NpcValheim.dll", "LiteDB.dll"]
 
 
 def build_distribution():
-    """Compiles with DevTools off, into an output folder of its own.
-
-    Two reasons not to just zip up bin/Release: that folder holds whatever flavour was built
-    last, and the distribution flavour drops the 3,200-line test suite -- shipping the dev
-    build by accident is exactly the mistake this removes the opportunity for.
-    """
+    """Compiles the release into an output folder of its own."""
     out_dir = os.path.join(PROJECT, "bin", "Dist")
     command = [
         "dotnet", "build", os.path.join(PROJECT, "NpcValheim.csproj"),
-        "-c", "Release", "-p:DevTools=false", "-p:OutputPath=" + out_dir + os.sep,
+        "-c", "Release", "-p:OutputPath=" + out_dir + os.sep,
         "-v", "q", "--nologo",
     ]
     if subprocess.call(command) != 0:

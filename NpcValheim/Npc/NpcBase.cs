@@ -234,7 +234,7 @@ namespace NpcValheim.Npc
 
             // Talking to somebody is a quest objective in its own right ("take word to the
             // smith"), and opening their panel is what talking to them means here.
-            QuestProgressNetwork.Report(QuestObjectiveKind.Talk, GetNpcName());
+            QuestProgressNetwork.ReportTalk(this);
             return true;
         }
 
@@ -268,15 +268,14 @@ namespace NpcValheim.Npc
         /// <summary>True if the local player may see the Appearance/Admin tabs for this NPC.</summary>
         public bool CanLocalPlayerAdminister()
         {
-            var player = Player.m_localPlayer;
-            return player != null && CanAdministerAs(player.GetPlayerID(), LocalPlayerIsAdmin(), OwnerId);
+            // The server authorizes every edit from the connection's admin-list identity.
+            // Keep the UI rule identical, rather than coupling it to a Player object that
+            // can be temporarily absent while the client is joining or respawning.
+            return LocalPlayerIsAdmin();
         }
 
         public static bool LocalPlayerIsAdmin()
         {
-            // Dev preview: lets the showcase render the panel exactly as a visitor sees it
-            // without needing a second machine and a second Steam account (Testing.SimulateNonAdmin).
-            if (Plugin.NonAdminPreviewActive) return false;
             return (ZNet.instance != null && ZNet.instance.LocalPlayerIsAdminOrHost()) ||
                    Plugin.LocalPlayerIsServerSyncAdmin;
         }
@@ -296,16 +295,72 @@ namespace NpcValheim.Npc
             InvokeAuthoritativeRpc("RPC_SetName", name ?? "NPC");
         }
 
-        /// <summary>
-        /// Configuration executes on the ZDO owner. NPC ZDOs are made server-owned in Awake,
-        /// so this is both the native Valheim routing path and the behavior used before the
-        /// client/test assembly split. Routing to GetServerPeerID explicitly proved brittle
-        /// across the dedicated-server routed-RPC implementation and could drop the request.
-        /// </summary>
+        /// <summary>Send administrative mutations through the authenticated global RPC.
+        /// Character ZDO ownership moves to nearby clients, so a ZNetView RPC cannot be the
+        /// authority boundary for settings or server-side profile files.</summary>
         protected void InvokeAuthoritativeRpc(string method, params object[] arguments)
         {
             if (Nview == null || !Nview.IsValid()) return;
-            Nview.InvokeRPC(method, arguments);
+            ServiceNpcAuthority.RequestMutation(this, method, arguments);
+        }
+
+        /// <summary>Dispatches a mutation only after the global server RPC has authenticated
+        /// its sender and resolved this exact NPC from its ZDOID. Individual handlers retain
+        /// their own validation as a second boundary.</summary>
+        internal virtual bool DispatchAdminMutation(long sender, string method, object[] arguments)
+        {
+            arguments ??= Array.Empty<object>();
+            switch (method)
+            {
+                case "RPC_SetName" when arguments.Length == 1 && arguments[0] is string name:
+                    RPC_SetName(sender, name);
+                    return true;
+                case "RPC_SetArmor" when arguments.Length == 2 &&
+                                             arguments[0] is string armorSlot &&
+                                             arguments[1] is string armorItem:
+                    RPC_SetArmor(sender, armorSlot, armorItem);
+                    return true;
+                case "RPC_SetHair" when arguments.Length == 1 && arguments[0] is string hair:
+                    RPC_SetHair(sender, hair);
+                    return true;
+                case "RPC_SetBeard" when arguments.Length == 1 && arguments[0] is string beard:
+                    RPC_SetBeard(sender, beard);
+                    return true;
+                case "RPC_SetModel" when arguments.Length == 1 && arguments[0] is int model:
+                    RPC_SetModel(sender, model);
+                    return true;
+                case "RPC_SetSkinPreset" when arguments.Length == 1 && arguments[0] is int skinPreset:
+                    RPC_SetSkinPreset(sender, skinPreset);
+                    return true;
+                case "RPC_SetHairColorPreset" when arguments.Length == 1 && arguments[0] is int hairPreset:
+                    RPC_SetHairColorPreset(sender, hairPreset);
+                    return true;
+                case "RPC_SetSkinColor" when arguments.Length == 1 && arguments[0] is Vector3 skinColor:
+                    RPC_SetSkinColor(sender, skinColor);
+                    return true;
+                case "RPC_SetHairColor" when arguments.Length == 1 && arguments[0] is Vector3 hairColor:
+                    RPC_SetHairColor(sender, hairColor);
+                    return true;
+                case "RPC_SetHandItem" when arguments.Length == 2 &&
+                                                arguments[0] is string handSlot &&
+                                                arguments[1] is string handItem:
+                    RPC_SetHandItem(sender, handSlot, handItem);
+                    return true;
+                case "RPC_SetScale" when arguments.Length == 1 && arguments[0] is float scale:
+                    RPC_SetScale(sender, scale);
+                    return true;
+                case "RPC_RequestTemplateIndex" when arguments.Length == 0:
+                    RPC_RequestTemplateIndex(sender);
+                    return true;
+                case "RPC_SaveAsTemplate" when arguments.Length == 1 && arguments[0] is string saveName:
+                    RPC_SaveAsTemplate(sender, saveName);
+                    return true;
+                case "RPC_ApplyTemplateByName" when arguments.Length == 1 && arguments[0] is string templateName:
+                    RPC_ApplyTemplateByName(sender, templateName);
+                    return true;
+                default:
+                    return false;
+            }
         }
 
         private void RPC_SetName(long sender, string name)
@@ -324,32 +379,35 @@ namespace NpcValheim.Npc
             return owner != 0L && owner == player.GetPlayerID();
         }
 
-        /// <summary>Server-side authority check for every settings RPC. The RPC sender is a
-        /// transient peer id; GameApi resolves it to the stable character id first, and
-        /// returns 0 when it can't -- which CanAdministerAs treats as "no".</summary>
+        /// <summary>Server-side authority check for every settings RPC. Service NPC
+        /// administration is intentionally binary: Valheim confirms the RPC socket is in
+        /// adminlist.txt, or the mutation is refused. OwnerId remains provenance only.</summary>
         protected bool CanAdminister(long sender)
         {
-            if (!Nview.IsOwner()) return false;
-            long playerId = GameApi.GetPlayerId(sender);
-            bool isAdmin = GameApi.IsAdmin(sender);
-            long ownerId = OwnerId;
-
-            // Adopting an orphan: an NPC whose owner never got recorded would otherwise be
-            // permanently unconfigurable. Restricted to admins, because the alternative --
-            // whoever asks first -- is how the old escalation worked.
-            if (isAdmin && ownerId == 0L && playerId != 0L)
+            if (!EnsureServerAuthority())
             {
-                Nview.GetZDO().Set(ZdoKeys.Owner, playerId);
-                Plugin.Log.LogInfo($"NpcValheim: admin {playerId} adopted the ownerless NPC '{GetNpcName()}'");
-                return true;
+                Plugin.Log.LogWarning(
+                    $"NpcValheim: denied NPC mutation sender={sender}: handler is not authoritative server");
+                return false;
             }
 
-            bool allowed = CanAdministerAs(playerId, isAdmin, ownerId);
-            if (!allowed)
+            bool isAdmin = GameApi.IsAdmin(sender);
+            if (!isAdmin)
                 Plugin.Log.LogWarning(
-                    $"NpcValheim: denied NPC mutation sender={sender} player={playerId} " +
-                    $"admin={isAdmin} owner={ownerId}");
-            return allowed;
+                    $"NpcValheim: denied NPC mutation sender={sender} admin=False owner={OwnerId}");
+            return isAdmin;
+        }
+
+        /// <summary>Administrative RPCs are addressed directly to the server. Reclaim the
+        /// ZDO there before writing so a prior zone-ownership transfer cannot make the
+        /// client's copy authoritative again or discard the server's appearance changes.</summary>
+        private bool EnsureServerAuthority()
+        {
+            if (Nview == null || !Nview.IsValid() || ZNet.instance == null ||
+                !ZNet.instance.IsServer()) return false;
+
+            if (!Nview.IsOwner()) Nview.ClaimOwnership();
+            return Nview.IsOwner();
         }
 
         /// <summary>Called by NpcSpawnerStub right after it Instantiate()s us -- we're never
@@ -639,27 +697,33 @@ namespace NpcValheim.Npc
         /// </summary>
         public void RequestTemplateIndex()
         {
-            if (_serverTemplateIndexReceived || Nview == null || !Nview.IsValid()) return;
+            if (_serverTemplateIndexReceived || Nview == null || !Nview.IsValid() ||
+                !CanLocalPlayerAdminister()) return;
             if (Time.unscaledTime < _nextTemplateIndexRequest) return;
 
             _nextTemplateIndexRequest = Time.unscaledTime + 2f;
-            Nview.InvokeRPC("RPC_RequestTemplateIndex");
+            InvokeAuthoritativeRpc("RPC_RequestTemplateIndex");
         }
 
         public List<string> GetServerTemplateNames() => new List<string>(_serverTemplateNames);
 
         private void RPC_RequestTemplateIndex(long sender)
         {
-            if (!Nview.IsOwner()) return;
+            if (!CanAdminister(sender)) return;
 
             var names = NpcConfigStore.ListTemplatesFor(ProfileType);
-            Nview.InvokeRPC(sender, "RPC_TemplateIndex", string.Join("\n", names));
+            ServiceNpcAuthority.SendTemplateIndex(sender, this, string.Join("\n", names));
             Plugin.Log.LogInfo($"NpcValheim: sent {names.Count} template(s) for {ProfileType} to peer {sender}");
         }
 
         private void RPC_TemplateIndex(long sender, string packed)
         {
             if (!NpcRequestGuard.IsResponseFromOwner(Nview, sender)) return;
+            ReceiveServerTemplateIndex(packed);
+        }
+
+        internal void ReceiveServerTemplateIndex(string packed)
+        {
             _serverTemplateNames.Clear();
             _serverTemplateNames.AddRange((packed ?? "")
                 .Split(new[] { '\n' }, StringSplitOptions.RemoveEmptyEntries)
@@ -684,7 +748,9 @@ namespace NpcValheim.Npc
         {
             if (!CanAdminister(sender) || string.IsNullOrEmpty(templateName)) return;
             NpcConfigStore.SaveTemplate(templateName, BuildProfile());
-            _serverTemplateIndexReceived = false;
+            var names = NpcConfigStore.ListTemplatesFor(ProfileType);
+            ServiceNpcAuthority.SendTemplateIndex(sender, this, string.Join("\n", names));
+            ServiceNpcAuthority.SendStatus(sender, $"Modelo '{templateName}' salvo.");
             Plugin.Log.LogInfo($"NpcValheim: saved template '{templateName}' from NPC '{GetNpcName()}'");
         }
 
@@ -695,9 +761,16 @@ namespace NpcValheim.Npc
             if (profile == null)
             {
                 Plugin.Log.LogWarning($"NpcValheim: template '{templateName}' not found");
+                ServiceNpcAuthority.SendStatus(sender, $"Modelo '{templateName}' não encontrado ou inválido.");
                 return;
             }
-            ApplyProfileAuthoritative(profile);
+            if (ApplyProfileAuthoritative(profile))
+            {
+                OnProfileApplied(sender);
+                ServiceNpcAuthority.SendStatus(sender, $"Modelo '{templateName}' aplicado.");
+            }
+            else
+                ServiceNpcAuthority.SendStatus(sender, $"Modelo '{templateName}' incompatível com este NPC.");
         }
 
         /// <summary>Snapshot of everything about this NPC, in the shape saved to
@@ -744,15 +817,15 @@ namespace NpcValheim.Npc
         /// when called on the owning peer) and re-persists the resulting state. Profiles
         /// created in code retain the historical full-replacement behavior; YAML templates
         /// carry an exact presence map and therefore act as patches.</summary>
-        private void ApplyProfileAuthoritative(NpcProfile profile)
+        private bool ApplyProfileAuthoritative(NpcProfile profile)
         {
-            if (profile == null || Nview == null || !Nview.IsValid()) return;
+            if (profile == null || Nview == null || !Nview.IsValid()) return false;
 
             if (!string.IsNullOrWhiteSpace(profile.ForType) &&
                 !string.Equals(profile.ForType, ProfileType, StringComparison.OrdinalIgnoreCase))
             {
                 Plugin.Log.LogWarning($"NpcValheim: refused {profile.ForType} template on {ProfileType} NPC '{GetNpcName()}'");
-                return;
+                return false;
             }
 
             var zdo = Nview.GetZDO();
@@ -869,6 +942,7 @@ namespace NpcValheim.Npc
             // omitted nested fields stay null and explicit empty lists take their clear path.
             ApplyTypeSpecificProfile(profile.TypeSpecificApplication(BuildProfile()));
             PersistProfileSnapshot();
+            return true;
         }
 
         private static bool TryGetArmorValue(
@@ -887,30 +961,11 @@ namespace NpcValheim.Npc
             return false;
         }
 
-        /// <summary>Dedicated-server runtime probe for the opt-in self-test. This is not an
-        /// RPC and is inaccessible to remote clients; normal code must use the authorized
-        /// request methods above.</summary>
-        internal bool ApplyProfileForSelfTest(NpcProfile profile)
-        {
-            if (Plugin.EnableSelfTest?.Value != true || ZNet.instance == null || !ZNet.instance.IsServer())
-                return false;
-            ApplyProfileAuthoritative(profile);
-            return true;
-        }
-
-        /// <summary>Showcase-only: hands this NPC to a different player so the panel can be
-        /// captured as a visitor genuinely sees it -- IsOwner then fails for real reasons
-        /// rather than being stubbed out. Gated on the dev config; not an RPC.</summary>
-        internal void ReassignOwnerForPreview(long newOwnerId)
-        {
-            if (Plugin.SimulateNonAdmin?.Value != true) return;
-            if (Nview == null || !Nview.IsValid()) return;
-            Nview.GetZDO().Set(ZdoKeys.Owner, newOwnerId);
-        }
-
         /// <summary>Override to read/write Teleporter/Marketplace-specific settings on
         /// `profile` (called from both BuildProfile's virtual override site and here).</summary>
         protected virtual void ApplyTypeSpecificProfile(NpcProfile profile) { }
+
+        protected virtual void OnProfileApplied(long sender) { }
 
         /// <summary>Writes the current state to npcs/instances/&lt;profileId&gt;.yaml. Called
         /// after every settings change so an admin editing the yaml by hand between changes

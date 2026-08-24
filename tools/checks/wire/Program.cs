@@ -40,8 +40,21 @@ class Program
         });
     }
 
+    /// <summary>Hands the mod the logger BepInEx would have given it in-game.
+    /// Unpack now runs the EpicMMO level gate, and that integration logs "not installed"
+    /// on its first call -- with Plugin.Log still null, the logging is what throws, and the
+    /// check dies on the very line it exists to verify.</summary>
+    static void GiveTheModALogger()
+    {
+        typeof(NpcValheim.Plugin)
+            .GetField("Log", BindingFlags.NonPublic | BindingFlags.Static)
+            ?.SetValue(null, new BepInEx.Logging.ManualLogSource("wirecheck"));
+    }
+
     static void Main()
     {
+        GiveTheModALogger();
+
         System.Console.WriteLine("== objective encoding ==");
 
         var steps = new List<QuestObjective>

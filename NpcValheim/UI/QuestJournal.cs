@@ -216,9 +216,11 @@ namespace NpcValheim.UI
             // Only what this player is actually doing -- a journal is not a catalogue of
             // every quest on the server.
             var active = _quests.Where(q => q.Status == QuestStatus.Active).ToList();
+            var player = Player.m_localPlayer;
 
             var signature = string.Join("|", active.Select(q =>
-                q.Id + ":" + string.Join(",", QuestTracker.Steps(q).Select(s => s.Counter))));
+                q.Id + ":" + string.Join(",", QuestTracker.Steps(q).Select(s =>
+                    s.Counter + ":" + s.Progress(player)))));
             if (signature != _signature)
             {
                 _signature = signature;

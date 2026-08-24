@@ -114,6 +114,8 @@ namespace NpcValheim.Npc
         public bool HasSyncedOnce { get; private set; }
 
         private const string KeyQuests = "npcv_qg_quests";
+        private static readonly HashSet<string> ReceivedCompletions =
+            new HashSet<string>(StringComparer.Ordinal);
 
         /// <summary>
         /// The quests this particular giver offers, by id.
@@ -178,6 +180,11 @@ namespace NpcValheim.Npc
             Nview.GetZDO().Set(KeyQuests, string.Join("\n", quests));
         }
 
+        protected override void OnProfileApplied(long sender)
+        {
+            SendQuestsTo(sender);
+        }
+
         /// <summary>
         /// Creates a quest from the admin panel. `packed` is
         /// "id;name;objective;target;amount;coins;xp;resetHours;description".
@@ -189,7 +196,7 @@ namespace NpcValheim.Npc
         public void RequestCreateQuest(Player requester, string packed)
         {
             if (Nview == null || !Nview.IsValid() || !CanLocalPlayerAdminister()) return;
-            Nview.InvokeRPC("RPC_CreateQuest", packed ?? "");
+            InvokeAuthoritativeRpc("RPC_CreateQuest", packed ?? "");
         }
 
         private void RPC_CreateQuest(long sender, string packed)
@@ -236,12 +243,29 @@ namespace NpcValheim.Npc
 
             PersistProfileSnapshot();
             SendQuestsTo(sender);
+            Plugin.Log.LogInfo($"NpcValheim: admin peer {sender} created quest '{quest.Id}'");
         }
 
         public void RequestSetQuests(Player requester, List<string> questIds)
         {
             if (Nview == null || !Nview.IsValid() || !CanLocalPlayerAdminister()) return;
-            Nview.InvokeRPC("RPC_SetQuests", string.Join("\n", questIds ?? new List<string>()));
+            InvokeAuthoritativeRpc("RPC_SetQuests", string.Join("\n", questIds ?? new List<string>()));
+        }
+
+        internal override bool DispatchAdminMutation(long sender, string method, object[] arguments)
+        {
+            arguments ??= Array.Empty<object>();
+            switch (method)
+            {
+                case "RPC_CreateQuest" when arguments.Length == 1 && arguments[0] is string quest:
+                    RPC_CreateQuest(sender, quest);
+                    return true;
+                case "RPC_SetQuests" when arguments.Length == 1 && arguments[0] is string quests:
+                    RPC_SetQuests(sender, quests);
+                    return true;
+                default:
+                    return base.DispatchAdminMutation(sender, method, arguments);
+            }
         }
 
         private void RPC_SetQuests(long sender, string packed)
@@ -252,6 +276,7 @@ namespace NpcValheim.Npc
             Nview.GetZDO().Set(KeyQuests, packed ?? "");
             PersistProfileSnapshot();
             SendQuestsTo(sender);
+            Plugin.Log.LogInfo($"NpcValheim: admin peer {sender} assigned quests to '{GetHoverName()}'");
         }
 
         protected override void RegisterRpc()
@@ -272,22 +297,29 @@ namespace NpcValheim.Npc
 
         public void RequestQuests()
         {
-            if (Nview != null && Nview.IsValid()) Nview.InvokeRPC("RPC_RequestQuests");
+            ServiceNpcAuthority.RequestQuestAction(this, "RPC_RequestQuests");
         }
 
         public void RequestAccept(string questId)
         {
-            if (Nview != null && Nview.IsValid()) Nview.InvokeRPC("RPC_AcceptQuest", questId);
+            int level = -1;
+            if (EpicMmoApi.IsAvailable)
+            {
+                int detected = EpicMmoApi.GetLevel();
+                if (detected > 0) level = detected;
+            }
+            ServiceNpcAuthority.RequestQuestAction(this, "RPC_AcceptQuest",
+                (questId ?? "") + "\n" + level.ToString(CultureInfo.InvariantCulture));
         }
 
         public void RequestTurnIn(string questId)
         {
-            if (Nview != null && Nview.IsValid()) Nview.InvokeRPC("RPC_TurnInQuest", questId);
+            ServiceNpcAuthority.RequestQuestAction(this, "RPC_TurnInQuest", questId ?? "");
         }
 
         public void RequestAbandon(string questId)
         {
-            if (Nview != null && Nview.IsValid()) Nview.InvokeRPC("RPC_AbandonQuest", questId);
+            ServiceNpcAuthority.RequestQuestAction(this, "RPC_AbandonQuest", questId ?? "");
         }
 
         /// <summary>Called by QuestKillTracker on the client that made the kill.</summary>
@@ -305,7 +337,7 @@ namespace NpcValheim.Npc
         /// <summary>Called when the local player opens a panel on an NPC, for Talk quests.</summary>
         public void ReportTalk(string npcName)
         {
-            QuestProgressNetwork.Report(QuestObjectiveKind.Talk, npcName ?? "");
+            QuestProgressNetwork.ReportTalk(this);
         }
 
         /// <summary>Called when the local player reaches an Explore quest's destination.</summary>
@@ -315,6 +347,30 @@ namespace NpcValheim.Npc
         }
 
         // ---- authoritative handlers ----
+
+        internal bool DispatchQuestAction(long sender, string action, string payload)
+        {
+            switch (action)
+            {
+                case "RPC_RequestQuests":
+                    RPC_RequestQuests(sender);
+                    return true;
+                case "RPC_AcceptQuest":
+                    RPC_AcceptQuest(sender, payload ?? "");
+                    return true;
+                case "RPC_TurnInQuest":
+                    RPC_TurnInQuest(sender, payload ?? "");
+                    return true;
+                case "RPC_AbandonQuest":
+                    RPC_AbandonQuest(sender, payload ?? "");
+                    return true;
+                case "RPC_ClaimDelivered":
+                    RPC_ClaimDelivered(sender, payload ?? "");
+                    return true;
+                default:
+                    return false;
+            }
+        }
 
         private void RPC_RequestQuests(long sender)
         {
@@ -326,20 +382,112 @@ namespace NpcValheim.Npc
         private void RPC_QuestData(long sender, string packed)
         {
             if (!ServiceNpcAuthority.IsAuthoritativeSender(sender)) return;
-            CachedQuests = Unpack(packed);
-            HasSyncedOnce = true;
+            ReceiveQuestResponse("data", packed);
         }
 
-        private void RPC_AcceptQuest(long sender, string questId)
+        internal void ReceiveQuestResponse(string response, string payload)
+        {
+            switch (response)
+            {
+                case "data":
+                    CachedQuests = Unpack(payload);
+                    HasSyncedOnce = true;
+                    break;
+                case "experience" when int.TryParse(payload, NumberStyles.Integer,
+                    CultureInfo.InvariantCulture, out int amount) && amount > 0:
+                    EpicMmoApi.AddExp(amount);
+                    break;
+                case "rewards":
+                    ReceiveQuestRewards(payload);
+                    break;
+            }
+        }
+
+        /// <summary>Receives results that belong to the player, rather than to a loaded NPC
+        /// instance. The completion token makes duplicate routed responses harmless.</summary>
+        internal static void ReceivePlayerResponse(string response, string payload)
+        {
+            if (response == "experience" && int.TryParse(payload, NumberStyles.Integer,
+                CultureInfo.InvariantCulture, out int amount) && amount > 0)
+            {
+                EpicMmoApi.AddExp(amount);
+                return;
+            }
+
+            if (response != "turnin-complete") return;
+
+            var fields = (payload ?? "").Split(new[] { ';' }, 3);
+            if (fields.Length != 3 || string.IsNullOrWhiteSpace(fields[0]) || fields[0].Length > 512 ||
+                !int.TryParse(fields[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out int experience) ||
+                experience < 0) return;
+
+            var requirements = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            if (!string.IsNullOrEmpty(fields[2]))
+            {
+                foreach (string chunk in fields[2].Split('|'))
+                {
+                    var item = chunk.Split('*');
+                    if (item.Length != 2 || string.IsNullOrWhiteSpace(item[0]) ||
+                        !int.TryParse(item[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out int count) ||
+                        count <= 0) return;
+                    requirements[item[0]] = count;
+                }
+            }
+
+            var player = Player.m_localPlayer;
+            if (player == null) return;
+            if (!ReceivedCompletions.Add(fields[0])) return;
+
+            var inventory = player.GetInventory();
+            bool canConsume = true;
+            foreach (var requirement in requirements)
+            {
+                if (ItemNames.Count(inventory, requirement.Key, -1) >= requirement.Value) continue;
+                canConsume = false;
+                break;
+            }
+
+            if (canConsume)
+                foreach (var requirement in requirements)
+                    ItemNames.Remove(inventory, requirement.Key, requirement.Value, -1);
+            else
+                Plugin.Log.LogWarning("NpcValheim: quest completed after its collect items left the local inventory");
+
+            if (experience > 0) EpicMmoApi.AddExp(experience);
+            player.Message(MessageHud.MessageType.Center,
+                "Missão concluída. Recompensas enviadas ao Correio.", 0, null);
+        }
+
+        private void RPC_AcceptQuest(long sender, string packed)
         {
             if (!Nview.IsOwner()) return;
             if (!NpcRequestGuard.AllowRate(sender, "quest-accept", 6, 5f)) return;
+            string questId = packed ?? "";
+            int reportedLevel = -1;
+            int separator = questId.LastIndexOf('\n');
+            if (separator >= 0)
+            {
+                if (!int.TryParse(questId.Substring(separator + 1), NumberStyles.Integer,
+                    CultureInfo.InvariantCulture, out reportedLevel)) reportedLevel = -1;
+                questId = questId.Substring(0, separator);
+            }
             if (!Offers(questId)) return;   // this giver does not deal in that quest
             long playerId = GameApi.GetPlayerId(sender);
             if (playerId == 0L) return;
 
             var quest = QuestStore.Get(questId);
             if (quest == null) return;
+
+            // EpicMMO exposes only the local player's level. The honest client reports that
+            // value with the request; this has the same trust boundary as Collect inventory.
+            if (quest.RequiredLevel > 0 && reportedLevel >= 0 && reportedLevel < quest.RequiredLevel)
+            {
+                Plugin.Log.LogInfo($"NpcValheim: accept refused for '{questId}' -- " +
+                                   $"reported level {reportedLevel}/{quest.RequiredLevel}");
+                ServiceNpcAuthority.SendStatus(sender, $"Esta missão requer nível {quest.RequiredLevel}.");
+                SendQuestsTo(sender);
+                return;
+            }
 
             // Refresh first so a daily that came due is acceptable again, then refuse
             // anything still finished.
@@ -352,11 +500,14 @@ namespace NpcValheim.Npc
             if (missing.Count > 0)
             {
                 Plugin.Log.LogInfo($"NpcValheim: accept refused for '{questId}' -- missing {string.Join(", ", missing)}");
+                ServiceNpcAuthority.SendStatus(sender,
+                    "Missão bloqueada. Requisitos: " + string.Join(", ", missing));
                 SendQuestsTo(sender);
                 return;
             }
 
             QuestDatabase.Accept(playerId, questId);
+            ServiceNpcAuthority.SendStatus(sender, $"Missão aceita: {quest.Name}");
             SendQuestsTo(sender);
         }
 
@@ -368,12 +519,13 @@ namespace NpcValheim.Npc
             if (playerId == 0L) return;
 
             QuestDatabase.Abandon(playerId, questId);
+            ServiceNpcAuthority.SendStatus(sender, "Missão abandonada.");
             SendQuestsTo(sender);
         }
 
-        /// <summary>Completes a quest and pays out. Collect objectives trust the client to
-        /// have removed the items first (same boundary as selling on the marketplace); Kill
-        /// objectives are checked against the counter the server itself accumulated.</summary>
+        /// <summary>Completes a quest and pays out. Collect objectives use the same client
+        /// inventory trust boundary as the marketplace, but the client consumes them only
+        /// after this authoritative handler confirms the completion.</summary>
         private void RPC_TurnInQuest(long sender, string questId)
         {
             if (!Nview.IsOwner()) return;
@@ -386,12 +538,15 @@ namespace NpcValheim.Npc
             if (quest == null) return;
 
             var progress = QuestDatabase.Get(playerId, questId);
-            if (progress == null || progress.Status != QuestStatus.Active) return;
+            if (progress == null || progress.Status != QuestStatus.Active)
+            {
+                ServiceNpcAuthority.SendStatus(sender, "Esta missão não está ativa.");
+                SendQuestsTo(sender);
+                return;
+            }
 
             // Everything except Collect is measured by the counter the server itself kept.
-            // Collect is the one objective checked against the bag instead, at the moment of
-            // hand-in, and the client removes the items before asking. Checked per objective:
-            // a quest is only done when every line of it is.
+            // Collect lives only in the remote bag and is validated by the requesting client.
             var steps = quest.Steps();
             for (int i = 0; i < steps.Count; i++)
             {
@@ -401,20 +556,22 @@ namespace NpcValheim.Npc
 
                 Plugin.Log.LogInfo($"NpcValheim: turn-in refused for '{questId}' -- " +
                                    $"{steps[i].Target} {progress.CounterAt(i)}/{goal}");
+                ServiceNpcAuthority.SendStatus(sender, "A missão ainda não está pronta para entrega.");
+                SendQuestsTo(sender);
                 return;
             }
 
-            GrantRewards(playerId, quest);
-
-            // XP is the one reward that cannot be handed out here. EpicMMO's API acts on the
-            // *local* player, and on a dedicated server there is no local player -- calling
-            // it here throws and would credit nobody even if it didn't. So the server asks
-            // the client that turned the quest in to award it to itself.
-            if (quest.Rewards?.Experience > 0)
-                Nview.InvokeRPC(sender, "RPC_GrantExperience", quest.Rewards.Experience);
+            int completionNumber = progress.TimesCompleted + 1;
+            if (!GrantRewards(playerId, quest, completionNumber))
+            {
+                ServiceNpcAuthority.SendStatus(sender,
+                    "O Correio está cheio. Libere espaço antes de entregar a missão.");
+                return;
+            }
 
             QuestDatabase.Complete(playerId, questId, quest.Repeatable);
-            DeliverRewardsNow(sender, playerId);
+            ServiceNpcAuthority.SendQuestPlayerResponse(sender, "turnin-complete",
+                PackTurnInCompletion(playerId, quest, completionNumber, steps));
             SendQuestsTo(sender);
         }
 
@@ -426,28 +583,66 @@ namespace NpcValheim.Npc
             EpicMmoApi.AddExp(amount);
         }
 
-        /// <summary>Test hook for the mail-only reward path. Not an RPC and unreachable from
-        /// a client; the real flow goes through RPC_TurnInQuest.</summary>
-        internal static void GrantRewardsForSelfTest(long playerId, QuestDefinition quest)
-        {
-            if (Plugin.EnableSelfTest?.Value != true) return;
-            GrantRewards(playerId, quest);
-        }
-
-        private static void GrantRewards(long playerId, QuestDefinition quest)
+        private static bool GrantRewards(long playerId, QuestDefinition quest, int completionNumber)
         {
             var rewards = quest.Rewards;
-            if (rewards == null) return;
+            if (rewards == null) return true;
+
+            string prefix = $"quest:{playerId}:{quest.Id}:{completionNumber}";
+            var deliveryIds = new List<string>();
+            if (rewards.Coins > 0) deliveryIds.Add(prefix + ":coins");
+
+            if (rewards.Items != null)
+                for (int i = 0; i < rewards.Items.Count; i++)
+                {
+                    var item = rewards.Items[i];
+                    if (item == null || string.IsNullOrEmpty(item.ItemName) || item.Amount <= 0) continue;
+                    deliveryIds.Add(prefix + ":item:" + i.ToString(CultureInfo.InvariantCulture));
+                }
+
+            if (deliveryIds.Count == 0) return true;
+            if (!MailDatabase.CanInsertDeliveries(playerId, deliveryIds)) return false;
 
             if (rewards.Coins > 0)
-                MailDatabase.SendCoins(playerId, $"Recompensa: {quest.Name}", rewards.Coins);
+                if (MailDatabase.SendCoins(playerId, $"Recompensa: {quest.Name}", rewards.Coins,
+                    prefix + ":coins") == null) return false;
 
-            if (rewards.Items == null) return;
-            foreach (var item in rewards.Items)
+            if (rewards.Items == null) return true;
+            for (int i = 0; i < rewards.Items.Count; i++)
             {
+                var item = rewards.Items[i];
                 if (item == null || string.IsNullOrEmpty(item.ItemName) || item.Amount <= 0) continue;
-                MailDatabase.SendItem(playerId, $"Recompensa: {quest.Name}", item.ItemName, item.Quality, item.Amount);
+                if (MailDatabase.SendItem(playerId, $"Recompensa: {quest.Name}", item.ItemName,
+                    item.Quality, item.Amount,
+                    prefix + ":item:" + i.ToString(CultureInfo.InvariantCulture)) == null) return false;
             }
+            return true;
+        }
+
+        private static string PackTurnInCompletion(long playerId, QuestDefinition quest,
+            int completionNumber, List<QuestObjective> steps)
+        {
+            var requirements = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            foreach (var step in steps)
+            {
+                if (step.Kind != QuestObjectiveKind.Collect || string.IsNullOrWhiteSpace(step.Target)) continue;
+                string target = CleanObjectiveTarget(step.Target);
+                requirements.TryGetValue(target, out int current);
+                long combined = (long)current + Math.Max(1, step.Amount);
+                requirements[target] = combined > int.MaxValue ? int.MaxValue : (int)combined;
+            }
+
+            var packedItems = new StringBuilder();
+            foreach (var requirement in requirements)
+            {
+                if (packedItems.Length > 0) packedItems.Append('|');
+                packedItems.Append(requirement.Key).Append('*')
+                    .Append(requirement.Value.ToString(CultureInfo.InvariantCulture));
+            }
+
+            string token = Clean($"{playerId}:{quest.Id}:{completionNumber}");
+            int experience = Math.Max(0, quest.Rewards?.Experience ?? 0);
+            return token + ";" + experience.ToString(CultureInfo.InvariantCulture) + ";" + packedItems;
         }
 
         /// <summary>
@@ -475,7 +670,7 @@ namespace NpcValheim.Npc
                       .Append(Mathf.Max(1, parcel.Quality));
             }
 
-            Nview.InvokeRPC(sender, "RPC_CollectRewards", packed.ToString());
+            ServiceNpcAuthority.SendQuestResponse(sender, this, "rewards", packed.ToString());
         }
 
         /// <summary>Client side: try to take each parcel into the bag. Whatever fits is
@@ -483,9 +678,14 @@ namespace NpcValheim.Npc
         /// inventory costs the player a trip rather than the reward.</summary>
         private void RPC_CollectRewards(long sender, string packed)
         {
+            if (!ServiceNpcAuthority.IsAuthoritativeSender(sender)) return;
+            ReceiveQuestRewards(packed);
+        }
+
+        private void ReceiveQuestRewards(string packed)
+        {
             var player = Player.m_localPlayer;
-            if (!ServiceNpcAuthority.IsAuthoritativeSender(sender) || player == null ||
-                string.IsNullOrEmpty(packed) || packed.Length > 65536) return;
+            if (player == null || string.IsNullOrEmpty(packed) || packed.Length > 65536) return;
 
             foreach (var line in packed.Split('\n'))
             {
@@ -503,7 +703,7 @@ namespace NpcValheim.Npc
 
                 // Only now is it safe to take it out of the mailbox -- the item is already in
                 // the bag, so the two can never both be true or both be false.
-                Nview.InvokeRPC("RPC_ClaimDelivered", p[0]);
+                ServiceNpcAuthority.RequestQuestAction(this, "RPC_ClaimDelivered", p[0]);
                 player.Message(MessageHud.MessageType.TopLeft,
                     $"Recebido: {amount}x {ItemNames.Display(p[1])}", amount, null);
             }
@@ -523,7 +723,8 @@ namespace NpcValheim.Npc
         private void SendQuestsTo(long target)
         {
             if (!Nview.IsOwner()) return;
-            Nview.InvokeRPC(target, "RPC_QuestData", Pack(GameApi.GetPlayerId(target), OfferedQuests()));
+            ServiceNpcAuthority.SendQuestResponse(target, this, "data",
+                Pack(GameApi.GetPlayerId(target), OfferedQuests()));
         }
 
         // Wire format, one quest per line:
@@ -547,7 +748,6 @@ namespace NpcValheim.Npc
         private static string Pack(long playerId, IEnumerable<QuestDefinition> quests = null)
         {
             var sb = new StringBuilder();
-            int level = EpicMmoApi.GetLevel();
 
             foreach (var quest in quests ?? QuestStore.All)
             {
@@ -559,9 +759,9 @@ namespace NpcValheim.Npc
                 int counter = progress?.CounterAt(0) ?? 0;
                 var untilReset = QuestDatabase.TimeUntilReset(playerId, quest);
 
-                // A level requirement can only be enforced where EpicMMO is actually loaded;
-                // without it GetLevel returns 0 and the quest stays open to everyone.
-                bool levelLocked = EpicMmoApi.IsAvailable && quest.RequiredLevel > 0 && level < quest.RequiredLevel;
+                // EpicMMO's level API describes the local player. A dedicated server has no
+                // local player, so the receiving client applies this gate after unpacking.
+                bool levelLocked = false;
 
                 // Optimistic for Collect, and it has to be -- the server cannot see a remote
                 // bag. CanCompleteNow re-decides this on the client, where the bag is.
@@ -578,9 +778,8 @@ namespace NpcValheim.Npc
                     : new List<string>();
 
                 bool onCooldown = untilReset > TimeSpan.Zero;
-                bool locked = levelLocked || missing.Count > 0 || onCooldown;
+                bool locked = missing.Count > 0 || onCooldown;
                 string lockReason =
-                    levelLocked ? $"Requer nivel {quest.RequiredLevel}" :
                     missing.Count > 0 ? "Requer: " + string.Join(", ", missing) :
                     onCooldown ? $"Disponivel de novo em {DescribeWait(untilReset)}" : "";
 
@@ -642,7 +841,25 @@ namespace NpcValheim.Npc
                     Objectives = UnpackObjectives(p[19]),
                 });
             }
+            ApplyLocalLevelGate(result);
             return result;
+        }
+
+        private static void ApplyLocalLevelGate(List<QuestView> quests)
+        {
+            if (!EpicMmoApi.IsAvailable) return;
+
+            int level = EpicMmoApi.GetLevel();
+            if (level <= 0) return;
+
+            foreach (var quest in quests)
+            {
+                quest.LevelLocked = quest.RequiredLevel > 0 && level < quest.RequiredLevel;
+                if (!quest.LevelLocked) continue;
+
+                quest.Locked = true;
+                quest.LockReason = $"Requer nível {quest.RequiredLevel}";
+            }
         }
 
         /// <summary>Can this player hand the quest in right now? Judged on the client, and it
@@ -654,8 +871,24 @@ namespace NpcValheim.Npc
             if (quest == null || player == null || quest.Status != QuestStatus.Active) return false;
             if (quest.Objectives == null || quest.Objectives.Count == 0) return false;
 
+            var collected = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
             foreach (var step in quest.Objectives)
-                if (!step.IsDone(player)) return false;
+            {
+                if (step.Kind != QuestObjectiveKind.Collect)
+                {
+                    if (!step.IsDone(player)) return false;
+                    continue;
+                }
+
+                if (string.IsNullOrWhiteSpace(step.Target)) return false;
+                collected.TryGetValue(step.Target, out int current);
+                long combined = (long)current + Math.Max(1, step.Goal);
+                collected[step.Target] = combined > int.MaxValue ? int.MaxValue : (int)combined;
+            }
+
+            foreach (var requirement in collected)
+                if (ItemNames.Count(player.GetInventory(), requirement.Key, -1) < requirement.Value)
+                    return false;
             return true;
         }
 

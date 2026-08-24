@@ -158,6 +158,34 @@ namespace NpcValheim.Persistence
             }
         }
 
+        /// <summary>Checks a deterministic batch before any parcel is inserted. Quest
+        /// rewards use this to avoid posting half a reward when the recipient's mailbox is
+        /// near its limit; existing ids are retries and do not consume another slot.</summary>
+        public static bool CanInsertDeliveries(long playerId, IEnumerable<string> deliveryIds)
+        {
+            if (_db == null || deliveryIds == null) return false;
+
+            var ids = deliveryIds.Where(id => !string.IsNullOrWhiteSpace(id))
+                .Distinct(StringComparer.Ordinal).ToList();
+            lock (Gate)
+            {
+                int missing = 0;
+                foreach (string id in ids)
+                {
+                    var existing = Mail.FindById(id);
+                    if (existing == null)
+                    {
+                        missing++;
+                        continue;
+                    }
+
+                    if (existing.PlayerId != playerId) return false;
+                }
+
+                return Mail.Count(x => x.PlayerId == playerId) + missing <= MaxMailPerPlayer;
+            }
+        }
+
         /// <summary>Posts one copy to every current member. The house is an address, not a
         /// shared pile -- each member collects their own letter, the same way a player letter
         /// works, so claiming cannot steal someone else's copy.</summary>

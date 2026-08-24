@@ -14,7 +14,7 @@ namespace NpcValheim
     {
         public const string Guid = "com.npcvalheim.mod";
         public const string Name = "NpcValheim";
-        public const string Version = "0.1.14";
+        public const string Version = "0.1.20";
 
         internal static ManualLogSource Log;
         private Harmony _harmony;
@@ -67,48 +67,16 @@ namespace NpcValheim
         internal static ConfigEntry<float> QuestButtonX;
         internal static ConfigEntry<float> QuestButtonY;
 
-        // Not synced -- purely a local dev toggle, flip it in the .cfg file before launching
-        // to get an automated pass/fail report in LogOutput.log with zero manual interaction
-        // ("SELFTEST ..." lines). Off by default so it never runs in a normal player's game.
-        internal static ConfigEntry<bool> EnableSelfTest;
-
-        // Narrower dev convenience: just auto-confirms the character-selection screen, for
-        // use with a `+connect ip:port password` launch so a whole join can happen with zero
-        // clicks. Independent of EnableSelfTest -- this one doesn't spawn any test NPCs.
-        internal static ConfigEntry<bool> AutoConfirmCharacterOnJoin;
-        internal static ConfigEntry<string> AutoJoinPassword;
-        internal static ConfigEntry<bool> ShowcaseMode;
-        internal static ConfigEntry<bool> SimulateNonAdmin;
-        internal static ConfigEntry<string> WorldName;
-        internal static ConfigEntry<bool> AutoStartWorld;
-        internal static ConfigEntry<bool> DemoScenarioMode;
-#if DEVTOOLS
-        internal static ConfigEntry<bool> RemotePlacementProbeMode;
-#endif
-
-        /// <summary>Runtime switch behind SimulateNonAdmin, rather than reading the config
-        /// directly: the showcase has to dress the NPCs up as an admin *before* dropping to
-        /// visitor rights, so it needs to turn this on at a specific moment.</summary>
-        internal static bool NonAdminPreviewActive;
-
-        /// <summary>True when any dev mode is on, so the intro/tutorial/raven skips apply to
-        /// the showcase too -- Hugin walking into frame mid-capture is exactly the kind of
-        /// noise those patches exist to remove.</summary>
-        internal static bool TestModeActive =>
-            (EnableSelfTest != null && EnableSelfTest.Value) ||
-            (ShowcaseMode != null && ShowcaseMode.Value)
-#if DEVTOOLS
-            || (RemotePlacementProbeMode != null && RemotePlacementProbeMode.Value)
-#endif
-            ;
-
         private void Awake()
         {
             Log = Logger;
 
             ConfigSync = new ConfigSync(Guid)
             {
-                DisplayName = Name, CurrentVersion = Version, ModRequired = false,
+                DisplayName = Name,
+                CurrentVersion = Version,
+                MinimumRequiredVersion = Version,
+                ModRequired = true,
             };
 
             TeleportCostItem = Config.Bind("Teleporter", "CostItem", "",
@@ -139,36 +107,6 @@ namespace NpcValheim
 
             ListingDurationHours = Config.Bind("Marketplace", "ListingDurationHours", 48,
                 "How long a listing stays up before it expires and the unsold stock is mailed back to the seller.");
-
-            EnableSelfTest = Config.Bind("Testing", "EnableSelfTest", false,
-                "Runs an automated smoke test shortly after spawning into a world and logs SELFTEST PASS/FAIL lines. Dev use only.");
-
-            ShowcaseMode = Config.Bind("Testing", "ShowcaseMode", false,
-                "Stages a demo scene on world entry (both NPCs, dressed, panel open) and leaves it standing, for capturing what the feature looks like. Dev use only.");
-
-            DemoScenarioMode = Config.Bind("Testing", "DemoScenarioMode", false,
-                "With ShowcaseMode on, runs the scripted end-to-end demo (buy from another player, mail, quests, teleport) instead of the static showcase. Dev use only.");
-
-
-
-            AutoStartWorld = Config.Bind("Testing", "AutoStartWorld", false,
-                "Loads the world named by WorldName straight from launch, in singleplayer, skipping the menu. Independent of EnableSelfTest, so a local world can be opened hands-off without also spawning the test NPCs. Dev use only.");
-
-            WorldName = Config.Bind("Testing", "WorldName", "",
-                "Which world the dev auto-start loads. Empty picks the first world that is already generated, because loading an ungenerated one costs minutes of world generation before a test can start. Dev use only.");
-
-            SimulateNonAdmin = Config.Bind("Testing", "SimulateNonAdmin", false,
-                "With ShowcaseMode on, hands the staged NPCs to another player and drops admin rights, so the panel renders exactly as an ordinary visitor sees it. Dev use only.");
-
-            AutoConfirmCharacterOnJoin = Config.Bind("Testing", "AutoConfirmCharacterOnJoin", false,
-                "Auto-clicks past the password and character-selection screens. Meant to pair with a `+connect ip:port password` launch for a fully hands-off join. Dev use only.");
-            AutoJoinPassword = Config.Bind("Testing", "AutoJoinPassword", "",
-                "Password to auto-submit on the server password screen when AutoConfirmCharacterOnJoin is on (should match the +connect launch arg).");
-
-#if DEVTOOLS
-            RemotePlacementProbeMode = Config.Bind("Testing", "RemotePlacementProbeMode", false,
-                "Places and removes one Marketplace NPC through the real dedicated-server RPC, logs REMOTE PROBE PASS/FAIL, then quits. Dev use only.");
-#endif
 
             ConfigSync.AddConfigEntry(TeleportCostItem);
             ConfigSync.AddConfigEntry(TeleportCostAmount);
@@ -202,55 +140,8 @@ namespace NpcValheim
 
             _harmony = new Harmony(Guid);
             _harmony.PatchAll();
-#if DEVTOOLS
-            StartDevTools();
-#endif
             Log.LogInfo($"{Name} {Version} loaded");
         }
-
-#if DEVTOOLS
-        /// <summary>Local automation compiled into the same DLL only for development.
-        /// Production builds omit these source files entirely.</summary>
-        private static void StartDevTools()
-        {
-            if (EnableSelfTest == null) return;
-
-            if (EnableSelfTest.Value)
-            {
-                Testing.ServerSelfTestRunner.EnsureCreated();
-                if (!UnityEngine.Application.isBatchMode)
-                {
-                    Testing.SelfTestRunner.EnsureCreated();
-                    if (!HasDirectConnectArgument()) Testing.AutoStart.EnsureCreated();
-                }
-            }
-
-            if (ShowcaseMode.Value && !UnityEngine.Application.isBatchMode)
-            {
-                if (!EnableSelfTest.Value) Testing.AutoStart.EnsureCreated();
-                if (DemoScenarioMode.Value) Testing.DemoScenario.EnsureCreated();
-                else Testing.DemoShowcase.EnsureCreated();
-            }
-
-            if (AutoStartWorld.Value && !EnableSelfTest.Value && !ShowcaseMode.Value &&
-                !UnityEngine.Application.isBatchMode)
-                Testing.AutoStart.EnsureCreated();
-
-            if (AutoConfirmCharacterOnJoin.Value)
-                Testing.AutoConfirmCharacter.EnsureCreated(AutoJoinPassword.Value);
-
-            if (RemotePlacementProbeMode.Value && !UnityEngine.Application.isBatchMode)
-                Testing.RemotePlacementProbe.EnsureCreated();
-        }
-
-        private static bool HasDirectConnectArgument()
-        {
-            foreach (string argument in System.Environment.GetCommandLineArgs())
-                if (string.Equals(argument, "+connect", System.StringComparison.OrdinalIgnoreCase))
-                    return true;
-            return false;
-        }
-#endif
 
         private void OnDestroy()
         {

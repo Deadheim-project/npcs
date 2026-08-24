@@ -30,10 +30,10 @@ namespace NpcValheim.Npc
         private static FieldInfo _adminList;
         private static MethodInfo _rpcGetSocket;
         private static MethodInfo _socketGetHostName;
-        private static MethodInfo _znetIsAdmin;
         private static MethodInfo _znetListContainsId;
         private static MethodInfo _adminListContains;
         private static MethodInfo _routedGetServerPeerId;
+        private static MethodInfo _znetSceneCreateObject;
         private static FieldInfo _minimapPins;
         private static FieldInfo _pinName;
 
@@ -205,6 +205,14 @@ namespace NpcValheim.Npc
                 var peer = FindPeer(senderId);
                 bool hasPeer = peer != null;
                 bool hasPeerCharacter = TryGetPeerCharacterId(peer, out var peerCharacterId);
+                long peerUid = GetPeerUid(peer);
+
+                // Prefer the exact network object named by the authenticated peer. This
+                // avoids depending on Player.GetAllPlayers() being populated at precisely
+                // the same frame in which the routed RPC is dispatched.
+                if (hasPeerCharacter && TryGetPlayerInstance(peerCharacterId, out player))
+                    return true;
+
                 var all = Player.GetAllPlayers();
                 if (all == null) return false;
 
@@ -230,7 +238,12 @@ namespace NpcValheim.Npc
                         // check to select some other live Player.
                         var nview = candidate.GetComponent<ZNetView>();
                         var zdo = nview != null && nview.IsValid() ? nview.GetZDO() : null;
-                        exactNetworkOwner = hasPeer && zdo != null && zdo.GetOwner() == senderId;
+                        // ZDO ownership uses ZNetPeer.m_uid, not the transient sender id
+                        // carried by ZRoutedRpc. Comparing it to senderId was the live 1.0.14
+                        // failure: both values identify the connection, but are different
+                        // numeric namespaces on the dedicated-server transport.
+                        exactNetworkOwner = hasPeer && peerUid != 0L && zdo != null &&
+                                            zdo.GetOwner() == peerUid;
                     }
                     catch
                     {
@@ -280,6 +293,30 @@ namespace NpcValheim.Npc
             return true;
         }
 
+        private static long GetPeerUid(ZNetPeer peer)
+        {
+            if (peer == null) return 0L;
+            _peerUid ??= typeof(ZNetPeer).GetField("m_uid", AnyInstance);
+            return _peerUid?.GetValue(peer) is long uid ? uid : 0L;
+        }
+
+        private static bool TryGetPlayerInstance(ZDOID characterId, out Player player)
+        {
+            player = null;
+            try
+            {
+                var instance = ZNetScene.instance?.FindInstance(characterId);
+                var candidate = instance != null ? instance.GetComponent<Player>() : null;
+                if (candidate == null || candidate.GetComponent<NpcMarker>() != null) return false;
+                player = candidate;
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
         private static ZNetPeer FindPeer(long senderId)
         {
             if (senderId == 0L || ZNet.instance == null) return null;
@@ -324,13 +361,25 @@ namespace NpcValheim.Npc
             return null;
         }
 
+        private static string GetPeerHostName(ZNetPeer peer)
+        {
+            if (peer == null) return null;
+            _peerRpc ??= typeof(ZNetPeer).GetField("m_rpc", AnyInstance);
+            var rpc = _peerRpc?.GetValue(peer);
+            if (rpc == null) return null;
+            _rpcGetSocket ??= rpc.GetType().GetMethod("GetSocket", AnyInstance);
+            var socket = _rpcGetSocket?.Invoke(rpc, Array.Empty<object>());
+            if (socket == null) return null;
+            _socketGetHostName ??= socket.GetType().GetMethod("GetHostName", AnyInstance);
+            return _socketGetHostName?.Invoke(socket, Array.Empty<object>()) as string;
+        }
+
         /// <summary>Whether the peer behind an RPC sender id is on the server's admin list.
         ///
-        /// Use the same path as ServerSync: peer.m_rpc.GetSocket().GetHostName() followed by
-        /// ZNet.ListContainsId(m_adminList, hostName). Reading ZNetPeer.m_socket directly used
-        /// to return null on the dedicated server, so the client received ServerSync's admin
-        /// flag and could see the Appearance tab while every mutation RPC was silently denied.
-        /// A missing peer now fails closed. Solo/hosted play is accepted only when the sender
+        /// Uses the same normalized-list lookup as ServerSync, but always starts from the
+        /// actual ZNetView RPC sender. A ServerSync "current RPC" is unrelated global state:
+        /// borrowing it can associate a later NPC edit with the previous network request.
+        /// A missing peer fails closed. Solo/hosted play is accepted only when the sender
         /// exactly matches this process' routed id or its live local Player.</summary>
         public static bool IsAdmin(long senderId)
         {
@@ -339,6 +388,7 @@ namespace NpcValheim.Npc
                 if (ZNet.instance == null) return false;
 
                 var peer = FindPeer(senderId);
+                string hostName = GetPeerHostName(peer);
                 if (peer == null)
                 {
                     // A missing peer is not evidence that the caller is the host. Accept the
@@ -347,34 +397,26 @@ namespace NpcValheim.Npc
                     return ZNet.instance.LocalPlayerIsAdminOrHost();
                 }
 
-                _peerRpc ??= typeof(ZNetPeer).GetField("m_rpc", AnyInstance);
-                var rpc = _peerRpc?.GetValue(peer);
-                if (rpc == null) return false;
-
-                _rpcGetSocket ??= rpc.GetType().GetMethod("GetSocket", AnyInstance);
-                var socket = _rpcGetSocket?.Invoke(rpc, Array.Empty<object>());
-                if (socket == null) return false;
-
-                _socketGetHostName ??= socket.GetType().GetMethod("GetHostName", AnyInstance);
-                var hostName = _socketGetHostName?.Invoke(socket, Array.Empty<object>()) as string;
-                if (string.IsNullOrEmpty(hostName)) return false;
-
-                // Use Valheim's own admin lookup first. It normalizes platform ids
-                // (for example Steam_123 versus the bare numeric id) before checking
-                // adminlist.txt. Calling SyncedList.Contains directly skips that
-                // normalization and was denying real admins on dedicated servers.
-                _znetIsAdmin ??= typeof(ZNet).GetMethod(
-                    "IsAdmin", AnyInstance, null, new[] { typeof(string) }, null);
-                if (_znetIsAdmin != null)
-                    return (bool)_znetIsAdmin.Invoke(ZNet.instance, new object[] { hostName });
+                if (string.IsNullOrEmpty(hostName))
+                {
+                    Plugin.Log.LogWarning($"NpcValheim: admin peer {senderId} has no socket host name");
+                    return false;
+                }
 
                 _adminList ??= typeof(ZNet).GetField("m_adminList", AnyInstance);
                 var adminList = _adminList?.GetValue(ZNet.instance);
                 if (adminList == null) return false;
 
-                _znetListContainsId ??= typeof(ZNet).GetMethod("ListContainsId", AnyInstance);
+                // This is the exact lookup used by the bundled ServerSync code that sets
+                // LocalPlayerIsServerSyncAdmin on the client. ZNet.IsAdmin(string) throws a
+                // TargetInvocationException on the current dedicated-server build.
+                const BindingFlags anyMethod = BindingFlags.Public | BindingFlags.NonPublic |
+                                               BindingFlags.Instance | BindingFlags.Static;
+                _znetListContainsId ??= typeof(ZNet).GetMethod("ListContainsId", anyMethod);
                 if (_znetListContainsId != null)
-                    return (bool)_znetListContainsId.Invoke(ZNet.instance, new[] { adminList, hostName });
+                    return (bool)_znetListContainsId.Invoke(
+                        _znetListContainsId.IsStatic ? null : ZNet.instance,
+                        new[] { adminList, hostName });
 
                 // Older game builds do not expose ListContainsId. SyncedList.Contains is the
                 // vanilla fallback used by ServerSync for those versions.
@@ -422,6 +464,39 @@ namespace NpcValheim.Npc
             catch (Exception e)
             {
                 Plugin.Log.LogError($"NpcValheim: ItemDrop.Save failed, dropped item may not sync: {e.Message}");
+            }
+        }
+
+        /// <summary>Restores the Unity instance for a persistent ZDO that is currently
+        /// outside the dedicated server's loaded instance set. This is the same private
+        /// loader Valheim uses when a zone becomes active; reflection is required because
+        /// the runtime assembly does not expose it.</summary>
+        public static GameObject EnsureZdoInstance(ZDO zdo)
+        {
+            if (zdo == null || ZNetScene.instance == null) return null;
+
+            var existing = ZNetScene.instance.FindInstance(zdo.m_uid);
+            if (existing != null) return existing;
+
+            try
+            {
+                _znetSceneCreateObject ??= typeof(ZNetScene).GetMethod(
+                    "CreateObject", AnyInstance, null, new[] { typeof(ZDO) }, null);
+                if (_znetSceneCreateObject == null)
+                {
+                    Plugin.Log.LogError("NpcValheim: ZNetScene.CreateObject(ZDO) was not found");
+                    return null;
+                }
+
+                var created = _znetSceneCreateObject.Invoke(
+                    ZNetScene.instance, new object[] { zdo }) as GameObject;
+                return created ?? ZNetScene.instance.FindInstance(zdo.m_uid);
+            }
+            catch (Exception e)
+            {
+                Plugin.Log.LogWarning(
+                    $"NpcValheim: could not restore network instance {zdo.m_uid}: {e.GetBaseException().Message}");
+                return null;
             }
         }
 

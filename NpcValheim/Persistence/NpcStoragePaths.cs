@@ -17,17 +17,20 @@ namespace NpcValheim.Persistence
     /// </summary>
     public static class NpcStoragePaths
     {
+        private static readonly object DataPathGate = new object();
+        private static string _dataDirectory;
+
         public static string ModDirectory => ResolveModDirectory();
 
         public static string DataDirectory
         {
             get
             {
-                var canonical = Path.Combine(ModDirectory, "npcs");
-                if (Directory.Exists(canonical)) return canonical;
-
-                var legacy = Path.Combine(Paths.PluginPath, "NpcValheim", "npcs");
-                return Directory.Exists(legacy) ? legacy : canonical;
+                lock (DataPathGate)
+                {
+                    if (_dataDirectory == null) _dataDirectory = ResolveDataDirectory();
+                    return _dataDirectory;
+                }
             }
         }
 
@@ -68,6 +71,54 @@ namespace NpcValheim.Persistence
             return Directory.Exists(legacy) ? legacy : canonical;
         }
 
+        private static string ResolveDataDirectory()
+        {
+            var canonical = Path.Combine(ModDirectory, "npcs");
+            var legacy = Path.Combine(Paths.PluginPath, "NpcValheim", "npcs");
+
+            if (!Directory.Exists(canonical))
+                return Directory.Exists(legacy) ? legacy : canonical;
+
+            if (Directory.Exists(legacy) && !SamePath(canonical, legacy))
+                CopyMissingYaml(legacy, canonical);
+            return canonical;
+        }
+
+        /// <summary>Launcher releases have used both plugins/NpcValheim and plugins/npcs.
+        /// When both data trees exist, keep the active tree authoritative but recover custom
+        /// quests, templates and instance mirrors that exist only in the previous location.</summary>
+        private static void CopyMissingYaml(string sourceRoot, string destinationRoot)
+        {
+            int copied = 0;
+            try
+            {
+                string sourcePrefix = Path.GetFullPath(sourceRoot)
+                    .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) +
+                    Path.DirectorySeparatorChar;
+
+                foreach (string source in Directory.GetFiles(sourceRoot, "*.yaml", SearchOption.AllDirectories))
+                {
+                    string fullSource = Path.GetFullPath(source);
+                    if (!fullSource.StartsWith(sourcePrefix, StringComparison.OrdinalIgnoreCase)) continue;
+
+                    string relative = fullSource.Substring(sourcePrefix.Length);
+                    string destination = Path.Combine(destinationRoot, relative);
+                    if (File.Exists(destination)) continue;
+
+                    Directory.CreateDirectory(Path.GetDirectoryName(destination));
+                    File.Copy(fullSource, destination, false);
+                    copied++;
+                }
+
+                if (copied > 0)
+                    Plugin.Log?.LogInfo($"NpcValheim: recovered {copied} profile/quest files from '{sourceRoot}'");
+            }
+            catch (Exception e)
+            {
+                Plugin.Log?.LogWarning($"NpcValheim: could not merge legacy profile data from '{sourceRoot}': {e.Message}");
+            }
+        }
+
         private static string ResolveBundledDirectory(string name)
         {
             var besideAssembly = Path.Combine(ModDirectory, name);
@@ -100,6 +151,9 @@ namespace NpcValheim.Persistence
                          Path.DirectorySeparatorChar;
             return candidate.StartsWith(prefix, StringComparison.OrdinalIgnoreCase);
         }
+
+        private static bool SamePath(string left, string right) =>
+            string.Equals(FullPathOrEmpty(left), FullPathOrEmpty(right), StringComparison.OrdinalIgnoreCase);
 
         private static string FullPathOrEmpty(string path)
         {

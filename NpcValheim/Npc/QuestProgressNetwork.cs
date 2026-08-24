@@ -11,6 +11,7 @@ namespace NpcValheim.Npc
     internal static class QuestProgressNetwork
     {
         private const string RpcEvent = "NpcValheim_QuestEvent";
+        private const string RpcTalk = "NpcValheim_QuestTalk";
         private const string RpcNotice = "NpcValheim_QuestProgressNotice";
         private static ZRoutedRpc _registeredRpc;
 
@@ -20,6 +21,7 @@ namespace NpcValheim.Npc
             if (rpc == null || ReferenceEquals(rpc, _registeredRpc)) return;
             _registeredRpc = rpc;
             rpc.Register(RpcEvent, (Action<long, int, string, string>)OnEvent);
+            rpc.Register(RpcTalk, (Action<long, ZDOID>)OnTalk);
             rpc.Register(RpcNotice, (Action<long, string, string>)OnNotice);
             Plugin.Log.LogInfo("NpcValheim: global quest progress RPCs registered");
         }
@@ -34,6 +36,16 @@ namespace NpcValheim.Npc
             string eventData = count + "|" + questId.Replace('|', ' ');
             _registeredRpc.InvokeRoutedRPC(GameApi.GetServerPeerId(), RpcEvent,
                 new object[] { (int)kind, target, eventData });
+        }
+
+        internal static void ReportTalk(NpcBase npc)
+        {
+            TryRegister();
+            var nview = npc != null ? npc.GetComponent<ZNetView>() : null;
+            if (_registeredRpc == null || nview == null || !nview.IsValid()) return;
+
+            _registeredRpc.InvokeRoutedRPC(GameApi.GetServerPeerId(), RpcTalk,
+                new object[] { nview.GetZDO().m_uid });
         }
 
         private static void OnEvent(long sender, int rawKind, string target, string eventData)
@@ -56,9 +68,21 @@ namespace NpcValheim.Npc
             }
 
             if (target.Length == 0 || target.Length > 128) return;
-            if (kind == QuestObjectiveKind.Talk && !IsNearTalkTarget(player, target)) return;
-            CreditMatching(sender, playerId, kind, target,
-                kind == QuestObjectiveKind.Talk ? 1 : count);
+            CreditMatching(sender, playerId, kind, target, count);
+        }
+
+        private static void OnTalk(long sender, ZDOID npcId)
+        {
+            if (ZNet.instance == null || !ZNet.instance.IsServer() || npcId.IsNone() ||
+                !GameApi.TryGetPlayer(sender, out var player) || player == null ||
+                !NpcRequestGuard.AllowRate(sender, "quest-talk", 6, 2f)) return;
+
+            if (!ServiceNpcAuthority.TryResolveNpc(npcId, out _, out var npc) || npc == null) return;
+            if ((npc.transform.position - player.transform.position).sqrMagnitude > 64f) return;
+
+            long playerId = player.GetPlayerID();
+            if (playerId == 0L) return;
+            CreditMatching(sender, playerId, QuestObjectiveKind.Talk, npc.GetHoverName(), 1);
         }
 
         private static void CreditMatching(long sender, long playerId, QuestObjectiveKind kind, string target, int count)
@@ -103,16 +127,6 @@ namespace NpcValheim.Npc
             }
         }
 
-        private static bool IsNearTalkTarget(Player player, string target)
-        {
-            foreach (var npc in UnityEngine.Object.FindObjectsByType<NpcBase>(FindObjectsSortMode.None))
-            {
-                if (npc == null || !string.Equals(npc.GetHoverName(), target, StringComparison.OrdinalIgnoreCase)) continue;
-                if ((npc.transform.position - player.transform.position).sqrMagnitude <= 64f) return true;
-            }
-            return false;
-        }
-
         private static void SendNotice(long target, string label, int now, int goal)
         {
             _registeredRpc?.InvokeRoutedRPC(target, RpcNotice,
@@ -134,7 +148,7 @@ namespace NpcValheim.Npc
 
         private static bool IsReportable(QuestObjectiveKind kind) =>
             kind == QuestObjectiveKind.Kill || kind == QuestObjectiveKind.Gather ||
-            kind == QuestObjectiveKind.Talk || kind == QuestObjectiveKind.Explore;
+            kind == QuestObjectiveKind.Explore;
 
         private static bool TryReadEventData(string packed, out int count, out string questId)
         {

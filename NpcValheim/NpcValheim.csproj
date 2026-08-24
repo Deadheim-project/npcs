@@ -116,17 +116,6 @@
          ships PublicAPI/UsedImplicitly in that same namespace, which ConfigSync.cs uses. -->
   </ItemGroup>
 
-  <!-- Há uma DLL só. As ferramentas de teste entram nela apenas no build local e são
-       removidas da distribuição usada pelo launcher e pelo servidor dedicado. -->
-  <PropertyGroup>
-    <DevTools Condition="'$(DevTools)' == ''">true</DevTools>
-    <DefineConstants Condition="'$(DevTools)' == 'true'">$(DefineConstants);DEVTOOLS</DefineConstants>
-  </PropertyGroup>
-
-  <ItemGroup Condition="'$(DevTools)' != 'true'">
-    <Compile Remove="Testing\**\*.cs" />
-  </ItemGroup>
-
   <ItemGroup>
     <None Include="Assets\Mailbox\**\*" CopyToOutputDirectory="PreserveNewest" />
     <None Include="Assets\Icons\**\*" CopyToOutputDirectory="PreserveNewest" />
@@ -136,10 +125,8 @@
     <ShippedTemplates Include="Content\templates\*.yaml" />
   </ItemGroup>
 
-  <!-- Drop the built plugin straight into the game's plugin folder for quick in-game testing -->
-  <!-- Conveniencia de desenvolvimento. Nao roda na compilacao de distribuicao: essa
-       produz a dll limpa para o zip, e nao deve trocar a dll de teste no jogo. -->
-  <Target Name="CopyToPlugins" AfterTargets="Build" Condition="'$(DevTools)' == 'true'">
+  <!-- Explicit opt-in for a local install: dotnet build -p:CopyToPlugins=true -->
+  <Target Name="CopyToPlugins" AfterTargets="Build" Condition="'$(CopyToPlugins)' == 'true'">
     <MakeDir Directories="$(BepInExPlugins)\NpcValheim" Condition="!Exists('$(BepInExPlugins)\NpcValheim')" />
     <MakeDir Directories="$(BepInExPlugins)\NpcValheim\Assets\Mailbox" Condition="!Exists('$(BepInExPlugins)\NpcValheim\Assets\Mailbox')" />
     <MakeDir Directories="$(BepInExPlugins)\NpcValheim\Content\quests;$(BepInExPlugins)\NpcValheim\Content\templates" />
