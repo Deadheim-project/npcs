@@ -105,6 +105,7 @@ namespace NpcValheim.Npc
             Nview.Register("RPC_BuyFromNpc", (Action<long, string, string>)RPC_BuyFromNpc);
             Nview.Register("RPC_Paid", (Action<long, int, string>)RPC_Paid);
             Nview.Register("RPC_DeliverItem", (Action<long, string, int>)RPC_DeliverItem);
+            Nview.Register("RPC_ReturnItem", (Action<long, string, string>)RPC_ReturnItem);
         }
 
         // ---- the merchant's own shop: two price lists, both admin-defined ----
@@ -150,7 +151,28 @@ namespace NpcValheim.Npc
         public void RequestSetPrice(Player requester, string itemName, int price, bool selling)
         {
             if (Nview == null || !Nview.IsValid() || !CanLocalPlayerAdminister()) return;
-            Nview.InvokeRPC("RPC_SetPrice", (selling ? "S:" : "B:") + (itemName ?? ""), price);
+            InvokeAuthoritativeRpc("RPC_SetPrice", (selling ? "S:" : "B:") + (itemName ?? ""), price);
+        }
+
+        /// <summary>Routes admin-only shop mutations through the authenticated global RPC,
+        /// same as every other admin edit in NpcBase -- these two used to go through the plain
+        /// ZNetView RPC instead, which silently drops the request whenever this NPC's ZDO
+        /// ownership has drifted off the dedicated server (see CanAdminister). That is exactly
+        /// what made price changes vanish without a trace right after placing a merchant.</summary>
+        internal override bool DispatchAdminMutation(long sender, string method, object[] arguments)
+        {
+            arguments ??= System.Array.Empty<object>();
+            switch (method)
+            {
+                case "RPC_SetPrice" when arguments.Length == 2 && arguments[0] is string tagged && arguments[1] is int price:
+                    RPC_SetPrice(sender, tagged, price);
+                    return true;
+                case "RPC_ConfigureTax" when arguments.Length == 1 && arguments[0] is int taxPercent:
+                    RPC_ConfigureTax(sender, taxPercent);
+                    return true;
+                default:
+                    return base.DispatchAdminMutation(sender, method, arguments);
+            }
         }
 
         private void RPC_SetPrice(long sender, string tagged, int price)
@@ -315,20 +337,39 @@ namespace NpcValheim.Npc
             long playerId = GameApi.GetPlayerId(sender);
             if (playerId == 0L) return;
 
+            // From here on the client has already removed the stack from its inventory (see
+            // ShopView) on the strength of prices it read moments ago. Every refusal below has
+            // to hand it back -- an admin can drop the buy price, or the item simply doesn't
+            // qualify, between that read and this running, and none of that is the seller's
+            // item to lose.
+
             // The price is read here, not sent by the client -- otherwise anyone could name
             // their own price for a stack of wood.
             int unitPrice = GetBuyPrice(itemName);
-            if (unitPrice <= 0) return;
+            if (unitPrice <= 0)
+            {
+                ReturnItem(sender, itemName, quality, amount, "Item indisponível");
+                return;
+            }
 
             var prefab = ObjectDB.instance?.GetItemPrefab(itemName);
             var itemDrop = prefab != null ? prefab.GetComponent<ItemDrop>() : null;
-            if (itemDrop?.m_itemData?.m_shared == null) return;
-            if (quality < 1 || quality > Mathf.Max(1, itemDrop.m_itemData.m_shared.m_maxQuality)) return;
+            if (itemDrop?.m_itemData?.m_shared == null)
+            {
+                ReturnItem(sender, itemName, quality, amount, "Item inválido");
+                return;
+            }
+            if (quality < 1 || quality > Mathf.Max(1, itemDrop.m_itemData.m_shared.m_maxQuality))
+            {
+                ReturnItem(sender, itemName, quality, amount, "Item inválido");
+                return;
+            }
 
             int payout = PayoutFor(unitPrice, amount);
             if (payout <= 0)
             {
                 Plugin.Log.LogWarning($"NpcValheim: refused an out-of-range sale ({amount}x {itemName} at {unitPrice})");
+                ReturnItem(sender, itemName, quality, amount, "Venda recusada");
                 return;
             }
 
@@ -339,6 +380,43 @@ namespace NpcValheim.Npc
 
             Plugin.Log.LogInfo($"NpcValheim: merchant bought {amount}x {itemName} from {playerId} for {payout}");
             BroadcastMarketDataTo(sender);
+        }
+
+        /// <summary>Hands a stack back to the player who tried to sell it, when the sale is
+        /// refused after they had already removed it from their inventory. Straight into their
+        /// hands if they are the one connected here, same as coin refunds -- the item is real
+        /// regardless of whether the trade was.</summary>
+        private void ReturnItem(long sender, string itemName, int quality, int amount, string reason)
+        {
+            Plugin.Log.LogInfo($"NpcValheim: returning {amount}x {itemName} to sender {sender} ({reason})");
+            Nview.InvokeRPC(sender, "RPC_ReturnItem", itemName, quality + ";" + amount + ";" + reason);
+        }
+
+        /// <summary>Client side: a sale was refused, the stack comes back. Quality is preserved
+        /// (unlike RPC_DeliverItem, which always hands out fresh quality-1 stock) -- this is
+        /// the player's own item, not something bought off the counter.</summary>
+        private void RPC_ReturnItem(long sender, string itemName, string packed)
+        {
+            if (!NpcRequestGuard.IsResponseFromOwner(Nview, sender)) return;
+            var player = Player.m_localPlayer;
+            if (player == null) return;
+
+            var parts = (packed ?? "").Split(';');
+            if (parts.Length != 3) return;
+            if (!int.TryParse(parts[0], out int quality) || !int.TryParse(parts[1], out int amount) || amount <= 0) return;
+            string reason = parts[2];
+
+            if (player.GetInventory().AddItem(itemName, amount, Mathf.Max(1, quality), 0, 0L, "") != null)
+            {
+                player.Message(MessageHud.MessageType.TopLeft,
+                    $"{reason}: {amount}x {ItemNames.Display(itemName)} devolvido", 0, null);
+                return;
+            }
+
+            ItemSpawner.TrySpawn(itemName, amount, Mathf.Max(1, quality),
+                player.transform.position + Vector3.up + UnityEngine.Random.insideUnitSphere * 0.5f);
+            player.Message(MessageHud.MessageType.Center,
+                $"{reason}: {amount}x {ItemNames.Display(itemName)} caiu no chão", 0, null);
         }
 
         public void RequestBuy(string listingId, int amount, int paid) =>
@@ -353,7 +431,7 @@ namespace NpcValheim.Npc
         public void RequestConfigureTax(Player requester, int taxPercent)
         {
             if (Nview == null || !Nview.IsValid() || !CanLocalPlayerAdminister()) return;
-            Nview.InvokeRPC("RPC_ConfigureTax", taxPercent);
+            InvokeAuthoritativeRpc("RPC_ConfigureTax", taxPercent);
         }
 
         /// <summary>Reads the ledger straight off disk. Only meaningful on the peer that owns

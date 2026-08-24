@@ -203,9 +203,12 @@ namespace NpcValheim.UI
                         return;
                     }
 
+                    // No "sold" message here: whether this succeeded is entirely up to the
+                    // server (the merchant's price table can be stale by the time this lands,
+                    // see RPC_SellToNpc). It answers with either RPC_Paid or RPC_ReturnItem,
+                    // and one of those two always tells the player what actually happened.
                     ItemNames.Remove(inventory, item, amount, -1);
                     market.RequestSellToNpc(item, 1, amount);
-                    Say($"Vendido {amount}x {ItemNames.Display(item)} por {price * amount} moedas.");
                 });
             }
         }
