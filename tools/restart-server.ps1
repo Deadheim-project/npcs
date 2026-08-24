@@ -93,20 +93,25 @@ Write-Host '  no ar'
 
 # Conferir a versao que ficou carregada, e nao a que esta no disco: o disco ja estava
 # certo antes do restart, e foi exatamente essa diferenca que causou o problema.
+#
+# Le o console pela API, nao BepInEx/LogOutput.log: neste servidor esse arquivo nao fica
+# no FTP (some depois do boot), entao a verificacao avisava "nao achei a linha de load"
+# em todo restart bem-sucedido -- um alarme falso ensina a ignorar o alarme.
 Write-Host ''
 Write-Host 'conferindo a versao carregada (o boot leva ~1 min)...' -ForegroundColor Cyan
-$logUri = "$baseUri/files/BepInEx/LogOutput.log"
+$consoleUri = "$baseUri/console?max_lines=600"
 $deadline = (Get-Date).AddSeconds(180)
 $carregada = $null
 while ((Get-Date) -lt $deadline) {
     Start-Sleep -Seconds 10
     try {
-        $log = (Invoke-WebRequest -Uri $logUri -Headers $headers).Content
+        $resposta = Invoke-RestMethod -Uri $consoleUri -Headers $headers -Method Get
+        $console = if ($resposta -is [string]) { $resposta } else { $resposta.lines -join "`n" }
     }
     catch { continue }
 
-    # A ultima ocorrencia: o arquivo acumula varios boots.
-    $encontradas = [regex]::Matches($log, 'Loading \[NpcValheim ([0-9][^\]]*)\]')
+    # A ultima ocorrencia: o console acumula varios boots.
+    $encontradas = [regex]::Matches($console, 'Loading \[NpcValheim ([0-9][^\]]*)\]')
     if ($encontradas.Count -gt 0) {
         $carregada = $encontradas[$encontradas.Count - 1].Groups[1].Value
         break
