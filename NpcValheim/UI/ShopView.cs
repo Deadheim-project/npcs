@@ -167,8 +167,10 @@ namespace NpcValheim.UI
                         return;
                     }
 
+                    // The server answers with RPC_DeliverItem, which reports what reached the
+                    // bag and what (if anything) had to go on the floor. Promising the floor
+                    // up front described the old delivery, and described it wrongly.
                     market.RequestBuyFromNpc(item, amount, cost);
-                    Say($"Comprando {amount}x {ItemNames.Display(item)} por {cost}; cai no chão aqui.");
                 });
             }
         }

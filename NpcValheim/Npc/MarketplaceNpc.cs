@@ -66,9 +66,13 @@ namespace NpcValheim.Npc
         internal static void GiveCoins(Player player, int amount)
         {
             if (player == null || amount <= 0) return;
-            if (player.GetInventory().AddItem(CoinPrefabName, amount, 1, 0, 0L, "") != null) return;
 
-            ItemSpawner.TrySpawn(CoinPrefabName, amount, 1,
+            // Coins stack to 999, so a large payout is several stacks and a single AddItem
+            // call would refuse all of it.
+            int left = amount - ItemSpawner.GiveToInventory(player, CoinPrefabName, amount, 1);
+            if (left <= 0) return;
+
+            ItemSpawner.TrySpawn(CoinPrefabName, left, 1,
                 player.transform.position + Vector3.up + UnityEngine.Random.insideUnitSphere * 0.5f);
             player.Message(MessageHud.MessageType.Center, "Inventário cheio: as moedas caíram no chão", 0, null);
         }
@@ -307,17 +311,21 @@ namespace NpcValheim.Npc
             var player = Player.m_localPlayer;
             if (player == null || amount <= 0) return;
 
-            if (player.GetInventory().AddItem(itemName, amount, 1, 0, 0L, "") != null)
-            {
+            // The bag first, always. The ground is the fallback for what genuinely does not
+            // fit, not the delivery mechanism -- goods on the floor are goods someone else can
+            // take, and easy to walk away from without noticing.
+            int given = ItemSpawner.GiveToInventory(player, itemName, amount, 1);
+            if (given > 0)
                 player.Message(MessageHud.MessageType.TopLeft,
-                    $"Recebido: {amount}x {ItemNames.Display(itemName)}", amount, null);
-                return;
-            }
+                    $"Recebido: {given}x {ItemNames.Display(itemName)}", given, null);
 
-            ItemSpawner.TrySpawn(itemName, amount, 1,
+            int left = amount - given;
+            if (left <= 0) return;
+
+            ItemSpawner.TrySpawn(itemName, left, 1,
                 player.transform.position + Vector3.up + UnityEngine.Random.insideUnitSphere * 0.5f);
             player.Message(MessageHud.MessageType.Center,
-                $"Inventário cheio: {amount}x {ItemNames.Display(itemName)} caiu no chão", 0, null);
+                $"Inventário cheio: {left}x {ItemNames.Display(itemName)} caiu no chão", 0, null);
         }
 
         /// <summary>Client side: money owed to me has arrived. Either change from a refused
@@ -450,17 +458,18 @@ namespace NpcValheim.Npc
             if (!int.TryParse(parts[0], out int quality) || !int.TryParse(parts[1], out int amount) || amount <= 0) return;
             string reason = parts[2];
 
-            if (player.GetInventory().AddItem(itemName, amount, Mathf.Max(1, quality), 0, 0L, "") != null)
-            {
+            int returned = ItemSpawner.GiveToInventory(player, itemName, amount, Mathf.Max(1, quality));
+            if (returned > 0)
                 player.Message(MessageHud.MessageType.TopLeft,
-                    $"{reason}: {amount}x {ItemNames.Display(itemName)} devolvido", 0, null);
-                return;
-            }
+                    $"{reason}: {returned}x {ItemNames.Display(itemName)} devolvido", 0, null);
 
-            ItemSpawner.TrySpawn(itemName, amount, Mathf.Max(1, quality),
+            int left = amount - returned;
+            if (left <= 0) return;
+
+            ItemSpawner.TrySpawn(itemName, left, Mathf.Max(1, quality),
                 player.transform.position + Vector3.up + UnityEngine.Random.insideUnitSphere * 0.5f);
             player.Message(MessageHud.MessageType.Center,
-                $"{reason}: {amount}x {ItemNames.Display(itemName)} caiu no chão", 0, null);
+                $"{reason}: {left}x {ItemNames.Display(itemName)} caiu no chão", 0, null);
         }
 
         public void RequestBuy(string listingId, int amount, int paid) =>

@@ -466,10 +466,27 @@ namespace NpcValheim.Npc
                 "Missão concluída. Recompensas enviadas ao Correio.", 0, null);
         }
 
+        /// <summary>
+        /// Accepts a quest for the sender, or says why not.
+        ///
+        /// Every refusal below used to be a bare `return`. On the live server a player pressed
+        /// Aceitar, nothing happened, and the log held no record that they had ever asked --
+        /// the only visible difference between "refused" and "never arrived" was none. The
+        /// checks are unchanged; what changed is that each one now leaves a trace and tells
+        /// the player.
+        /// </summary>
         private void RPC_AcceptQuest(long sender, string packed)
         {
-            if (!Nview.IsOwner()) return;
-            if (!NpcRequestGuard.AllowRate(sender, "quest-accept", 6, 5f)) return;
+            if (!Nview.IsOwner())
+            {
+                Plugin.Log.LogWarning($"NpcValheim: accept from peer {sender} reached a machine that does not own '{GetHoverName()}'");
+                return;
+            }
+            if (!NpcRequestGuard.AllowRate(sender, "quest-accept", 6, 5f))
+            {
+                Plugin.Log.LogWarning($"NpcValheim: accept from peer {sender} refused -- more than 6 in 5s");
+                return;
+            }
             string questId = packed ?? "";
             int reportedLevel = -1;
             int separator = questId.LastIndexOf('\n');
@@ -479,12 +496,28 @@ namespace NpcValheim.Npc
                     CultureInfo.InvariantCulture, out reportedLevel)) reportedLevel = -1;
                 questId = questId.Substring(0, separator);
             }
-            if (!Offers(questId)) return;   // this giver does not deal in that quest
+            if (!Offers(questId))
+            {
+                // this giver does not deal in that quest
+                Plugin.Log.LogWarning($"NpcValheim: '{GetHoverName()}' does not offer '{questId}' (peer {sender})");
+                ServiceNpcAuthority.SendStatus(sender, "Este NPC não oferece essa missão.");
+                return;
+            }
+
             long playerId = GameApi.GetPlayerId(sender);
-            if (playerId == 0L) return;
+            if (playerId == 0L)
+            {
+                Plugin.Log.LogWarning($"NpcValheim: accept from peer {sender} refused -- the server could not resolve their character");
+                return;
+            }
 
             var quest = QuestStore.Get(questId);
-            if (quest == null) return;
+            if (quest == null)
+            {
+                Plugin.Log.LogWarning($"NpcValheim: accept refused -- no quest definition '{questId}' is loaded");
+                ServiceNpcAuthority.SendStatus(sender, $"A missão '{questId}' não existe no servidor.");
+                return;
+            }
 
             // EpicMMO exposes only the local player's level. The honest client reports that
             // value with the request; this has the same trust boundary as Collect inventory.
@@ -500,7 +533,20 @@ namespace NpcValheim.Npc
             // Refresh first so a daily that came due is acceptable again, then refuse
             // anything still finished.
             var status = QuestDatabase.RefreshAndGetStatus(playerId, quest);
-            if (status == QuestStatus.Completed && !quest.Repeatable) return;
+            if (status == QuestStatus.Completed && !quest.Repeatable)
+            {
+                Plugin.Log.LogInfo($"NpcValheim: accept refused for '{questId}' -- already completed and it does not repeat");
+                ServiceNpcAuthority.SendStatus(sender, "Você já concluiu esta missão.");
+                SendQuestsTo(sender);
+                return;
+            }
+            if (status == QuestStatus.Active)
+            {
+                Plugin.Log.LogInfo($"NpcValheim: accept ignored for '{questId}' -- peer {sender} already has it in progress");
+                ServiceNpcAuthority.SendStatus(sender, "Você já está nesta missão.");
+                SendQuestsTo(sender);
+                return;
+            }
 
             // Authoritative, not just hidden in the UI: a client that asks for a locked
             // quest anyway gets refused here.
@@ -515,6 +561,7 @@ namespace NpcValheim.Npc
             }
 
             QuestDatabase.Accept(playerId, questId);
+            Plugin.Log.LogInfo($"NpcValheim: peer {sender} accepted '{questId}' from '{GetHoverName()}'");
             ServiceNpcAuthority.SendStatus(sender, $"Missão aceita: {quest.Name}");
             SendQuestsTo(sender);
         }

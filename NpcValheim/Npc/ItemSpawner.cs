@@ -22,6 +22,42 @@ namespace NpcValheim.Npc
             return amount > int.MaxValue ? int.MaxValue : (int)amount;
         }
 
+        /// <summary>
+        /// Puts goods in the player's own bag, one stack at a time, and reports how many
+        /// actually fit.
+        ///
+        /// Inventory.AddItem does not split: asked for more than one stack it refuses the
+        /// whole thing and returns null. Every delivery here used to be a single AddItem call,
+        /// so buying 100 wood (max stack 50) landed the entire purchase on the ground with a
+        /// nearly empty inventory -- and anything whose stack size is 1, like a weapon or a
+        /// piece of armour, could never be bought in twos at all. TrySpawn already walks the
+        /// stacks to drop them; this is the same walk, into the bag first.
+        /// </summary>
+        public static int GiveToInventory(Player player, string prefabName, int amount, int quality)
+        {
+            if (player == null || amount <= 0 || ObjectDB.instance == null) return 0;
+
+            var prefab = ObjectDB.instance.GetItemPrefab(prefabName);
+            var drop = prefab != null ? prefab.GetComponent<ItemDrop>() : null;
+            if (drop?.m_itemData?.m_shared == null) return 0;
+
+            int maxStack = Mathf.Max(1, drop.m_itemData.m_shared.m_maxStackSize);
+            int safeQuality = Mathf.Clamp(quality, 1, Mathf.Max(1, drop.m_itemData.m_shared.m_maxQuality));
+            var inventory = player.GetInventory();
+            if (inventory == null) return 0;
+
+            int given = 0;
+            while (given < amount)
+            {
+                int stack = Mathf.Min(maxStack, amount - given);
+                // A refusal means the bag is full; stop rather than retry a smaller stack,
+                // so a full inventory costs one failed call and not one per unit.
+                if (inventory.AddItem(prefabName, stack, safeQuality, 0, 0L, "") == null) break;
+                given += stack;
+            }
+            return given;
+        }
+
         public static bool TrySpawn(string prefabName, int amount, int quality, Vector3 position)
         {
             if (ObjectDB.instance == null) return false;
