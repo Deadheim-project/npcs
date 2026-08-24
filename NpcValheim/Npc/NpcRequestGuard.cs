@@ -38,21 +38,30 @@ namespace NpcValheim.Npc
             if (view == null || !view.IsValid()) { reason = "the NPC has no valid network view here"; return false; }
             if (!view.IsOwner()) { reason = "this machine does not own the NPC"; return false; }
 
-            if (!GameApi.TryGetPlayer(sender, out var player) || player == null)
+            // Position comes from the character ZDO when no Player is instantiated here.
+            // Requiring the component made every shop and market RPC fail closed on a
+            // dedicated server that holds no Player objects at all -- see GetPlayerId.
+            if (!GameApi.TryGetSenderPosition(sender, out var senderPosition))
             {
-                reason = "the server could not resolve the sender's character";
+                reason = "the server could not locate the sender's character";
                 return false;
             }
-            if (player.IsDead()) { reason = "the sender is dead"; return false; }
-            if (player.IsTeleporting()) { reason = "the sender is teleporting"; return false; }
 
-            if (npc == null || !IsFinite(npc.position) || !IsFinite(player.transform.position))
+            // Only meaningful when the character is actually instantiated; a ZDO alone cannot
+            // answer these, and they are anti-nuisance checks rather than the trust boundary.
+            if (GameApi.TryGetPlayer(sender, out var player) && player != null)
+            {
+                if (player.IsDead()) { reason = "the sender is dead"; return false; }
+                if (player.IsTeleporting()) { reason = "the sender is teleporting"; return false; }
+            }
+
+            if (npc == null || !IsFinite(npc.position) || !IsFinite(senderPosition))
             {
                 reason = "a position is not a finite number";
                 return false;
             }
 
-            float distance = Vector3.Distance(player.transform.position, npc.position);
+            float distance = Vector3.Distance(senderPosition, npc.position);
             if (distance > maxDistance)
             {
                 reason = $"the sender is {distance:0.0}m from the NPC, limit is {maxDistance:0.0}m";

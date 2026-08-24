@@ -184,7 +184,75 @@ namespace NpcValheim.Npc
         /// </summary>
         public static long GetPlayerId(long senderId)
         {
-            return TryGetPlayer(senderId, out var player) ? player.GetPlayerID() : 0L;
+            if (TryGetPlayer(senderId, out var player) && player != null) return player.GetPlayerID();
+
+            // No live Player here does not mean no player. A dedicated server does not always
+            // hold a character GameObject for a connected peer -- the live log caught an
+            // accept refused with peer=True, characterId set, and players=0: the whole scene
+            // had no Player component in it. Requiring one made identity depend on whether
+            // the server happened to have the character instantiated at that instant, which
+            // is why quests and the shop failed intermittently and for no visible reason.
+            //
+            // Player.GetPlayerID() only reads ZDOVars.s_playerID off its own ZDO anyway, so
+            // read it from the same place. The trust boundary is unchanged: the character id
+            // comes from the authenticated ZNetPeer, which a client cannot set for anyone
+            // else, exactly as in the instance path above.
+            return PersistentPlayerIdOf(senderId);
+        }
+
+        private static int _playerIdKey;
+
+        /// <summary>The stable character id straight off the peer's character ZDO, or 0.</summary>
+        private static long PersistentPlayerIdOf(long senderId)
+        {
+            try
+            {
+                var peer = FindPeer(senderId);
+                if (!TryGetPeerCharacterId(peer, out var characterId)) return 0L;
+
+                var zdo = ZDOMan.instance?.GetZDO(characterId);
+                if (zdo == null) return 0L;
+
+                if (_playerIdKey == 0) _playerIdKey = "playerID".GetStableHashCode();
+                return zdo.GetLong(_playerIdKey, 0L);
+            }
+            catch
+            {
+                return 0L;
+            }
+        }
+
+        /// <summary>
+        /// Where the sender's character is, whether or not it is instantiated here.
+        ///
+        /// The proximity guard used player.transform.position, which needs a live Player and
+        /// so failed closed on a server that has none -- taking every shop and market RPC
+        /// with it. A ZDO carries its own position and is replicated regardless.
+        /// </summary>
+        internal static bool TryGetSenderPosition(long senderId, out Vector3 position)
+        {
+            position = Vector3.zero;
+            if (TryGetPlayer(senderId, out var player) && player != null)
+            {
+                position = player.transform.position;
+                return true;
+            }
+
+            try
+            {
+                var peer = FindPeer(senderId);
+                if (!TryGetPeerCharacterId(peer, out var characterId)) return false;
+
+                var zdo = ZDOMan.instance?.GetZDO(characterId);
+                if (zdo == null) return false;
+
+                position = zdo.GetPosition();
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
         }
 
         /// <summary>
