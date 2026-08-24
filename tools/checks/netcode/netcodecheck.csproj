@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Le a IL do assembly_valheim instalado e confere que os pontos de ancoragem dos
+       transpilers de Patches/NetworkTuningPatches.cs continuam la.
+
+       Um transpiler que nao casa com nada nao da erro: ele so devolve a IL intacta, o
+       servidor sobe achando que esta acelerado e roda na velocidade vanilla. Isso e o
+       mesmo tipo de quebra silenciosa que o YamlDotNet causou, entao vale a mesma
+       verificacao fora do jogo. Compile e execute com tools/checks/run.ps1. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net48</TargetFramework>
+    <Nullable>disable</Nullable>
+    <AssemblyName>netcodecheck</AssemblyName>
+    <RestoreSources>https://api.nuget.org/v3/index.json</RestoreSources>
+    <ValheimManagedDir>$(ValheimManaged)</ValheimManagedDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Mono.Cecil" Version="0.11.4" />
+  </ItemGroup>
+
+</Project>
