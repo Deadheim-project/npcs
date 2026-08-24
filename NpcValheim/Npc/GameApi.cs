@@ -268,6 +268,56 @@ namespace NpcValheim.Npc
             return false;
         }
 
+        /// <summary>
+        /// Why TryGetPlayer refused, in one line.
+        ///
+        /// Built only where a handler is about to refuse -- resolution runs on every economy
+        /// and quest RPC, so this must never sit on the hot path. Without it the refusal says
+        /// "could not resolve their character", which names the symptom and hides all four of
+        /// its causes: no peer for that sender at all, a peer whose character id has not
+        /// replicated yet, a character id that resolves to nothing instantiated here, or a
+        /// live Player whose ZDO is owned by a different uid than the peer's.
+        /// </summary>
+        internal static string DescribeSender(long senderId)
+        {
+            try
+            {
+                var peer = FindPeer(senderId);
+                bool hasPeerCharacter = TryGetPeerCharacterId(peer, out var characterId);
+                long peerUid = GetPeerUid(peer);
+                bool instanceFound = hasPeerCharacter && TryGetPlayerInstance(characterId, out _);
+
+                var all = Player.GetAllPlayers();
+                var seen = new List<string>();
+                if (all != null)
+                    foreach (var candidate in all)
+                    {
+                        if (candidate == null) continue;
+                        long owner = 0L;
+                        long zdoUser = 0L;
+                        try
+                        {
+                            var nview = candidate.GetComponent<ZNetView>();
+                            if (nview != null && nview.IsValid())
+                            {
+                                owner = nview.GetZDO().GetOwner();
+                                zdoUser = nview.GetZDO().m_uid.UserID;
+                            }
+                        }
+                        catch { /* a Player mid-spawn cannot be described, only counted */ }
+                        seen.Add($"{candidate.GetPlayerName()}(id={candidate.GetPlayerID()} owner={owner} zdoUser={zdoUser})");
+                    }
+
+                return $"sender={senderId} peer={peer != null} peerUid={peerUid} " +
+                       $"characterId={(hasPeerCharacter ? characterId.ToString() : "unset")} " +
+                       $"instanceFound={instanceFound} players={seen.Count} [{string.Join(", ", seen)}]";
+            }
+            catch (Exception e)
+            {
+                return $"sender={senderId} <{e.GetType().Name}: {e.Message}>";
+            }
+        }
+
         /// <summary>Pure matching rule, kept separate so the fail-closed cases can be
         /// verified outside Unity by the repository's wire checks.</summary>
         private static bool IdentityMatches(long senderId, long playerId, long zdoUserId,

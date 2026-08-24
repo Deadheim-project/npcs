@@ -507,7 +507,10 @@ namespace NpcValheim.Npc
             long playerId = GameApi.GetPlayerId(sender);
             if (playerId == 0L)
             {
-                Plugin.Log.LogWarning($"NpcValheim: accept from peer {sender} refused -- the server could not resolve their character");
+                Plugin.Log.LogWarning("NpcValheim: accept refused -- the server could not resolve the sender's character: " +
+                                      GameApi.DescribeSender(sender));
+                ServiceNpcAuthority.SendStatus(sender,
+                    "O servidor não reconheceu seu personagem. Reconecte e tente de novo.");
                 return;
             }
 
