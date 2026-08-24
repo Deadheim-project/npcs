@@ -14,7 +14,7 @@ namespace NpcValheim
     {
         public const string Guid = "com.npcvalheim.mod";
         public const string Name = "NpcValheim";
-        public const string Version = "0.1.31";
+        public const string Version = "0.1.32";
 
         internal static ManualLogSource Log;
         private Harmony _harmony;
@@ -100,8 +100,8 @@ namespace NpcValheim
 
             ShowQuestButton = Config.Bind("Quests", "ShowJournalButton", true,
                 "Shows a button on the HUD that opens the quest journal and counts what is in progress.");
-            QuestButtonX = Config.Bind("Quests", "JournalButtonX", 16f,
-                "Distance in pixels from the left edge of the screen to the journal button.");
+            QuestButtonX = Config.Bind("Quests", "JournalButtonX", 24f,
+                "Distance in pixels from the right edge of the screen to the journal button. It sits on the right because the left is where other mods stack their bars.");
             QuestButtonY = Config.Bind("Quests", "JournalButtonY", 260f,
                 "Distance in pixels from the top edge of the screen to the journal button. Raise it to clear another mod's bar.");
 

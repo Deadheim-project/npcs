@@ -54,19 +54,19 @@ namespace NpcValheim.UI
             if (_canvas == null) Build();
             if (_canvas == null) return;
 
-            // Deliberately still shown while the inventory is open.
+            // Shown only while the inventory is open, because that is the only time it can be
+            // used: Valheim gives you a mouse cursor there and nowhere else. It originally did
+            // the exact opposite -- visible during play, hidden the moment the inventory came
+            // up -- so the one screen where it was clickable was the one screen it removed
+            // itself from. During play the tracker already says what is in progress, and the
+            // journal key (J by default) opens the same window without a cursor.
             //
-            // It used to hide whenever InventoryGui was visible, which sounds tidy and made
-            // the button impossible to use: Valheim only gives you a mouse cursor while the
-            // inventory or a menu is open, so the one moment you could click it was the exact
-            // moment it disappeared. It was never "behind the inventory" -- it was gone, and
-            // what remains behind it is the tracker.
-            //
-            // The escape menu still hides it, because that one is a modal the game expects to
-            // own the screen, and our own panels do too (UiInputBlocker) so a quest window
-            // cannot be opened on top of a shop.
+            // The escape menu still hides it, being a modal the game expects to own the
+            // screen, and so do our own panels (UiInputBlocker), so a quest window cannot be
+            // opened on top of a shop.
             bool hud = !UiInputBlocker.IsOpen &&
-                       (Menu.instance == null || !Menu.IsVisible());
+                       (Menu.instance == null || !Menu.IsVisible()) &&
+                       InventoryGui.instance != null && InventoryGui.IsVisible();
             if (_canvas.activeSelf != hud) _canvas.SetActive(hud);
 
             if (Time.time >= _nextRefresh)
@@ -89,11 +89,12 @@ namespace NpcValheim.UI
             var button = ValheimUi.CreateButton(_canvas.transform, "", 64f, 64f, 16);
             var rect = (RectTransform)button.transform;
 
-            // Anchored to the top-left and pushed by the configured offset: an absolute
-            // position would land somewhere different on every resolution.
-            rect.anchorMin = rect.anchorMax = new Vector2(0f, 1f);
-            rect.pivot = new Vector2(0f, 1f);
-            rect.anchoredPosition = new Vector2(Plugin.QuestButtonX.Value, -Plugin.QuestButtonY.Value);
+            // Anchored to the top-right and pushed by the configured offset: an absolute
+            // position would land somewhere different on every resolution. The left edge is
+            // where other mods stack their own bars, which is what put this on top of one.
+            rect.anchorMin = rect.anchorMax = new Vector2(1f, 1f);
+            rect.pivot = new Vector2(1f, 1f);
+            rect.anchoredPosition = new Vector2(-Plugin.QuestButtonX.Value, -Plugin.QuestButtonY.Value);
             rect.sizeDelta = new Vector2(64f, 64f);
 
             _background = button.GetComponent<Image>();

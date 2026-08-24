@@ -203,7 +203,55 @@ namespace NpcValheim.Npc
             // The legacy single destination has now been folded into the list; clear its flag
             // so MigrateLegacyDestination never resurrects it on top of the real list.
             Nview.GetZDO().Set(LegacyDestSet, false);
+            RememberDestinations();
             PersistProfileSnapshot();
+        }
+
+        // ---- the routes the server insists on ----
+        //
+        // Same story as the quest giver's board: a list written by an admin reverted seconds
+        // later while the server owned the ZDO throughout, so no client had overwritten it and
+        // nothing else in this mod writes the key. The server therefore keeps its own copy --
+        // seeded from the ZDO on Awake, where the world save restores it, updated with every
+        // legitimate write, and put back whenever the two drift apart.
+
+        private string _authoritativeDestinations;
+        private float _nextRouteCheck;
+
+        private void RememberDestinations()
+        {
+            if (Nview == null || !Nview.IsValid()) return;
+            if (ZNet.instance == null || !ZNet.instance.IsServer()) return;
+            _authoritativeDestinations = Nview.GetZDO().GetString(KeyDestinations, "");
+        }
+
+        protected override void Update()
+        {
+            base.Update();
+
+            if (Nview == null || !Nview.IsValid()) return;
+            if (ZNet.instance == null || !ZNet.instance.IsServer()) return;
+            if (Time.unscaledTime < _nextRouteCheck) return;
+            _nextRouteCheck = Time.unscaledTime + 1f;
+
+            if (_authoritativeDestinations == null)
+            {
+                // First tick after a spawn or a server restart: the ZDO is the source.
+                _authoritativeDestinations = Nview.GetZDO().GetString(KeyDestinations, "");
+                return;
+            }
+            // An empty list is never restored over whatever is there: clearing the routes is a
+            // legitimate thing for an admin to do, and Save records that through the same path.
+            if (_authoritativeDestinations.Length == 0) return;
+
+            var current = Nview.GetZDO().GetString(KeyDestinations, "");
+            if (string.Equals(current, _authoritativeDestinations, StringComparison.Ordinal)) return;
+
+            Plugin.Log.LogWarning(
+                $"NpcValheim: '{GetHoverName()}' [{Nview.GetZDO().m_uid}] lost its travel network " +
+                $"({current.Length} chars on the ZDO, {_authoritativeDestinations.Length} on the server) -- restoring it");
+            Nview.GetZDO().Set(KeyDestinations, _authoritativeDestinations);
+            Nview.GetZDO().Set(LegacyDestSet, false);
         }
 
         private static string Pack(List<TeleportDestination> destinations)
@@ -502,6 +550,7 @@ namespace NpcValheim.Npc
             }
             Nview.GetZDO().Set(KeyDestinations, Pack(destinations));
             Nview.GetZDO().Set(LegacyDestSet, false);
+            RememberDestinations();
         }
 
         internal static bool IsValidDestinationPosition(Vector3 position) =>
