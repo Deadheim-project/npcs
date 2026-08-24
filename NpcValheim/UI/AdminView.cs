@@ -34,6 +34,7 @@ namespace NpcValheim.UI
         private readonly List<GameObject> _templateRows = new List<GameObject>();
         private string _templateSignature;
 
+        private TextMeshProUGUI _destinationPreview;
         private RectTransform _destinations;
         private readonly List<GameObject> _destinationRows = new List<GameObject>();
         private string _destinationSignature;
@@ -90,6 +91,9 @@ namespace NpcValheim.UI
 
             if (Npc is TeleporterNpc teleporter)
             {
+                // Ordered the way the job is actually done -- name it, price it, say where,
+                // read back what that means, then commit -- with the Adicionar button last
+                // instead of sitting on the first row above the coordinates it consumes.
                 Heading(column, "Novo destino");
                 var addRow = Row(column, 40f);
                 ValheimUi.CreateLabel(addRow, "Nome", 14, ValheimUi.Beige, TextAlignmentOptions.Left);
@@ -109,7 +113,7 @@ namespace NpcValheim.UI
                 ValheimUi.CreateLabel(coordRow, "Z", 14, ValheimUi.Beige, TextAlignmentOptions.Right);
                 _destinationZ = ValheimUi.CreateInputField(coordRow, "", 90f, 38f);
 
-                var here = ValheimUi.CreateButton(coordRow, "Onde estou", 130f, 38f, 14);
+                var here = ValheimUi.CreateButton(coordRow, "Usar minha posição", 160f, 38f, 14);
                 here.onClick.AddListener(() =>
                 {
                     var at = Player.transform.position;
@@ -119,7 +123,16 @@ namespace NpcValheim.UI
                     Say($"Coordenadas preenchidas com a sua posição ({at.x:0}, {at.y:0}, {at.z:0}).");
                 });
 
-                var add = ValheimUi.CreateButton(addRow, "Adicionar", 160f, 38f, 15);
+                // Says what the button is about to do, in the same words as the result: which
+                // name, which coordinates, and what the fare works out to. The rule that three
+                // empty boxes mean "where I am standing" was written in dim text under the
+                // form, so the form itself showed three empty required-looking fields and
+                // nothing else -- this resolves the rule to actual numbers before it is used.
+                _destinationPreview = Dim(column, "");
+                ValheimUi.SetHeight(_destinationPreview.gameObject, 34f);
+
+                var add = ValheimUi.CreateButton(column, "Adicionar destino", 0f, 40f, 15);
+                ValheimUi.SetHeight(add.gameObject, 40f);
                 add.onClick.AddListener(() =>
                 {
                     if (string.IsNullOrWhiteSpace(_destinationName.text))
@@ -153,9 +166,9 @@ namespace NpcValheim.UI
                     _destinationSignature = null;
                 });
 
-                var coordinateHint = Dim(column,
-                    "Informe X/Y/Z para um ponto remoto, ou deixe os três vazios para usar sua posição atual.");
-                ValheimUi.SetHeight(coordinateHint.gameObject, 32f);
+                // The old hint that lived here ("deixe os três vazios para usar sua posição")
+                // is now stated by the preview above, against real numbers, instead of asking
+                // the reader to hold a rule in their head while filling the form.
 
                 var costRow = Row(column, 38f);
                 ValheimUi.CreateLabel(costRow, "Item/custo padrao", 15, ValheimUi.Beige, TextAlignmentOptions.Left);
@@ -329,6 +342,7 @@ namespace NpcValheim.UI
         public override void Refresh()
         {
             RefreshItemSearch();
+            RefreshDestinationPreview();
             RefreshDestinations();
             RefreshBuyList();
             RefreshTemplates();
@@ -597,6 +611,72 @@ namespace NpcValheim.UI
                     _buySignature = null;
                 });
             }
+        }
+
+        /// <summary>
+        /// Reads the new-destination form back in plain words, before it is committed.
+        ///
+        /// Everything here was already true of the form; none of it was visible. Three empty
+        /// coordinate boxes look required, so "leave them empty to use your own position" read
+        /// as an error waiting to happen rather than as the normal case; and a cost of 0 is
+        /// ambiguous between free and "whatever the NPC charges", which are different numbers.
+        /// Stating the outcome costs nothing and removes both guesses.
+        /// </summary>
+        private void RefreshDestinationPreview()
+        {
+            if (_destinationPreview == null || !(Npc is TeleporterNpc teleporter)) return;
+
+            string name = (_destinationName?.text ?? "").Trim();
+            if (name.Length == 0)
+            {
+                _destinationPreview.text = "Dê um nome ao destino para começar.";
+                return;
+            }
+
+            // Parsed quietly: this runs every frame, and ReadCoordinates reports its failures
+            // to the player, which would turn a half-typed number into a stream of complaints.
+            var culture = CultureInfo.InvariantCulture;
+            string x = (_destinationX?.text ?? "").Trim().Replace(',', '.');
+            string y = (_destinationY?.text ?? "").Trim().Replace(',', '.');
+            string z = (_destinationZ?.text ?? "").Trim().Replace(',', '.');
+
+            string where;
+            if (x.Length == 0 && y.Length == 0 && z.Length == 0)
+            {
+                var at = Player != null ? Player.transform.position : Vector3.zero;
+                where = $"onde você está agora ({at.x:0}, {at.y:0}, {at.z:0})";
+            }
+            else if (float.TryParse(x, NumberStyles.Float, culture, out float px) &&
+                     float.TryParse(y, NumberStyles.Float, culture, out float py) &&
+                     float.TryParse(z, NumberStyles.Float, culture, out float pz))
+            {
+                var typed = new Vector3(px, py, pz);
+                where = TeleporterNpc.IsValidDestinationPosition(typed)
+                    ? $"em ({px:0}, {py:0}, {pz:0})"
+                    : $"<color=#d66>em ({px:0}, {py:0}, {pz:0}) — fora do mundo</color>";
+            }
+            else
+            {
+                _destinationPreview.text =
+                    "<color=#d66>Coordenadas incompletas: preencha X, Y e Z, ou apague os três para usar sua posição.</color>";
+                return;
+            }
+
+            string fare;
+            if (!int.TryParse((_destinationCost?.text ?? "").Trim(), out int cost) || cost < 0)
+                fare = "<color=#d66>custo inválido</color>";
+            else if (cost > 0)
+                fare = $"custa {cost} {ItemNames.Display(teleporter.CostItem)}";
+            else
+            {
+                int fallback = teleporter.CostOf(null);
+                string item = teleporter.CostItem;
+                fare = fallback > 0 && !string.IsNullOrEmpty(item)
+                    ? $"usa o padrão do NPC: {fallback} {ItemNames.Display(item)}"
+                    : "grátis (o NPC não cobra nada)";
+            }
+
+            _destinationPreview.text = $"Vai gravar «{name}» {where} — {fare}.";
         }
 
         private void RefreshDestinations()
