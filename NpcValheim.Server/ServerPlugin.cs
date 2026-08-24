@@ -71,7 +71,9 @@ namespace NpcValheim.Server
                 AutoStart.EnsureCreated();
 
             if (NpcValheim.Plugin.AutoConfirmCharacterOnJoin.Value)
-                AutoConfirmCharacter.EnsureCreated(NpcValheim.Plugin.AutoJoinPassword.Value);
+                AutoConfirmCharacter.EnsureCreated(
+                    NpcValheim.Plugin.AutoJoinPassword.Value,
+                    NpcValheim.Plugin.AutoJoinServer.Value);
         }
     }
 }

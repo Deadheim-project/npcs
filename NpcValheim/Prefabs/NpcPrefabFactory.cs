@@ -63,11 +63,11 @@ namespace NpcValheim.Prefabs
                 return;
             }
 
-            RegisterNpcType(scene, source, "NpcValheim_Teleporter", typeof(TeleporterNpc), "Teleportador");
-            RegisterNpcType(scene, source, "NpcValheim_Marketplace", typeof(MarketplaceNpc), "Mercador");
-            RegisterNpcType(scene, source, "NpcValheim_Auction", typeof(AuctionNpc), "Leilão");
+            RegisterNpcType(scene, source, "NpcValheim_Teleporter", typeof(TeleporterNpc), "Teleportador", "portal_wood");
+            RegisterNpcType(scene, source, "NpcValheim_Marketplace", typeof(MarketplaceNpc), "Mercador", "piece_chest_wood");
+            RegisterNpcType(scene, source, "NpcValheim_Auction", typeof(AuctionNpc), "Leilão", "piece_banner01");
             RegisterMailbox(scene);
-            RegisterNpcType(scene, source, "NpcValheim_QuestGiver", typeof(QuestGiverNpc), "Missões");
+            RegisterNpcType(scene, source, "NpcValheim_QuestGiver", typeof(QuestGiverNpc), "Missões", "sign");
         }
 
         /// <summary>

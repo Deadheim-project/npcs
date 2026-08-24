@@ -15,7 +15,7 @@ Write-Host "compilando o mod..." -ForegroundColor Cyan
 dotnet build "$root\NpcValheim.sln" -c Release -v q --nologo | Out-Null
 
 $failed = 0
-foreach ($check in @('wire', 'content')) {
+foreach ($check in @('wire', 'content', 'netcode')) {
     Write-Host ""
     Write-Host "=== $check ===" -ForegroundColor Cyan
     dotnet run --project "$PSScriptRoot\$check" -c Release -- "$root\NpcValheim\Content"

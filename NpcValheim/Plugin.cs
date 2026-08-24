@@ -35,6 +35,14 @@ namespace NpcValheim
         internal static ConfigEntry<int> TeleportCostAmount;
         internal static ConfigEntry<float> TeleportCooldownSeconds;
         internal static ConfigEntry<int> ListingDurationHours;
+
+        // Server-side netcode tuning -- see Patches/NetworkTuningPatches.cs for what each one
+        // moves and why. Deliberately not ServerSync'd: these only ever take effect on the
+        // machine running ZDOMan for many peers, so pushing them at clients would just be
+        // noise in their config files.
+        internal static ConfigEntry<bool> NetworkTuningEnabled;
+        internal static ConfigEntry<int> NetworkPeerSendBudget;
+        internal static ConfigEntry<int> NetworkDistantGate;
         internal static ConfigEntry<UnityEngine.KeyCode> MarkWaypointKey;
         internal static ConfigEntry<UnityEngine.KeyCode> QuestJournalKey;
         internal static ConfigEntry<bool> ShowQuestButton;
@@ -55,6 +63,7 @@ namespace NpcValheim
         // clicks. Independent of EnableSelfTest -- this one doesn't spawn any test NPCs.
         internal static ConfigEntry<bool> AutoConfirmCharacterOnJoin;
         internal static ConfigEntry<string> AutoJoinPassword;
+        internal static ConfigEntry<string> AutoJoinServer;
         internal static ConfigEntry<bool> ShowcaseMode;
         internal static ConfigEntry<bool> SimulateNonAdmin;
         internal static ConfigEntry<string> WorldName;
@@ -113,6 +122,15 @@ namespace NpcValheim
             ListingDurationHours = Config.Bind("Marketplace", "ListingDurationHours", 48,
                 "How long a listing stays up before it expires and the unsold stock is mailed back to the seller.");
 
+            NetworkTuningEnabled = Config.Bind("Network", "Enabled", true,
+                "Master switch for the ZDO send-rate patches. Turn off to fall straight back to vanilla netcode without removing the mod.");
+
+            NetworkPeerSendBudget = Config.Bind("Network", "PeerSendBudgetBytes", 20480,
+                "Bytes of world state one player may receive per round. Vanilla is 10240, which is what makes a large base trickle in. Read at patch time, so a change needs a server restart. Raise gradually and watch the host's bandwidth.");
+
+            NetworkDistantGate = Config.Bind("Network", "DistantObjectGate", 25,
+                "How many pending nearby objects are tolerated before distant ones stop replicating entirely. Vanilla is 10, which is why far-off boats and portals freeze while you are in a busy base. Read at patch time.");
+
             EnableSelfTest = Config.Bind("Testing", "EnableSelfTest", false,
                 "Runs an automated smoke test shortly after spawning into a world and logs SELFTEST PASS/FAIL lines. Dev use only.");
 
@@ -134,9 +152,11 @@ namespace NpcValheim
                 "With ShowcaseMode on, hands the staged NPCs to another player and drops admin rights, so the panel renders exactly as an ordinary visitor sees it. Dev use only.");
 
             AutoConfirmCharacterOnJoin = Config.Bind("Testing", "AutoConfirmCharacterOnJoin", false,
-                "Auto-clicks past the password and character-selection screens. Meant to pair with a `+connect ip:port password` launch for a fully hands-off join. Dev use only.");
+                "Joins a server hands-off from a cold launch: queues the join, answers the password challenge and confirms character selection. Dev use only.");
             AutoJoinPassword = Config.Bind("Testing", "AutoJoinPassword", "",
-                "Password to auto-submit on the server password screen when AutoConfirmCharacterOnJoin is on (should match the +connect launch arg).");
+                "Password answered during the connection handshake when AutoConfirmCharacterOnJoin is on. Empty leaves the password dialog to a human.");
+            AutoJoinServer = Config.Bind("Testing", "AutoJoinServer", "",
+                "Address (ip:port) the hands-off join connects to, e.g. 1.2.3.4:2456. Empty falls back to whatever a `+connect` launch argument queued. Dev use only.");
 
             ConfigSync.AddConfigEntry(TeleportCostItem);
             ConfigSync.AddConfigEntry(TeleportCostAmount);
