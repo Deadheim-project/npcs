@@ -61,15 +61,7 @@ namespace NpcValheim.Npc
             if (Nview == null || !Nview.IsValid())
                 return;
 
-            // Economy/profile files exist only on the server. Keep every NPC server-owned
-            // instead of relying on Valheim's proximity ownership, which may otherwise route
-            // an RPC to a client's separate LiteDB/YAML files.
-            if (ZNet.instance != null && ZNet.instance.IsServer())
-            {
-                long serverId = ZNet.GetUID();
-                if (Nview.GetZDO().GetOwner() != serverId)
-                    Nview.GetZDO().SetOwner(serverId);
-            }
+            KeepServerOwned();
 
             Nview.Register("RPC_SetArmor", (Action<long, string, string>)RPC_SetArmor);
             Nview.Register("RPC_SetName", (Action<long, string>)RPC_SetName);
@@ -190,6 +182,15 @@ namespace NpcValheim.Npc
         protected virtual void Update()
         {
             if (Nview == null || !Nview.IsValid()) return;
+
+            // Before the batch-mode gate below: this is the half that matters most on a
+            // headless server, where the rest of this method does nothing.
+            if (Time.unscaledTime >= _nextOwnershipCheck)
+            {
+                _nextOwnershipCheck = Time.unscaledTime + 2f;
+                KeepServerOwned();
+            }
+
             if (Application.isBatchMode || Time.unscaledTime < _nextAppearanceSync) return;
             _nextAppearanceSync = Time.unscaledTime + 0.1f;
 
@@ -200,6 +201,41 @@ namespace NpcValheim.Npc
             if (revision == _appliedAppearanceRevision) return;
             _appliedAppearanceRevision = revision;
             ApplyVisualFromZdo();
+        }
+
+        private float _nextOwnershipCheck;
+
+        /// <summary>
+        /// Holds the NPC's ZDO on the server, for as long as it exists.
+        ///
+        /// Claiming it once in Awake was not enough. Service NPCs are Character-based, and
+        /// Valheim migrates character ZDO ownership to whichever peer is nearest so that peer
+        /// can simulate it. A client therefore becomes the owner shortly after walking up --
+        /// and from then on the client's copy of the ZDO is the authoritative one, so
+        /// everything the server writes is overwritten by the owner's next sync.
+        ///
+        /// That is what made an admin's quest list revert. The server wrote the new list and
+        /// sent it, the client rendered it, then the client re-took ownership still holding
+        /// the previous list and pushed it back: the same NPC's board went ash -> meadowst ->
+        /// ash within six seconds, and accepting a quest from the list on screen was refused
+        /// as "not offered" because by then it genuinely was not. Nothing about that is
+        /// specific to quests -- prices and appearance sat behind the same race.
+        ///
+        /// Ownership also decides where a ZNetView RPC runs, and the economy and profile
+        /// files exist only on the server, which is the reason the original Awake claim was
+        /// written in the first place.
+        /// </summary>
+        private void KeepServerOwned()
+        {
+            if (Nview == null || !Nview.IsValid()) return;
+            if (ZNet.instance == null || !ZNet.instance.IsServer()) return;
+            if (Nview.IsOwner()) return;
+
+            // ZDO ownership is keyed by ZDOMan's session id. The previous claim used
+            // ZNet.GetUID(), which is a different number on the dedicated-server transport --
+            // the same namespace confusion documented in GameApi.IdentityMatches -- so it left
+            // the ZDO owned by nobody the server recognised as itself.
+            Nview.GetZDO().SetOwner(ZDOMan.GetSessionID());
         }
 
         /// <summary>Override to call Nview.Register(...) for this NPC's own RPCs.</summary>
