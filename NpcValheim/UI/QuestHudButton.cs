@@ -54,10 +54,18 @@ namespace NpcValheim.UI
             if (_canvas == null) Build();
             if (_canvas == null) return;
 
-            // Hidden while a full-screen panel is up, the same as the rest of the HUD -- a
-            // floating button over the inventory is the kind of thing that gets misclicked.
+            // Deliberately still shown while the inventory is open.
+            //
+            // It used to hide whenever InventoryGui was visible, which sounds tidy and made
+            // the button impossible to use: Valheim only gives you a mouse cursor while the
+            // inventory or a menu is open, so the one moment you could click it was the exact
+            // moment it disappeared. It was never "behind the inventory" -- it was gone, and
+            // what remains behind it is the tracker.
+            //
+            // The escape menu still hides it, because that one is a modal the game expects to
+            // own the screen, and our own panels do too (UiInputBlocker) so a quest window
+            // cannot be opened on top of a shop.
             bool hud = !UiInputBlocker.IsOpen &&
-                       (InventoryGui.instance == null || !InventoryGui.IsVisible()) &&
                        (Menu.instance == null || !Menu.IsVisible());
             if (_canvas.activeSelf != hud) _canvas.SetActive(hud);
 
@@ -72,8 +80,10 @@ namespace NpcValheim.UI
         {
             if (!ValheimUi.EnsureAssets()) return;
 
-            // Below the panels (which sit at 4900+) so it can never cover one.
-            _canvas = ValheimUi.CreateCanvas("NpcValheim_QuestButton", 1000);
+            // Above the inventory, below our own panels (4900+) so it can never cover one.
+            // At 1000 it drew underneath the inventory window, so on the one screen where it
+            // is clickable it was also the one screen where it was covered.
+            _canvas = ValheimUi.CreateCanvas("NpcValheim_QuestButton", 4800);
             if (_canvas == null) return;
 
             var button = ValheimUi.CreateButton(_canvas.transform, "", 64f, 64f, 16);

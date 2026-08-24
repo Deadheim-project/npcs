@@ -178,11 +178,73 @@ namespace NpcValheim.Npc
             if (quests == null || quests.Count == 0) return;
 
             Nview.GetZDO().Set(KeyQuests, string.Join("\n", quests));
+            RememberOfferedIds();
         }
 
         protected override void OnProfileApplied(long sender)
         {
+            RememberOfferedIds();
             SendQuestsTo(sender);
+        }
+
+        // ---- the board the server insists on ----
+        //
+        // The offered list lives in the ZDO, and on the live server it reverted within two
+        // seconds of being written: an admin created a quest, the giver offered 5, and by the
+        // next poll it was back to the original 4 -- with the server owning the ZDO the whole
+        // time (no reclaim was ever logged), so no client had overwritten it. The writer could
+        // not be identified from the source: nothing else in this mod writes the key.
+        //
+        // So the server stops trusting the ZDO to remember. It keeps its own copy, seeded from
+        // the ZDO on Awake (which is where the world save restores it), updates both together
+        // on every legitimate write, and puts the ZDO back whenever the two drift apart. That
+        // is a fix rather than a diagnosis, but it is the correct shape regardless of the
+        // cause: this list is server-authoritative state, and the ZDO is a replicated cache of
+        // it. The drift is logged, so if it is still happening it is visible rather than
+        // merely survived.
+
+        private List<string> _authoritativeIds;
+        private float _nextBoardCheck;
+
+        private static bool SameIds(List<string> a, List<string> b)
+        {
+            if (a.Count != b.Count) return false;
+            for (int i = 0; i < a.Count; i++)
+                if (!string.Equals(a[i], b[i], StringComparison.Ordinal)) return false;
+            return true;
+        }
+
+        private void RememberOfferedIds()
+        {
+            if (Nview == null || !Nview.IsValid()) return;
+            if (ZNet.instance == null || !ZNet.instance.IsServer()) return;
+            _authoritativeIds = GetOfferedQuestIds();
+        }
+
+        protected override void Update()
+        {
+            base.Update();
+
+            if (Nview == null || !Nview.IsValid()) return;
+            if (ZNet.instance == null || !ZNet.instance.IsServer()) return;
+            if (Time.unscaledTime < _nextBoardCheck) return;
+            _nextBoardCheck = Time.unscaledTime + 1f;
+
+            if (_authoritativeIds == null)
+            {
+                // First tick after a spawn or a server restart: the ZDO is the source.
+                _authoritativeIds = GetOfferedQuestIds();
+                return;
+            }
+            if (_authoritativeIds.Count == 0) return;
+
+            var current = GetOfferedQuestIds();
+            if (SameIds(current, _authoritativeIds)) return;
+
+            Plugin.Log.LogWarning(
+                $"NpcValheim: '{GetHoverName()}' [{Nview.GetZDO().m_uid}] lost its quest list " +
+                $"({current.Count} on the ZDO, {_authoritativeIds.Count} on the server) -- restoring it");
+            Nview.GetZDO().Set(KeyQuests, string.Join("\n", _authoritativeIds));
         }
 
         /// <summary>
@@ -239,6 +301,7 @@ namespace NpcValheim.Npc
             {
                 ids.Add(quest.Id);
                 Nview.GetZDO().Set(KeyQuests, string.Join("\n", ids));
+                RememberOfferedIds();
             }
 
             PersistProfileSnapshot();
@@ -274,6 +337,7 @@ namespace NpcValheim.Npc
             if (!NpcRequestGuard.AllowRate(sender, "quest-set-offers", 4, 5f) ||
                 (packed?.Length ?? 0) > 16384) return;
             Nview.GetZDO().Set(KeyQuests, packed ?? "");
+            RememberOfferedIds();
             PersistProfileSnapshot();
             SendQuestsTo(sender);
             Plugin.Log.LogInfo($"NpcValheim: admin peer {sender} assigned quests to '{GetHoverName()}'");
