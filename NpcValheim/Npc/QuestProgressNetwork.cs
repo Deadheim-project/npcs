@@ -53,17 +53,21 @@ namespace NpcValheim.Npc
             if (ZNet.instance == null || !ZNet.instance.IsServer() ||
                 !Enum.IsDefined(typeof(QuestObjectiveKind), rawKind)) return;
             var kind = (QuestObjectiveKind)rawKind;
-            if (!IsReportable(kind) || !GameApi.TryGetPlayer(sender, out var player) || player == null) return;
+            if (!IsReportable(kind)) return;
             if (!NpcRequestGuard.AllowRate(sender, "quest-" + rawKind, kind == QuestObjectiveKind.Kill ? 20 : 6, 2f)) return;
 
-            long playerId = player.GetPlayerID();
+            // Identity from the peer's character ZDO, not from a live Player component. This
+            // path used to demand the component and silently drop the report without it --
+            // and a dedicated server can hold no Player objects at all (observed live:
+            // players=0 with the peer fully authenticated), so no kill ever counted.
+            long playerId = GameApi.GetPlayerId(sender);
             if (playerId == 0L) return;
             target = (target ?? "").Trim();
             if (!TryReadEventData(eventData, out int count, out string questId)) return;
 
             if (kind == QuestObjectiveKind.Explore)
             {
-                if (!string.IsNullOrEmpty(questId)) CreditExplore(sender, playerId, player, questId);
+                if (!string.IsNullOrEmpty(questId)) CreditExplore(sender, playerId, questId);
                 return;
             }
 
@@ -74,13 +78,15 @@ namespace NpcValheim.Npc
         private static void OnTalk(long sender, ZDOID npcId)
         {
             if (ZNet.instance == null || !ZNet.instance.IsServer() || npcId.IsNone() ||
-                !GameApi.TryGetPlayer(sender, out var player) || player == null ||
                 !NpcRequestGuard.AllowRate(sender, "quest-talk", 6, 2f)) return;
 
             if (!ServiceNpcAuthority.TryResolveNpc(npcId, out _, out var npc) || npc == null) return;
-            if ((npc.transform.position - player.transform.position).sqrMagnitude > 64f) return;
 
-            long playerId = player.GetPlayerID();
+            // Same reason as OnEvent: the character need not be instantiated on this machine.
+            if (!GameApi.TryGetSenderPosition(sender, out var here)) return;
+            if ((npc.transform.position - here).sqrMagnitude > 64f) return;
+
+            long playerId = GameApi.GetPlayerId(sender);
             if (playerId == 0L) return;
             CreditMatching(sender, playerId, QuestObjectiveKind.Talk, npc.GetHoverName(), 1);
         }
@@ -106,13 +112,14 @@ namespace NpcValheim.Npc
             }
         }
 
-        private static void CreditExplore(long sender, long playerId, Player player, string questId)
+        private static void CreditExplore(long sender, long playerId, string questId)
         {
             var quest = QuestStore.Get(questId);
             var progress = quest != null ? QuestDatabase.Get(playerId, questId) : null;
             if (quest == null || progress == null || progress.Status != QuestStatus.Active) return;
 
-            var here = player.transform.position;
+            // Only the position was ever needed here, and a ZDO carries its own.
+            if (!GameApi.TryGetSenderPosition(sender, out var here)) return;
             var steps = quest.Steps();
             for (int i = 0; i < steps.Count; i++)
             {

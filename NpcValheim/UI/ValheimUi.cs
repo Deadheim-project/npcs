@@ -242,6 +242,11 @@ namespace NpcValheim.UI
             label.text = text ?? "";
             label.raycastTarget = false;
             label.overflowMode = TextOverflowModes.Overflow;
+            // Wrap by default, explicitly. Overflow only governs the vertical axis, so a
+            // label that does not wrap runs off the side of the panel and off the screen --
+            // which is what a quest description did. The few labels that must stay on one
+            // line (reward chips) set NoWrap for themselves after this.
+            label.textWrappingMode = TextWrappingModes.Normal;
             rect.gameObject.SetActive(true);
             return label;
         }

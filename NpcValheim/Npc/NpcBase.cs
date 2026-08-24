@@ -204,6 +204,7 @@ namespace NpcValheim.Npc
         }
 
         private float _nextOwnershipCheck;
+        private float _nextOwnershipComplaint;
 
         /// <summary>
         /// Holds the NPC's ZDO on the server, for as long as it exists.
@@ -230,6 +231,19 @@ namespace NpcValheim.Npc
             if (Nview == null || !Nview.IsValid()) return;
             if (ZNet.instance == null || !ZNet.instance.IsServer()) return;
             if (Nview.IsOwner()) return;
+
+            // Every re-claim means a client had taken the ZDO, and anything the server wrote
+            // in that window was overwritten by the client's copy. Whether that is happening
+            // at all is the open question behind an admin's quest list reverting, and it is
+            // not answerable from source -- so say it, but no more than once every 10s per
+            // NPC, because on a busy server this could otherwise become the log.
+            if (Time.unscaledTime >= _nextOwnershipComplaint)
+            {
+                _nextOwnershipComplaint = Time.unscaledTime + 10f;
+                Plugin.Log.LogWarning(
+                    $"NpcValheim: reclaiming '{GetHoverName()}' [{Nview.GetZDO().m_uid}] -- it was owned by " +
+                    $"{Nview.GetZDO().GetOwner()}, not this server ({ZDOMan.GetSessionID()})");
+            }
 
             // ZDO ownership is keyed by ZDOMan's session id. The previous claim used
             // ZNet.GetUID(), which is a different number on the dedicated-server transport --

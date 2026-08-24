@@ -129,10 +129,23 @@ namespace NpcValheim.UI
             Giver?.RequestQuests();
         }
 
+        private float _nextPoll;
+
         public override void Refresh()
         {
             var giver = Giver;
             if (giver == null) return;
+
+            // Ask again while the panel is open. It used to ask once, on Build, so anything
+            // that changed afterwards -- a quest created from the admin panel, progress from
+            // a kill, another giver's state -- only appeared after closing and reopening the
+            // window. The nameplate's own poll is 15s and deliberately slow; a panel someone
+            // is looking at should not wait on it.
+            if (Time.time >= _nextPoll)
+            {
+                _nextPoll = Time.time + 3f;
+                giver.RequestQuests();
+            }
 
             // Only rebuild the list when the data actually changed.
             var signature = Signature(giver.CachedQuests, Player);
