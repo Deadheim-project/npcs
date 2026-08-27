@@ -2,7 +2,7 @@
 # Cooldown original: 999999999 (lido como horas)
 id: totem
 name: "Totem de Proteção"
-description: "Bem vindo ao mundo de Deadheim! Antes de iniciar sua aventura você deve matar essas criaturas para que possa construir seu Totem de proteção para proteger seu abrigo, lembre-se que você deve construir o Arcane Ward e reabastecê-lo!"
+description: "Bem vindo ao mundo de Deadheim! Antes de iniciar sua aventura você deve matar essas criaturas para que possa construir seu Totem de proteção para proteger seu abrigo, lembre-se que você deve construir o Ward de Proteção e reabastecê-lo!"
 objectives:
   - kind: Kill
     target: "Boar"
