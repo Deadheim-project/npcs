@@ -19,5 +19,10 @@ installer/
 .build-plugins/
 .server-test/
 
-# Pasta montada para subir ao servidor (gerada a partir de NpcValheim/Content)
+# Estado de servidor. Deploy nao mora mais aqui -- este repo constroi o mod e
+# para por ai; ver Deadheim-project/deploy. Estas pastas eram produzidas pelos
+# scripts que sairam daqui, e ficam ignoradas para que um `git add -A` distraido
+# nunca commite WardData.json, VIPplayers.txt ou uma quest viva do servidor.
 dist/server-upload/
+dist/arcane-backup/
+dist/quests-backup/

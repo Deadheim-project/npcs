@@ -517,3 +517,21 @@ jogadores do servidor instalam uma vez e usam pra baixar/atualizar mods
 ---
 
 Desenvolvido com auxílio do Claude (Anthropic).
+
+## Este repo constrói o mod. Não publica.
+
+`python tools/package.py` gera `dist/Npcs.zip` — o artefato, e só. Colocá-lo num
+servidor é assunto de outro repositório:
+
+- **[Deadheim-project/deploy](https://github.com/Deadheim-project/deploy)** — envia
+  para o servidor, reinicia, e documenta o processo inteiro.
+
+A separação existe porque este é um mod como outro qualquer. O servidor Deadheim
+carrega 53 mods; reiniciá-lo derruba todos eles e todo mundo que estiver jogando.
+Não é um poder que o repositório de um mod deve ter por acidente — nem a capacidade
+de apagar o plugin de outra pessoa, que era o que as flags `--remove-kg` e
+`--remove-arcane` faziam daqui.
+
+O que continua aqui é o que é realmente deste mod: compilar, empacotar
+(`tools/package.py`), verificar (`tools/checks/run.ps1`) e importar conteúdo
+(`tools/kg-import/`).

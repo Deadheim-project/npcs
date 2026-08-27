@@ -3,6 +3,12 @@
 Builds dist/Npcs.zip -- what the Deadheim Launcher downloads and unpacks into
 BepInEx/plugins/NpcValheim/.
 
+This repository builds the mod and stops there. Putting the result on a server is
+not its business: that server runs 53 mods, and a mod repository should not be able
+to restart it or delete somebody else's plugin. The deploy tooling lives in
+Deadheim-project/deploy, and it consumes this very zip -- the same artifact the
+launcher hands the player, so both sides run identical bytes by construction.
+
 The zip is committed rather than built in CI because the GitHub runner has no Valheim
 install to compile against. This script exists so the contents are derived from the tree
 instead of remembered: forgetting to add a file here is how a release ships a mod whose
@@ -14,7 +20,6 @@ Usage:
 """
 
 import os
-import shutil
 import subprocess
 import sys
 import zipfile
@@ -51,7 +56,6 @@ def main():
 
     dist_dir = os.path.join(ROOT, "dist")
     out_path = os.path.join(dist_dir, "Npcs.zip")
-    server_path = os.path.join(dist_dir, "server-upload", "NpcValheim")
     os.makedirs(dist_dir, exist_ok=True)
 
     entries = []
@@ -80,18 +84,7 @@ def main():
         for path, arcname in entries:
             archive.write(path, arcname)
 
-    # The dedicated server receives exactly the same tree as a player. Rebuilding this
-    # staging folder from the same entry list prevents a stale or server-only DLL from
-    # drifting away from the launcher package.
-    if os.path.isdir(server_path):
-        shutil.rmtree(server_path)
-    for path, arcname in entries:
-        destination = os.path.join(server_path, *arcname.split("/"))
-        os.makedirs(os.path.dirname(destination), exist_ok=True)
-        shutil.copy2(path, destination)
-
     print("%s  (%d files, %.1f KB)" % (out_path, len(entries), os.path.getsize(out_path) / 1024.0))
-    print("%s  (same %d files for the dedicated server)" % (server_path, len(entries)))
     return 0
 
 
