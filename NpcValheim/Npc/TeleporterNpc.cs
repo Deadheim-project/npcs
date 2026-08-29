@@ -530,13 +530,20 @@ namespace NpcValheim.Npc
                 DenyTeleport(sender, "Não deu para viajar: " + refusal);
                 return;
             }
-            if (!GameApi.TryGetPlayer(sender, out var player) || player == null)
+            // Identity comes from the character ZDO, not from a live Player component. A
+            // dedicated server frequently holds no Player GameObject for a connected peer,
+            // so requiring one refused every trip with "o servidor nao encontrou o seu
+            // personagem" while the player stood at the counter. GameApi.GetPlayerId exists
+            // for exactly this, and every other NPC already used it -- the teleporter was
+            // the last caller of TryGetPlayer, which is why only travelling was affected.
+            // The trust boundary is unchanged: the character id comes from the
+            // authenticated ZNetPeer, which no client can set on another's behalf.
+            long playerId = GameApi.GetPlayerId(sender);
+            if (playerId == 0L)
             {
-                DenyTeleport(sender, "O servidor não encontrou o seu personagem.");
+                DenyTeleport(sender, "O servidor não conseguiu identificar o seu personagem.");
                 return;
             }
-            long playerId = player.GetPlayerID();
-            if (playerId == 0L) { DenyTeleport(sender, "Jogador não autenticado."); return; }
 
             var destination = GetDestinations().Find(d => d.Id == destinationId);
             if (destination == null || !IsValidDestinationPosition(destination.Position) ||
