@@ -25,6 +25,7 @@ namespace NpcValheim.UI
 
         private TMP_InputField _destinationName;
         private TMP_InputField _destinationCost;
+        private TMP_InputField _destinationCostItem;
         private TMP_InputField _destinationX;
         private TMP_InputField _destinationY;
         private TMP_InputField _destinationZ;
@@ -102,6 +103,14 @@ namespace NpcValheim.UI
                 ValheimUi.CreateLabel(addRow, "Custo", 14, ValheimUi.Beige, TextAlignmentOptions.Right);
                 _destinationCost = ValheimUi.CreateInputField(addRow, "0", 60f, 38f);
 
+                // The fare is a price *and* an item, and until now only the price was
+                // askable here -- every route was charged in whatever the NPC's default was,
+                // so a route could not cost a Ruby on a teleporter priced in Coins. Left
+                // empty this still means "the NPC's default item", which is what the
+                // existing routes say.
+                ValheimUi.CreateLabel(addRow, "em", 14, ValheimUi.Beige, TextAlignmentOptions.Right);
+                _destinationCostItem = ValheimUi.CreateInputField(addRow, "", 120f, 38f);
+
                 // Typed coordinates, because the other two ways of naming a place both need
                 // you to physically go there. An admin building a travel network from a map
                 // wants to enter the numbers, and `pos` in the console prints exactly these.
@@ -146,21 +155,24 @@ namespace NpcValheim.UI
                         return;
                     }
 
+                    string costItem = (_destinationCostItem.text ?? "").Trim();
+
                     var coordinateState = ReadCoordinates(out var typed);
                     if (coordinateState == CoordinateInputState.Invalid) return;
                     if (coordinateState == CoordinateInputState.Valid)
                     {
-                        teleporter.RequestAddDestination(Player, _destinationName.text, cost,
+                        teleporter.RequestAddDestination(Player, _destinationName.text, cost, costItem,
                             typed, Player.transform.rotation.eulerAngles.y);
                         Say($"Destino '{_destinationName.text}' gravado em " +
-                            $"({typed.x:0}, {typed.y:0}, {typed.z:0}), custo {cost}.");
+                            $"({typed.x:0}, {typed.y:0}, {typed.z:0}), {DescribeFare(teleporter, cost, costItem)}.");
                         _destinationName.text = "";
                         _destinationSignature = null;
                         return;
                     }
 
-                    teleporter.RequestAddDestination(Player, _destinationName.text, cost);
-                    Say($"Destino '{_destinationName.text}' gravado na sua posição.");
+                    teleporter.RequestAddDestination(Player, _destinationName.text, cost, costItem);
+                    Say($"Destino '{_destinationName.text}' gravado na sua posição, " +
+                        $"{DescribeFare(teleporter, cost, costItem)}.");
 
                     _destinationName.text = "";
                     _destinationSignature = null;
@@ -662,21 +674,37 @@ namespace NpcValheim.UI
                 return;
             }
 
-            string fare;
-            if (!int.TryParse((_destinationCost?.text ?? "").Trim(), out int cost) || cost < 0)
-                fare = "<color=#d66>custo inválido</color>";
-            else if (cost > 0)
-                fare = $"custa {cost} {ItemNames.Display(teleporter.CostItem)}";
-            else
-            {
-                int fallback = teleporter.CostOf(null);
-                string item = teleporter.CostItem;
-                fare = fallback > 0 && !string.IsNullOrEmpty(item)
-                    ? $"usa o padrão do NPC: {fallback} {ItemNames.Display(item)}"
-                    : "grátis (o NPC não cobra nada)";
-            }
+            string fare = !int.TryParse((_destinationCost?.text ?? "").Trim(), out int cost) || cost < 0
+                ? "<color=#d66>custo inválido</color>"
+                : DescribeFare(teleporter, cost, (_destinationCostItem?.text ?? "").Trim());
 
             _destinationPreview.text = $"Vai gravar «{name}» {where} — {fare}.";
+        }
+
+        /// <summary>The fare a route is about to charge, said the same way in the preview
+        /// and in the confirmation. Two knobs -- a price and an item, either of which may
+        /// defer to the NPC -- make four outcomes, which is two too many to leave the reader
+        /// to work out.</summary>
+        private static string DescribeFare(TeleporterNpc teleporter, int cost, string costItem)
+        {
+            if (!string.IsNullOrEmpty(costItem))
+                return cost > 0
+                    ? $"custa {cost} {ItemNames.Display(costItem)}"
+                    : $"grátis (custo 0 em {ItemNames.Display(costItem)})";
+
+            if (cost > 0)
+            {
+                string npcItem = teleporter.CostItem;
+                return string.IsNullOrEmpty(npcItem)
+                    ? $"<color=#d66>custa {cost}, mas o NPC não tem item de cobrança padrão</color>"
+                    : $"custa {cost} {ItemNames.Display(npcItem)} (item padrão do NPC)";
+            }
+
+            int fallback = teleporter.CostOf(null);
+            string item = teleporter.CostItem;
+            return fallback > 0 && !string.IsNullOrEmpty(item)
+                ? $"usa o padrão do NPC: {fallback} {ItemNames.Display(item)}"
+                : "grátis (o NPC não cobra nada)";
         }
 
         private void RefreshDestinations()
@@ -684,7 +712,8 @@ namespace NpcValheim.UI
             if (_destinations == null || !(Npc is TeleporterNpc teleporter)) return;
 
             var destinations = teleporter.GetDestinations();
-            var signature = string.Join("|", destinations.Select(d => $"{d.Id}:{d.Name}"));
+            var signature = string.Join("|", destinations.Select(d =>
+                $"{d.Id}:{d.Name}:{teleporter.CostOf(d)}:{teleporter.CostItemOf(d)}"));
             if (signature == _destinationSignature) return;
             _destinationSignature = signature;
 
@@ -702,9 +731,15 @@ namespace NpcValheim.UI
                 var row = Row(_destinations, 42f);
                 _destinationRows.Add(row.gameObject);
 
+                int fare = teleporter.CostOf(destination);
+                string fareItem = teleporter.CostItemOf(destination);
+                string price = fare > 0 && !string.IsNullOrEmpty(fareItem)
+                    ? $"{fare} {ItemNames.Display(fareItem)}"
+                    : "grátis";
+
                 var label = ValheimUi.CreateLabel(row,
                     $"{destination.Name}\n<size=11><color=#9a9188>" +
-                    $"{destination.Position.x:0}, {destination.Position.z:0}</color></size>",
+                    $"{destination.Position.x:0}, {destination.Position.z:0} — {price}</color></size>",
                     15, ValheimUi.Beige, TextAlignmentOptions.Left);
                 Flexible(label.gameObject);
 

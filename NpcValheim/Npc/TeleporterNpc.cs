@@ -20,6 +20,11 @@ namespace NpcValheim.Npc
         /// the price sits here rather than only on the NPC.</summary>
         public int Cost;
 
+        /// <summary>The item this route is paid in. Empty means "whatever this teleporter
+        /// charges by default" -- which is what every route written before routes could name
+        /// an item meant, so empty is the compatible value.</summary>
+        public string CostItem;
+
         public Quaternion Rotation => Quaternion.Euler(0f, Yaw, 0f);
     }
 
@@ -54,10 +59,15 @@ namespace NpcValheim.Npc
 
         protected override void RegisterRpc()
         {
-            Nview.Register("RPC_ConfigureCost", (Action<long, string, int, float>)RPC_ConfigureCost);
-            Nview.Register("RPC_AddDestination", (Action<long, string, Vector3, float>)RPC_AddDestination);
-            Nview.Register("RPC_RemoveDestination", (Action<long, string>)RPC_RemoveDestination);
-            Nview.Register("RPC_RequestTeleport", (Action<long, string>)RPC_RequestTeleport);
+            // Only the server's two answers are ZNetView RPCs. The requests are not, and
+            // this is why the teleporter looked broken: a ZNetView RPC executes on whoever
+            // owns the ZDO, and Valheim hands a Character ZDO to the peer standing nearest --
+            // at a teleporter, that is the player using it. Every request therefore ran on
+            // the requester's own client, where CanAdminister and the IsServer check in
+            // RPC_RequestTeleport both fail closed: adding a destination silently did
+            // nothing, and travelling waited for an approval nobody would ever send. The
+            // requests now go straight to the server, the way every other NPC's do. See
+            // NpcBase.KeepServerOwned and NpcBase.InvokeAuthoritativeRpc.
             Nview.Register("RPC_TeleportApproved", (Action<long, string>)RPC_TeleportApproved);
             Nview.Register("RPC_TeleportDenied", (Action<long, string>)RPC_TeleportDenied);
         }
@@ -70,18 +80,29 @@ namespace NpcValheim.Npc
 
         public List<TeleportDestination> GetDestinations()
         {
-            var result = new List<TeleportDestination>();
-            if (Nview == null || !Nview.IsValid()) return result;
+            if (Nview == null || !Nview.IsValid()) return new List<TeleportDestination>();
 
             var packed = Nview.GetZDO().GetString(KeyDestinations, "");
             if (string.IsNullOrEmpty(packed)) return MigrateLegacyDestination();
+            return Parse(packed);
+        }
+
+        /// <summary>The packed ZDO string, read back. Static and ZDO-free so its round trip
+        /// with <see cref="Pack"/> -- including the older seven-field rows -- can be checked
+        /// outside the game.</summary>
+        internal static List<TeleportDestination> Parse(string packed)
+        {
+            var result = new List<TeleportDestination>();
+            if (string.IsNullOrEmpty(packed)) return result;
 
             var ids = new HashSet<string>(StringComparer.Ordinal);
             foreach (var line in packed.Split('\n'))
             {
                 if (result.Count >= MaxDestinations) break;
                 var p = line.Split(';');
-                if (p.Length != 7) continue;
+                // Seven fields is a route written before routes could name their own cost
+                // item. That is exactly what an empty item means, so those rows still read.
+                if (p.Length != 7 && p.Length != 8) continue;
                 if (!TryParseFiniteFloat(p[2], out float x) ||
                     !TryParseFiniteFloat(p[3], out float y) ||
                     !TryParseFiniteFloat(p[4], out float z) ||
@@ -96,6 +117,7 @@ namespace NpcValheim.Npc
                     Position = new Vector3(x, y, z),
                     Yaw = yaw,
                     Cost = cost,
+                    CostItem = p.Length == 8 ? p[7] : "",
                 };
                 if (TryNormalizeDestination(candidate, ids, generateId: false, out var normalized))
                     result.Add(normalized);
@@ -127,28 +149,66 @@ namespace NpcValheim.Npc
         }
 
         /// <summary>Binds a destination to where the requester is standing.</summary>
-        public void RequestAddDestination(Player requester, string name, int cost)
+        public void RequestAddDestination(Player requester, string name, int cost, string costItem)
         {
             if (requester == null) return;
-            RequestAddDestination(requester, name, cost,
+            RequestAddDestination(requester, name, cost, costItem,
                 requester.transform.position, requester.transform.rotation.eulerAngles.y);
         }
 
         /// <summary>Binds a destination to an explicit point entered in the admin panel.</summary>
-        public void RequestAddDestination(Player requester, string name, int cost, Vector3 position, float yaw)
+        public void RequestAddDestination(Player requester, string name, int cost, string costItem,
+            Vector3 position, float yaw)
         {
             if (Nview == null || !Nview.IsValid() || !CanLocalPlayerAdminister()) return;
-            // Name and price ride together so the RPC stays inside ZNetView's 3-argument
-            // limit alongside the position and yaw.
-            Nview.InvokeRPC("RPC_AddDestination",
-                (string.IsNullOrWhiteSpace(name) ? "Destino" : name.Trim()) + "|" + Mathf.Max(0, cost),
+            // Name, price and the item the price is charged in ride in one string, so the
+            // mutation stays inside the four-argument limit alongside position and yaw.
+            string label = Clean(string.IsNullOrWhiteSpace(name) ? "Destino" : name);
+            InvokeAuthoritativeRpc("RPC_AddDestination",
+                label + "|" + Mathf.Max(0, cost) + "|" + CleanCostItem(costItem),
                 position, yaw);
         }
 
         public void RequestRemoveDestination(Player requester, string id)
         {
             if (Nview == null || !Nview.IsValid() || !CanLocalPlayerAdminister()) return;
-            Nview.InvokeRPC("RPC_RemoveDestination", id ?? "");
+            InvokeAuthoritativeRpc("RPC_RemoveDestination", id ?? "");
+        }
+
+        internal override bool DispatchAdminMutation(long sender, string method, object[] arguments)
+        {
+            arguments = arguments ?? Array.Empty<object>();
+            switch (method)
+            {
+                case "RPC_AddDestination" when arguments.Length == 3 &&
+                                               arguments[0] is string tagged &&
+                                               arguments[1] is Vector3 position &&
+                                               arguments[2] is float yaw:
+                    RPC_AddDestination(sender, tagged, position, yaw);
+                    return true;
+                case "RPC_RemoveDestination" when arguments.Length == 1 && arguments[0] is string id:
+                    RPC_RemoveDestination(sender, id);
+                    return true;
+                case "RPC_ConfigureCost" when arguments.Length == 3 &&
+                                              arguments[0] is string item &&
+                                              arguments[1] is int amount &&
+                                              arguments[2] is float cooldown:
+                    RPC_ConfigureCost(sender, item, amount, cooldown);
+                    return true;
+                default:
+                    return base.DispatchAdminMutation(sender, method, arguments);
+            }
+        }
+
+        /// <summary>Travelling is not an administrative act -- any visitor may ask -- but it
+        /// still has to be decided by the server, so it arrives here rather than through a
+        /// ZNetView RPC aimed at whichever peer currently owns this NPC.</summary>
+        internal override bool DispatchServiceAction(long sender, string action, string payload)
+        {
+            if (action != "RPC_RequestTeleport")
+                return base.DispatchServiceAction(sender, action, payload);
+            RPC_RequestTeleport(sender, payload);
+            return true;
         }
 
         private void RPC_AddDestination(long sender, string tagged, Vector3 position, float yaw)
@@ -156,11 +216,13 @@ namespace NpcValheim.Npc
             if (!CanAdminister(sender) ||
                 !NpcRequestGuard.AllowNearby(Nview, transform, sender, "tp-add", 8f, 4, 3f)) return;
 
-            int separator = (tagged ?? "").LastIndexOf('|');
-            if (separator < 0) return;
-            string name = Clean(tagged.Substring(0, separator));
-            if (!int.TryParse(tagged.Substring(separator + 1), NumberStyles.Integer,
+            var fields = (tagged ?? "").Split('|');
+            if (fields.Length != 3) return;
+            string name = Clean(fields[0]);
+            if (!int.TryParse(fields[1], NumberStyles.Integer,
                     CultureInfo.InvariantCulture, out int cost) || !IsValidCostAmount(cost)) return;
+            string costItem = CleanCostItem(fields[2]);
+            if (!IsValidCostItem(costItem)) return;
             if (string.IsNullOrWhiteSpace(name) || !IsValidDestinationPosition(position) || !IsFinite(yaw)) return;
 
             var destinations = GetDestinations();
@@ -175,6 +237,7 @@ namespace NpcValheim.Npc
                 Position = position,
                 Yaw = NormalizeYaw(yaw),
                 Cost = cost,
+                CostItem = costItem,
             };
             var ids = new HashSet<string>(destinations.ConvertAll(d => d.Id), StringComparer.Ordinal);
             if (!TryNormalizeDestination(candidate, ids, generateId: false, out var normalized)) return;
@@ -269,7 +332,8 @@ namespace NpcValheim.Npc
                   .Append(F(normalized.Position.y)).Append(';')
                   .Append(F(normalized.Position.z)).Append(';')
                   .Append(F(normalized.Yaw)).Append(';')
-                  .Append(normalized.Cost.ToString(CultureInfo.InvariantCulture));
+                  .Append(normalized.Cost.ToString(CultureInfo.InvariantCulture)).Append(';')
+                  .Append(normalized.CostItem);
             }
             return sb.ToString();
         }
@@ -282,19 +346,43 @@ namespace NpcValheim.Npc
         private static string Clean(string s) => (s ?? "").Replace(';', ',').Replace('\n', ' ')
             .Replace('\r', ' ').Replace('|', '/').Trim();
 
+        /// <summary>Strips anything that would break the packed row or the tagged argument
+        /// out of an item name. Whether the result names a real item is a separate question,
+        /// answered by IsValidCostItem where ObjectDB is available.</summary>
+        private static string CleanCostItem(string itemName)
+        {
+            string clean = (itemName ?? "").Replace(';', ' ').Replace('|', ' ')
+                .Replace('\n', ' ').Replace('\r', ' ').Trim();
+            return clean.Length > 128 ? "" : clean;
+        }
+
         /// <summary>The item every route on this teleporter is paid in.</summary>
         public string CostItem =>
             Nview != null && Nview.IsValid() ? Nview.GetZDO().GetString(KeyCostItem, "") : "";
 
-        /// <summary>What a given route charges: its own price, or the teleporter's default
-        /// when it has none.</summary>
+        /// <summary>What a given route charges.
+        ///
+        /// A route that names its own item is priced entirely on its own terms, zero
+        /// included: "one Coins" and "one Ruby" are different fares, and inheriting an amount
+        /// across a change of item would silently reprice the trip. A route that names no
+        /// item is the old arrangement -- its own price when it sets one, the teleporter's
+        /// default when it does not.</summary>
         public int CostOf(TeleportDestination destination)
         {
             if (Nview == null || !Nview.IsValid()) return 0;
+            if (destination != null && !string.IsNullOrEmpty(destination.CostItem))
+                return Mathf.Clamp(destination.Cost, 0, MaxCost);
             if (destination != null && destination.Cost > 0)
                 return Mathf.Clamp(destination.Cost, 0, MaxCost);
             return Mathf.Clamp(Nview.GetZDO().GetInt(KeyCostAmount, 0), 0, MaxCost);
         }
+
+        /// <summary>The item a given route is paid in: its own, or the teleporter's default
+        /// when the route does not name one.</summary>
+        public string CostItemOf(TeleportDestination destination) =>
+            destination != null && !string.IsNullOrEmpty(destination.CostItem)
+                ? destination.CostItem
+                : CostItem;
 
         // ---- travelling ----
 
@@ -316,7 +404,7 @@ namespace NpcValheim.Npc
                 return false;
             }
 
-            string costItem = CostItem;
+            string costItem = CostItemOf(destination);
             int costAmount = CostOf(destination);
             if (!string.IsNullOrEmpty(costItem) && costAmount > 0)
             {
@@ -331,14 +419,20 @@ namespace NpcValheim.Npc
 
             _pendingDestinationId = destination.Id;
             _pendingSince = Time.realtimeSinceStartup;
-            Nview.InvokeRPC("RPC_RequestTeleport", destination.Id);
+            if (!InvokeServiceAction("RPC_RequestTeleport", destination.Id))
+            {
+                _pendingDestinationId = null;
+                _pendingSince = 0f;
+                player.Message(MessageHud.MessageType.Center, "O servidor não respondeu", 0, null);
+                return false;
+            }
             return true;
         }
 
         private void RPC_RequestTeleport(long sender, string destinationId)
         {
-            if (Nview == null || !Nview.IsValid() || !Nview.IsOwner() ||
-                ZNet.instance == null || !ZNet.instance.IsServer()) return;
+            if (Nview == null || !Nview.IsValid() || ZNet.instance == null ||
+                !ZNet.instance.IsServer()) return;
             if (!IsValidDestinationId(destinationId) ||
                 !NpcRequestGuard.AllowNearby(Nview, transform, sender, "tp-use", 12f, 3, 2f) ||
                 !GameApi.TryGetPlayer(sender, out var player) || player == null)
@@ -390,7 +484,7 @@ namespace NpcValheim.Npc
             // Fare collection remains client-side until Deadheim exposes a server-character
             // inventory transaction. Recheck immediately before consuming it so ordinary
             // clients cannot lose a fare that disappeared while the request was in flight.
-            string costItem = CostItem;
+            string costItem = CostItemOf(destination);
             int costAmount = CostOf(destination);
             var inventory = player.GetInventory();
             if (!string.IsNullOrEmpty(costItem) && costAmount > 0 &&
@@ -450,7 +544,7 @@ namespace NpcValheim.Npc
         public void RequestConfigureCost(Player requester, string itemName, int amount, float cooldownSeconds)
         {
             if (Nview == null || !Nview.IsValid() || !CanLocalPlayerAdminister()) return;
-            Nview.InvokeRPC("RPC_ConfigureCost", itemName ?? "", amount, cooldownSeconds);
+            InvokeAuthoritativeRpc("RPC_ConfigureCost", itemName ?? "", amount, cooldownSeconds);
         }
 
         private void RPC_ConfigureCost(long sender, string itemName, int amount, float cooldownSeconds)
@@ -499,6 +593,7 @@ namespace NpcValheim.Npc
                     Z = d.Position.z,
                     Yaw = d.Yaw,
                     Cost = d.Cost,
+                    CostItem = d.CostItem ?? "",
                 });
 
             return profile;
@@ -539,6 +634,7 @@ namespace NpcValheim.Npc
                     Position = new Vector3(d.X, d.Y, d.Z),
                     Yaw = d.Yaw,
                     Cost = d.Cost,
+                    CostItem = d.CostItem ?? "",
                 };
                 if (TryNormalizeDestination(candidate, ids, generateId: true, out var normalized))
                     destinations.Add(normalized);
@@ -601,6 +697,7 @@ namespace NpcValheim.Npc
                 Position = source.Position,
                 Yaw = NormalizeYaw(source.Yaw),
                 Cost = source.Cost,
+                CostItem = CleanCostItem(source.CostItem),
             };
             ids.Add(id);
             return true;

@@ -361,7 +361,7 @@ namespace NpcValheim.Npc
 
         public void RequestQuests()
         {
-            ServiceNpcAuthority.RequestQuestAction(this, "RPC_RequestQuests");
+            ServiceNpcAuthority.RequestServiceAction(this, "RPC_RequestQuests");
         }
 
         public void RequestAccept(string questId)
@@ -372,18 +372,18 @@ namespace NpcValheim.Npc
                 int detected = EpicMmoApi.GetLevel();
                 if (detected > 0) level = detected;
             }
-            ServiceNpcAuthority.RequestQuestAction(this, "RPC_AcceptQuest",
+            ServiceNpcAuthority.RequestServiceAction(this, "RPC_AcceptQuest",
                 (questId ?? "") + "\n" + level.ToString(CultureInfo.InvariantCulture));
         }
 
         public void RequestTurnIn(string questId)
         {
-            ServiceNpcAuthority.RequestQuestAction(this, "RPC_TurnInQuest", questId ?? "");
+            ServiceNpcAuthority.RequestServiceAction(this, "RPC_TurnInQuest", questId ?? "");
         }
 
         public void RequestAbandon(string questId)
         {
-            ServiceNpcAuthority.RequestQuestAction(this, "RPC_AbandonQuest", questId ?? "");
+            ServiceNpcAuthority.RequestServiceAction(this, "RPC_AbandonQuest", questId ?? "");
         }
 
         /// <summary>Called by QuestKillTracker on the client that made the kill.</summary>
@@ -412,7 +412,7 @@ namespace NpcValheim.Npc
 
         // ---- authoritative handlers ----
 
-        internal bool DispatchQuestAction(long sender, string action, string payload)
+        internal override bool DispatchServiceAction(long sender, string action, string payload)
         {
             switch (action)
             {
@@ -432,7 +432,7 @@ namespace NpcValheim.Npc
                     RPC_ClaimDelivered(sender, payload ?? "");
                     return true;
                 default:
-                    return false;
+                    return base.DispatchServiceAction(sender, action, payload);
             }
         }
 
@@ -831,7 +831,7 @@ namespace NpcValheim.Npc
 
                 // Only now is it safe to take it out of the mailbox -- the item is already in
                 // the bag, so the two can never both be true or both be false.
-                ServiceNpcAuthority.RequestQuestAction(this, "RPC_ClaimDelivered", p[0]);
+                ServiceNpcAuthority.RequestServiceAction(this, "RPC_ClaimDelivered", p[0]);
                 player.Message(MessageHud.MessageType.TopLeft,
                     $"Recebido: {amount}x {ItemNames.Display(p[1])}", amount, null);
             }

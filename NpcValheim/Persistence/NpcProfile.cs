@@ -247,8 +247,12 @@ namespace NpcValheim.Persistence
         public float Z { get; set; }
         public float Yaw { get; set; }
 
-        /// <summary>Price of this route, in units of the teleporter's cost item.</summary>
+        /// <summary>Price of this route, in units of <see cref="CostItem"/>.</summary>
         public int Cost { get; set; } = 0;
+
+        /// <summary>The item this route is paid in. Empty means the teleporter's default
+        /// item, which is what every route saved before this field existed meant.</summary>
+        public string CostItem { get; set; } = "";
     }
 
     public class MarketplaceSettings

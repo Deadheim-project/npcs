@@ -51,6 +51,34 @@ class Program
             ?.SetValue(null, new BepInEx.Logging.ManualLogSource("wirecheck"));
     }
 
+    static readonly Type Teleporter = typeof(TeleporterNpc);
+
+    static string PackRoutes(List<TeleportDestination> routes) =>
+        (string)Teleporter.GetMethod("Pack", BindingFlags.NonPublic | BindingFlags.Static)
+                          .Invoke(null, new object[] { routes });
+
+    static List<TeleportDestination> ParseRoutes(string packed) =>
+        (List<TeleportDestination>)Teleporter
+            .GetMethod("Parse", BindingFlags.NonPublic | BindingFlags.Static)
+            .Invoke(null, new object[] { packed });
+
+    static TeleportDestination Route(string id, string name, int cost, string costItem) =>
+        new TeleportDestination
+        {
+            Id = id,
+            Name = name,
+            Position = new UnityEngine.Vector3(120.5f, 31.25f, -640.75f),
+            Yaw = 90f,
+            Cost = cost,
+            CostItem = costItem,
+        };
+
+    /// <summary>Whether this NPC type answers server-decided requests itself, rather than
+    /// inheriting NpcBase's refusal.</summary>
+    static bool HandlesOnServer(Type npc, string dispatcher) =>
+        npc.GetMethod(dispatcher, BindingFlags.NonPublic | BindingFlags.Instance)
+           ?.DeclaringType == npc;
+
     static void Main()
     {
         GiveTheModALogger();
@@ -175,6 +203,47 @@ class Program
         Check("Player.Awake has an NPC registry cleanup postfix",
               awakePostfix != null && awakePostfix.GetCustomAttributes(false)
                   .Any(a => a.GetType().FullName == "HarmonyLib.HarmonyPostfix"));
+
+        System.Console.WriteLine();
+        System.Console.WriteLine("== teleporter routes ==");
+
+        var packedRoutes = PackRoutes(new List<TeleportDestination>
+        {
+            Route("aaaa1111", "Praca", 3, "Coins"),
+            Route("bbbb2222", "Mina", 0, ""),
+        });
+        var readBack = ParseRoutes(packedRoutes);
+        Check("a packed route list reads back whole", readBack.Count == 2, packedRoutes);
+        Check("a route keeps its own price and item",
+              readBack[0].Cost == 3 && readBack[0].CostItem == "Coins");
+        Check("a route with no item of its own reads back empty, not null",
+              readBack[1].Cost == 0 && readBack[1].CostItem == "");
+        Check("a route keeps its position through the round trip",
+              UnityEngine.Vector3.Distance(readBack[0].Position,
+                  new UnityEngine.Vector3(120.5f, 31.25f, -640.75f)) < 0.01f);
+
+        // The row written before routes could name an item. It has to keep reading, or every
+        // travel network built so far goes blank on update.
+        var legacy = ParseRoutes("cccc3333;Porto;10;20;30;180;7");
+        Check("a seven-field route still reads",
+              legacy.Count == 1 && legacy[0].Cost == 7 && legacy[0].CostItem == "");
+        Check("a six-field row is refused", ParseRoutes("dddd4444;Porto;10;20;30;180").Count == 0);
+        Check("a row with a non-numeric price is refused",
+              ParseRoutes("eeee5555;Porto;10;20;30;180;caro").Count == 0);
+        Check("a row with no name is refused", ParseRoutes("ffff6666;;10;20;30;180;1").Count == 0);
+
+        System.Console.WriteLine();
+        System.Console.WriteLine("== requests reach the server ==");
+
+        // This is what was actually broken: a ZNetView RPC runs on whoever owns the ZDO, and
+        // a Character's ZDO belongs to the nearest player -- at a teleporter, the person
+        // using it. Both dispatchers below are the server-addressed channels that replace it.
+        Check("the teleporter handles admin edits on the server channel",
+              HandlesOnServer(Teleporter, "DispatchAdminMutation"));
+        Check("the teleporter handles travel requests on the server channel",
+              HandlesOnServer(Teleporter, "DispatchServiceAction"));
+        Check("the quest giver still shares that same request channel",
+              HandlesOnServer(Giver, "DispatchServiceAction"));
 
         System.Console.WriteLine();
         System.Console.WriteLine(failed == 0 ? $"ALL {passed} CHECKS PASSED" : $"{failed} FAILED, {passed} passed");

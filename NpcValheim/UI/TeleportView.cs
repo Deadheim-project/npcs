@@ -52,7 +52,7 @@ namespace NpcValheim.UI
             // from "can't pay" to "can pay" the moment the player picks up the last coin,
             // and nothing else would tell it to redraw.
             var signature = string.Join("|", destinations.Select(d =>
-                $"{d.Id}:{d.Name}:{teleporter.CostOf(d)}:{CanPay(teleporter, d)}"));
+                $"{d.Id}:{d.Name}:{teleporter.CostOf(d)}:{teleporter.CostItemOf(d)}:{CanPay(teleporter, d)}"));
             if (signature != _signature)
             {
                 _signature = signature;
@@ -75,7 +75,7 @@ namespace NpcValheim.UI
         private bool CanPay(TeleporterNpc teleporter, TeleportDestination destination)
         {
             int cost = teleporter.CostOf(destination);
-            string item = teleporter.CostItem;
+            string item = teleporter.CostItemOf(destination);
             if (cost <= 0 || string.IsNullOrEmpty(item)) return true;
 
             var player = Player;
@@ -88,7 +88,6 @@ namespace NpcValheim.UI
             _rows.Clear();
 
             var player = Player;
-            string costItem = teleporter.CostItem;
 
             foreach (var destination in destinations)
             {
@@ -103,6 +102,7 @@ namespace NpcValheim.UI
                 // and only then telling them the price is how you get a player who thinks the
                 // teleporter ate their coins.
                 int cost = teleporter.CostOf(destination);
+                string costItem = teleporter.CostItemOf(destination);
                 bool free = cost <= 0 || string.IsNullOrEmpty(costItem);
                 bool affordable = CanPay(teleporter, destination);
 

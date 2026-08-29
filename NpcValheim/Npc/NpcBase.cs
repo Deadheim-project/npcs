@@ -354,6 +354,21 @@ namespace NpcValheim.Npc
             ServiceNpcAuthority.RequestMutation(this, method, arguments);
         }
 
+        /// <summary>Send a player-facing (non-administrative) request to the server. Same
+        /// reasoning as InvokeAuthoritativeRpc: ZDO ownership decides where a ZNetView RPC
+        /// runs, and it is normally the nearest client, not the server.</summary>
+        protected bool InvokeServiceAction(string action, string payload = "")
+        {
+            if (Nview == null || !Nview.IsValid()) return false;
+            return ServiceNpcAuthority.RequestServiceAction(this, action, payload);
+        }
+
+        /// <summary>Handles a player-facing request that the global server RPC has already
+        /// authenticated and resolved to this NPC. Anyone may send one -- unlike
+        /// DispatchAdminMutation, admin status is not the gate -- so every handler decides
+        /// for itself what the sender is entitled to.</summary>
+        internal virtual bool DispatchServiceAction(long sender, string action, string payload) => false;
+
         /// <summary>Dispatches a mutation only after the global server RPC has authenticated
         /// its sender and resolved this exact NPC from its ZDOID. Individual handlers retain
         /// their own validation as a second boundary.</summary>

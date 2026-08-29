@@ -22,7 +22,12 @@ namespace NpcValheim.Npc
         private const string RpcRemove = "NpcValheim_RemoveServiceNpc";
         private const string RpcMutate = "NpcValheim_MutateServiceNpc";
         private const string RpcTemplateIndex = "NpcValheim_ServiceNpcTemplateIndex";
-        private const string RpcQuestAction = "NpcValheim_QuestGiverAction";
+        // Named for quests because quests were the first to need it. The channel itself
+        // was never quest-specific -- it is "a player-facing request, decided by the
+        // server, addressed to one NPC by ZDOID" -- and the teleporter needs exactly that.
+        // The string keeps the old name so a client and a server that disagree about this
+        // change still talk to each other.
+        private const string RpcServiceAction = "NpcValheim_QuestGiverAction";
         private const string RpcQuestResponse = "NpcValheim_QuestGiverResponse";
         private const string RpcQuestPlayerResponse = "NpcValheim_QuestPlayerResponse";
         private const string RpcConsumeStub = "NpcValheim_ConsumeServiceNpcStub";
@@ -52,7 +57,7 @@ namespace NpcValheim.Npc
             rpc.Register(RpcRemove, (Action<long, ZDOID>)RPC_Remove);
             rpc.Register<ZPackage>(RpcMutate, RPC_Mutate);
             rpc.Register(RpcTemplateIndex, (Action<long, ZDOID, string>)RPC_TemplateIndex);
-            rpc.Register<ZPackage>(RpcQuestAction, RPC_QuestAction);
+            rpc.Register<ZPackage>(RpcServiceAction, RPC_ServiceAction);
             rpc.Register<ZPackage>(RpcQuestResponse, RPC_QuestResponse);
             rpc.Register<ZPackage>(RpcQuestPlayerResponse, RPC_QuestPlayerResponse);
             rpc.Register(RpcConsumeStub, (Action<long, ZDOID>)RPC_ConsumeStub);
@@ -125,7 +130,16 @@ namespace NpcValheim.Npc
             return true;
         }
 
-        internal static bool RequestQuestAction(QuestGiverNpc npc, string action, string payload = "")
+        /// <summary>
+        /// A player-facing action that has to be decided by the server.
+        ///
+        /// The admin channel above cannot carry these -- it refuses anyone who is not in
+        /// adminlist.txt -- and a ZNetView RPC cannot either, because it runs on whichever
+        /// peer currently owns the NPC's ZDO, which for a Character is normally the nearest
+        /// player rather than the server. Each NPC decides for itself what it accepts here,
+        /// in DispatchServiceAction.
+        /// </summary>
+        internal static bool RequestServiceAction(NpcBase npc, string action, string payload = "")
         {
             TryRegister();
             var nview = npc != null ? npc.GetComponent<ZNetView>() : null;
@@ -136,7 +150,7 @@ namespace NpcValheim.Npc
             package.Write(nview.GetZDO().m_uid);
             package.Write(action);
             package.Write(payload ?? "");
-            _registeredRpc.InvokeRoutedRPC(GameApi.GetServerPeerId(), RpcQuestAction, package);
+            _registeredRpc.InvokeRoutedRPC(GameApi.GetServerPeerId(), RpcServiceAction, package);
             return true;
         }
 
@@ -225,10 +239,12 @@ namespace NpcValheim.Npc
             }
         }
 
-        private static void RPC_QuestAction(long sender, ZPackage package)
+        private static void RPC_ServiceAction(long sender, ZPackage package)
         {
             if (!IsServer() || package == null) return;
-            if (!NpcRequestGuard.AllowRate(sender, "quest-giver-action", burst: 40, seconds: 3f)) return;
+            // The budget stays where the quest giver set it: a panel full of quests polls
+            // far harder than a teleporter does, so this is the demanding caller.
+            if (!NpcRequestGuard.AllowRate(sender, "service-action", burst: 40, seconds: 3f)) return;
 
             try
             {
@@ -238,18 +254,19 @@ namespace NpcValheim.Npc
                 if (npcId.IsNone() || string.IsNullOrEmpty(action) || action.Length > 64 ||
                     (payload?.Length ?? 0) > 65536) return;
 
-                if (!TryResolveNpc(npcId, out _, out var npc) || !(npc is QuestGiverNpc giver))
+                if (!TryResolveNpc(npcId, out _, out var npc))
                 {
-                    Plugin.Log.LogWarning($"NpcValheim: quest action target {npcId} is not a quest giver");
+                    Plugin.Log.LogWarning($"NpcValheim: service action target {npcId} is not a service NPC");
                     return;
                 }
 
-                if (!giver.DispatchQuestAction(sender, action, payload))
-                    Plugin.Log.LogWarning($"NpcValheim: refused unknown quest giver action '{action}'");
+                if (!npc.DispatchServiceAction(sender, action, payload))
+                    Plugin.Log.LogWarning(
+                        $"NpcValheim: refused unknown service action '{action}' on '{npc.GetHoverName()}'");
             }
             catch (Exception e)
             {
-                Plugin.Log.LogWarning($"NpcValheim: invalid quest giver action from peer {sender}: {e.Message}");
+                Plugin.Log.LogWarning($"NpcValheim: invalid service action from peer {sender}: {e.Message}");
             }
         }
 
