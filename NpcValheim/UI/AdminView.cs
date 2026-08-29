@@ -163,7 +163,9 @@ namespace NpcValheim.UI
                     {
                         teleporter.RequestAddDestination(Player, _destinationName.text, cost, costItem,
                             typed, Player.transform.rotation.eulerAngles.y);
-                        Say($"Destino '{_destinationName.text}' gravado em " +
+                        // Deliberately not "gravado": only the server can say that, and it
+                        // now does -- either the confirmation or the reason it refused.
+                        Say($"Enviado: '{_destinationName.text}' em " +
                             $"({typed.x:0}, {typed.y:0}, {typed.z:0}), {DescribeFare(teleporter, cost, costItem)}.");
                         _destinationName.text = "";
                         _destinationSignature = null;
@@ -171,7 +173,7 @@ namespace NpcValheim.UI
                     }
 
                     teleporter.RequestAddDestination(Player, _destinationName.text, cost, costItem);
-                    Say($"Destino '{_destinationName.text}' gravado na sua posição, " +
+                    Say($"Enviado: '{_destinationName.text}' na sua posição, " +
                         $"{DescribeFare(teleporter, cost, costItem)}.");
 
                     _destinationName.text = "";
@@ -200,7 +202,7 @@ namespace NpcValheim.UI
                     int.TryParse(_costAmount.text, out int amount);
                     float.TryParse(_cooldown.text, NumberStyles.Float, CultureInfo.InvariantCulture, out float cd);
                     teleporter.RequestConfigureCost(Player, _costItem.text, amount, cd);
-                    Say("Configuração aplicada.");
+                    Say("Aplicando configuração...");
                 });
             }
             else if (Npc is MarketplaceNpc market)
@@ -748,7 +750,7 @@ namespace NpcValheim.UI
                 remove.onClick.AddListener(() =>
                 {
                     teleporter.RequestRemoveDestination(Player, id);
-                    Say($"Destino '{destination.Name}' removido.");
+                    Say($"Removendo '{destination.Name}'...");
                     _destinationSignature = null;
                 });
             }

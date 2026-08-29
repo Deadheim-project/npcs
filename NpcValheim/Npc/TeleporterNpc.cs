@@ -211,22 +211,79 @@ namespace NpcValheim.Npc
             return true;
         }
 
+        /// <summary>
+        /// Refuses a request out loud, on the server log and on the asker's screen.
+        ///
+        /// Every rejection below used to be a bare `return` while the admin panel said
+        /// "gravado" regardless. That combination is unfalsifiable: "it does not save" looks
+        /// identical whether the request never arrived, arrived malformed, or was refused on
+        /// a rule -- and a whole release went by without the log being able to say which.
+        /// NpcRequestGuard learned this same lesson already; see its `out reason` overload.
+        /// </summary>
+        private void Refuse(long sender, string operation, string reason)
+        {
+            Plugin.Log.LogWarning(
+                $"NpcValheim: '{GetHoverName()}' [{Nview.GetZDO().m_uid}] refused {operation} " +
+                $"from peer {sender}: {reason}");
+            ServiceNpcAuthority.SendStatus(sender, reason);
+        }
+
         private void RPC_AddDestination(long sender, string tagged, Vector3 position, float yaw)
         {
-            if (!CanAdminister(sender) ||
-                !NpcRequestGuard.AllowNearby(Nview, transform, sender, "tp-add", 8f, 4, 3f)) return;
+            // Says the request arrived at all, which is the single fact the log could not
+            // previously answer.
+            Plugin.Log.LogInfo(
+                $"NpcValheim: 'tp-add' from peer {sender} on '{GetHoverName()}': \"{tagged}\" at {position}");
+
+            if (!CanAdminister(sender))
+            {
+                Refuse(sender, "tp-add", "O servidor não reconhece você como admin.");
+                return;
+            }
+            if (!NpcRequestGuard.AllowNearby(Nview, transform, sender, "tp-add",
+                    out string refusal, 8f, 4, 3f))
+            {
+                Refuse(sender, "tp-add", "Não deu para gravar: " + refusal);
+                return;
+            }
 
             var fields = (tagged ?? "").Split('|');
-            if (fields.Length != 3) return;
+            if (fields.Length != 3)
+            {
+                Refuse(sender, "tp-add", $"Pedido malformado ({fields.Length} campos, esperava 3).");
+                return;
+            }
             string name = Clean(fields[0]);
             if (!int.TryParse(fields[1], NumberStyles.Integer,
-                    CultureInfo.InvariantCulture, out int cost) || !IsValidCostAmount(cost)) return;
+                    CultureInfo.InvariantCulture, out int cost) || !IsValidCostAmount(cost))
+            {
+                Refuse(sender, "tp-add", $"Custo inválido: '{fields[1]}'.");
+                return;
+            }
             string costItem = CleanCostItem(fields[2]);
-            if (!IsValidCostItem(costItem)) return;
-            if (string.IsNullOrWhiteSpace(name) || !IsValidDestinationPosition(position) || !IsFinite(yaw)) return;
+            if (!IsValidCostItem(costItem))
+            {
+                Refuse(sender, "tp-add", $"O servidor não conhece o item '{costItem}'.");
+                return;
+            }
+            if (string.IsNullOrWhiteSpace(name))
+            {
+                Refuse(sender, "tp-add", "O destino precisa de um nome.");
+                return;
+            }
+            if (!IsValidDestinationPosition(position) || !IsFinite(yaw))
+            {
+                Refuse(sender, "tp-add", $"Coordenadas fora do mundo: {position}.");
+                return;
+            }
 
             var destinations = GetDestinations();
-            if (destinations.Count >= MaxDestinations) return; // keeps the packed ZDO string sane
+            if (destinations.Count >= MaxDestinations)
+            {
+                // keeps the packed ZDO string sane
+                Refuse(sender, "tp-add", $"Este teleportador já tem {MaxDestinations} destinos.");
+                return;
+            }
 
             if (name.Length > MaxDestinationNameLength)
                 name = name.Substring(0, MaxDestinationNameLength).Trim();
@@ -240,23 +297,51 @@ namespace NpcValheim.Npc
                 CostItem = costItem,
             };
             var ids = new HashSet<string>(destinations.ConvertAll(d => d.Id), StringComparer.Ordinal);
-            if (!TryNormalizeDestination(candidate, ids, generateId: false, out var normalized)) return;
+            if (!TryNormalizeDestination(candidate, ids, generateId: false, out var normalized))
+            {
+                Refuse(sender, "tp-add", $"O servidor recusou o destino '{name}'.");
+                return;
+            }
             destinations.Add(normalized);
 
             Save(destinations);
+            Plugin.Log.LogInfo(
+                $"NpcValheim: '{GetHoverName()}' gained route '{normalized.Name}' [{normalized.Id}] " +
+                $"-- {destinations.Count} route(s) now");
+            ServiceNpcAuthority.SendStatus(sender, $"Destino '{normalized.Name}' gravado.");
         }
 
         private void RPC_RemoveDestination(long sender, string id)
         {
-            if (!CanAdminister(sender) ||
-                !NpcRequestGuard.AllowNearby(Nview, transform, sender, "tp-remove", 8f, 4, 3f) ||
-                !IsValidDestinationId(id)) return;
+            if (!CanAdminister(sender))
+            {
+                Refuse(sender, "tp-remove", "O servidor não reconhece você como admin.");
+                return;
+            }
+            if (!NpcRequestGuard.AllowNearby(Nview, transform, sender, "tp-remove",
+                    out string refusal, 8f, 4, 3f))
+            {
+                Refuse(sender, "tp-remove", "Não deu para remover: " + refusal);
+                return;
+            }
+            if (!IsValidDestinationId(id))
+            {
+                Refuse(sender, "tp-remove", $"Identificador de destino inválido: '{id}'.");
+                return;
+            }
 
             var destinations = GetDestinations();
             int removed = destinations.RemoveAll(d => d.Id == id);
-            if (removed == 0) return;
+            if (removed == 0)
+            {
+                Refuse(sender, "tp-remove", "Esse destino já não estava na lista.");
+                return;
+            }
 
             Save(destinations);
+            Plugin.Log.LogInfo(
+                $"NpcValheim: '{GetHoverName()}' lost route [{id}] -- {destinations.Count} route(s) now");
+            ServiceNpcAuthority.SendStatus(sender, "Destino removido.");
         }
 
         private void Save(List<TeleportDestination> destinations)
@@ -433,11 +518,21 @@ namespace NpcValheim.Npc
         {
             if (Nview == null || !Nview.IsValid() || ZNet.instance == null ||
                 !ZNet.instance.IsServer()) return;
-            if (!IsValidDestinationId(destinationId) ||
-                !NpcRequestGuard.AllowNearby(Nview, transform, sender, "tp-use", 12f, 3, 2f) ||
-                !GameApi.TryGetPlayer(sender, out var player) || player == null)
+            if (!IsValidDestinationId(destinationId))
             {
                 DenyTeleport(sender, "Solicitação de teleporte inválida.");
+                return;
+            }
+            if (!NpcRequestGuard.AllowNearby(Nview, transform, sender, "tp-use",
+                    out string refusal, 12f, 3, 2f))
+            {
+                Plugin.Log.LogWarning($"NpcValheim: refused tp-use from peer {sender}: {refusal}");
+                DenyTeleport(sender, "Não deu para viajar: " + refusal);
+                return;
+            }
+            if (!GameApi.TryGetPlayer(sender, out var player) || player == null)
+            {
+                DenyTeleport(sender, "O servidor não encontrou o seu personagem.");
                 return;
             }
             long playerId = player.GetPlayerID();
@@ -549,15 +644,25 @@ namespace NpcValheim.Npc
 
         private void RPC_ConfigureCost(long sender, string itemName, int amount, float cooldownSeconds)
         {
-            if (!CanAdminister(sender) ||
-                !NpcRequestGuard.AllowNearby(Nview, transform, sender, "tp-config", 8f, 4, 3f)) return;
+            if (!CanAdminister(sender))
+            {
+                Refuse(sender, "tp-config", "O servidor não reconhece você como admin.");
+                return;
+            }
+            if (!NpcRequestGuard.AllowNearby(Nview, transform, sender, "tp-config",
+                    out string refusal, 8f, 4, 3f))
+            {
+                Refuse(sender, "tp-config", "Não deu para configurar: " + refusal);
+                return;
+            }
             if (!ConfigureCost(itemName, amount, cooldownSeconds))
             {
-                Plugin.Log.LogWarning(
-                    $"NpcValheim: rejected invalid teleporter configuration from peer {sender}");
+                Refuse(sender, "tp-config",
+                    $"Configuração inválida: item '{itemName}', custo {amount}, cooldown {cooldownSeconds}s.");
                 return;
             }
             PersistProfileSnapshot();
+            ServiceNpcAuthority.SendStatus(sender, "Configuração aplicada.");
         }
 
         protected override void OnPlacedExtra()
