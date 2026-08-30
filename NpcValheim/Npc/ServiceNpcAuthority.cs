@@ -91,11 +91,30 @@ namespace NpcValheim.Npc
         {
             TryRegister();
             var nview = npc != null ? npc.GetComponent<ZNetView>() : null;
-            if (_registeredRpc == null || nview == null || !nview.IsValid() ||
-                string.IsNullOrEmpty(method)) return false;
+
+            // Each of these used to be an anonymous `false` that InvokeAuthoritativeRpc then
+            // discarded, so a request could die on the client without one line anywhere --
+            // the admin clicks, the panel says nothing, and the server console is empty
+            // because nothing was ever sent. That is indistinguishable from a server-side
+            // bug, and it cost a release on the teleporter before it cost one here.
+            if (_registeredRpc == null)
+            {
+                Plugin.Log.LogWarning($"NpcValheim: '{method}' not sent -- the mutation RPC is not registered yet");
+                return false;
+            }
+            if (nview == null || !nview.IsValid())
+            {
+                Plugin.Log.LogWarning($"NpcValheim: '{method}' not sent -- the NPC has no valid ZNetView");
+                return false;
+            }
+            if (string.IsNullOrEmpty(method)) return false;
 
             arguments ??= Array.Empty<object>();
-            if (arguments.Length > 4) return false;
+            if (arguments.Length > 4)
+            {
+                Plugin.Log.LogWarning($"NpcValheim: '{method}' not sent -- {arguments.Length} arguments, the wire carries at most 4");
+                return false;
+            }
 
             var package = new ZPackage();
             package.Write(nview.GetZDO().m_uid);
@@ -122,6 +141,9 @@ namespace NpcValheim.Npc
                         package.Write(vector);
                         break;
                     default:
+                        Plugin.Log.LogWarning(
+                            $"NpcValheim: '{method}' not sent -- argument of type " +
+                            $"{argument?.GetType().Name ?? "null"} has no place on the wire");
                         return false;
                 }
             }
@@ -193,7 +215,19 @@ namespace NpcValheim.Npc
         private static void RPC_Mutate(long sender, ZPackage package)
         {
             if (!IsServer() || package == null) return;
-            if (!NpcRequestGuard.AllowRate(sender, "service-mutate", burst: 30, seconds: 3f)) return;
+
+            // Says the packet arrived. Without this the two refusals just below were the only
+            // evidence this handler ran at all, so "the button does nothing" could equally
+            // mean the request never left the client -- and there was no way to tell the two
+            // apart from the console.
+            Plugin.Log.LogInfo($"NpcValheim: administrative mutation arrived from peer {sender}");
+
+            if (!NpcRequestGuard.AllowRate(sender, "service-mutate", burst: 30, seconds: 3f))
+            {
+                Plugin.Log.LogWarning($"NpcValheim: mutation from peer {sender} dropped by the rate limit");
+                SendStatus(sender, "Muitos pedidos seguidos. Espere um instante e tente de novo.");
+                return;
+            }
             if (!GameApi.IsAdmin(sender))
             {
                 Plugin.Log.LogWarning($"NpcValheim: denied administrative NPC mutation from peer {sender}");
@@ -208,7 +242,12 @@ namespace NpcValheim.Npc
                 ZDOID npcId = package.ReadZDOID();
                 string method = package.ReadString();
                 int count = package.ReadInt();
-                if (npcId.IsNone() || string.IsNullOrEmpty(method) || count < 0 || count > 4) return;
+                if (npcId.IsNone() || string.IsNullOrEmpty(method) || count < 0 || count > 4)
+                {
+                    Plugin.Log.LogWarning(
+                        $"NpcValheim: malformed mutation from peer {sender} -- npc={npcId} method='{method}' args={count}");
+                    return;
+                }
 
                 var arguments = new object[count];
                 for (int i = 0; i < count; i++)
@@ -219,7 +258,10 @@ namespace NpcValheim.Npc
                         case 2: arguments[i] = package.ReadInt(); break;
                         case 3: arguments[i] = package.ReadSingle(); break;
                         case 4: arguments[i] = package.ReadVector3(); break;
-                        default: return;
+                        default:
+                            Plugin.Log.LogWarning(
+                                $"NpcValheim: mutation '{method}' from peer {sender} carries an argument type this server does not know");
+                            return;
                     }
                 }
 

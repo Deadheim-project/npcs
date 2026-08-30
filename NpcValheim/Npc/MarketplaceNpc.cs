@@ -154,7 +154,16 @@ namespace NpcValheim.Npc
         /// the counter it applies to.</summary>
         public void RequestSetPrice(Player requester, string itemName, int price, bool selling)
         {
-            if (Nview == null || !Nview.IsValid() || !CanLocalPlayerAdminister()) return;
+            if (Nview == null || !Nview.IsValid()) return;
+            if (!CanLocalPlayerAdminister())
+            {
+                // The panel that offered the button is admin-gated too, so reaching here means
+                // the client stopped believing it is an admin between opening the panel and
+                // pressing the button -- worth saying out loud rather than ignoring the click.
+                Player.m_localPlayer?.Message(MessageHud.MessageType.Center,
+                    "Seu cliente não considera você admin", 0, null);
+                return;
+            }
             InvokeAuthoritativeRpc("RPC_SetPrice", (selling ? "S:" : "B:") + (itemName ?? ""), price);
         }
 
@@ -196,10 +205,25 @@ namespace NpcValheim.Npc
             // an admin set on the live server -- while a proximity radius protects nothing
             // that CanAdminister has not already settled: the sender is in adminlist.txt or
             // the mutation never got here. Only the flood limit is worth keeping.
-            if (!CanAdminister(sender)) return;
-            if (!NpcRequestGuard.AllowRate(sender, "shop-set-price", 10, 2f)) return;
+            // CanAdminister already logs both of its refusals; these two did not, which left
+            // the docstring above ("Every exit reports itself") telling the truth about only
+            // some of them -- and a price that never took looked identical to one that did.
+            Plugin.Log.LogInfo($"NpcValheim: 'shop-set-price' from peer {sender} on '{GetHoverName()}': \"{tagged}\" = {price}");
 
-            if (string.IsNullOrEmpty(tagged) || tagged.Length < 3) return;
+            if (!CanAdminister(sender)) return;
+            if (!NpcRequestGuard.AllowRate(sender, "shop-set-price", 10, 2f))
+            {
+                Plugin.Log.LogWarning($"NpcValheim: shop-set-price from peer {sender} dropped by the rate limit");
+                ServiceNpcAuthority.SendStatus(sender, "Muitos pedidos seguidos. Espere um instante.");
+                return;
+            }
+
+            if (string.IsNullOrEmpty(tagged) || tagged.Length < 3)
+            {
+                Plugin.Log.LogWarning($"NpcValheim: shop-set-price from peer {sender} is malformed: \"{tagged}\"");
+                ServiceNpcAuthority.SendStatus(sender, "Pedido malformado.");
+                return;
+            }
 
             bool selling = tagged[0] == 'S';
             string itemName = tagged.Substring(2);

@@ -351,7 +351,14 @@ namespace NpcValheim.Npc
         protected void InvokeAuthoritativeRpc(string method, params object[] arguments)
         {
             if (Nview == null || !Nview.IsValid()) return;
-            ServiceNpcAuthority.RequestMutation(this, method, arguments);
+
+            // RequestMutation answers whether the request actually went out, and this method
+            // used to throw that answer away. A refusal on the client then looked exactly
+            // like a refusal on the server -- both silent -- and the console could not
+            // distinguish them, because in one case nothing had been sent to log.
+            if (!ServiceNpcAuthority.RequestMutation(this, method, arguments))
+                Player.m_localPlayer?.Message(MessageHud.MessageType.Center,
+                    "O pedido não chegou ao servidor", 0, null);
         }
 
         /// <summary>Send a player-facing (non-administrative) request to the server. Same
