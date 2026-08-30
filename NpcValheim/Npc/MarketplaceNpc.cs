@@ -83,9 +83,56 @@ namespace NpcValheim.Npc
         /// the natural owner of that job. Only the ZDO owner does it, so on a dedicated
         /// server that's the server and it happens exactly once regardless of how many
         /// players are standing around.</summary>
+        // Same story the teleporter told in 0.1.34 and the quest giver's board before it: an
+        // admin sets a price, the server logs the write, and seconds later the counter is back
+        // to what it was. These NPCs are Character-based, so Valheim hands the ZDO to the peer
+        // standing nearest -- at a merchant you are configuring, that is you -- and the client's
+        // older copy lands on top of the server's write after it has already reported success.
+        //
+        // 'compra Coal por 1' was logged twice on 30/08 and neither price was in the saved
+        // state seven minutes later. The server therefore keeps its own copy of both sides of
+        // the counter, seeded from the ZDO where the world save restores it, refreshed on every
+        // legitimate write, and put back whenever the two disagree.
+        private string _authoritativeBuys;
+        private string _authoritativeSells;
+        private float _nextCounterCheck;
+
+        /// <summary>Restores one side of the counter if the ZDO has drifted away from what the
+        /// server last wrote. Returns true when it had to intervene.</summary>
+        private bool RestoreIfDrifted(string key, ref string authoritative, string side)
+        {
+            if (authoritative == null)
+            {
+                // First tick after a spawn or a restart: the ZDO is the source, not a victim.
+                authoritative = Nview.GetZDO().GetString(key, "");
+                return false;
+            }
+            // An empty counter is never restored over what is there: emptying one is a
+            // legitimate admin action, and it reaches this field through the same write path.
+            if (authoritative.Length == 0) return false;
+
+            var current = Nview.GetZDO().GetString(key, "");
+            if (string.Equals(current, authoritative, StringComparison.Ordinal)) return false;
+
+            Plugin.Log.LogWarning(
+                $"NpcValheim: '{GetHoverName()}' [{Nview.GetZDO().m_uid}] lost what it {side} " +
+                $"({current.Length} chars on the ZDO, {authoritative.Length} on the server) -- restoring it");
+            Nview.GetZDO().Set(key, authoritative);
+            return true;
+        }
+
         protected override void Update()
         {
             base.Update();
+
+            if (Nview != null && Nview.IsValid() && ZNet.instance != null && ZNet.instance.IsServer() &&
+                Time.unscaledTime >= _nextCounterCheck)
+            {
+                _nextCounterCheck = Time.unscaledTime + 1f;
+                RestoreIfDrifted(KeyBuyPrices, ref _authoritativeBuys, "buys");
+                RestoreIfDrifted(KeySellPrices, ref _authoritativeSells, "sells");
+            }
+
             if (Nview == null || !Nview.IsValid() || !Nview.IsOwner()) return;
             if (Time.time < _nextExpirySweep) return;
             _nextExpirySweep = Time.time + 60f;
@@ -262,7 +309,17 @@ namespace NpcValheim.Npc
                 if (sb.Length > 0) sb.Append('\n');
                 sb.Append(kv.Key).Append(';').Append(kv.Value.ToString(CultureInfo.InvariantCulture));
             }
-            Nview.GetZDO().Set(key, sb.ToString());
+            string packed = sb.ToString();
+            Nview.GetZDO().Set(key, packed);
+
+            // The write is only authoritative once the server remembers it; otherwise the
+            // guard above would restore the value this call just replaced.
+            if (ZNet.instance != null && ZNet.instance.IsServer())
+            {
+                if (key == KeyBuyPrices) _authoritativeBuys = packed;
+                else if (key == KeySellPrices) _authoritativeSells = packed;
+            }
+
             PersistProfileSnapshot();
         }
 
