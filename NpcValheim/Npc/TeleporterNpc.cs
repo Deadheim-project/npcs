@@ -518,6 +518,15 @@ namespace NpcValheim.Npc
         {
             if (Nview == null || !Nview.IsValid() || ZNet.instance == null ||
                 !ZNet.instance.IsServer()) return;
+
+            // Says the trip was asked for at all. Without this line a successful teleport
+            // wrote nothing to the console, so silence meant "worked", "never left the
+            // client" or "dropped by a guard" indistinguishably -- and two releases were
+            // spent unable to tell which. tp-add already logged its arrival; this is the
+            // matching half.
+            Plugin.Log.LogInfo(
+                $"NpcValheim: 'tp-use' from peer {sender} on '{GetHoverName()}': \"{destinationId}\"");
+
             if (!IsValidDestinationId(destinationId))
             {
                 DenyTeleport(sender, "Solicitação de teleporte inválida.");
@@ -526,7 +535,6 @@ namespace NpcValheim.Npc
             if (!NpcRequestGuard.AllowNearby(Nview, transform, sender, "tp-use",
                     out string refusal, 12f, 3, 2f))
             {
-                Plugin.Log.LogWarning($"NpcValheim: refused tp-use from peer {sender}: {refusal}");
                 DenyTeleport(sender, "Não deu para viajar: " + refusal);
                 return;
             }
@@ -568,6 +576,9 @@ namespace NpcValheim.Npc
             // Reserve the cooldown before answering. Repeated routed requests cannot obtain
             // multiple approvals while the first response is still in flight.
             _lastUseByPlayer[playerId] = now;
+            Plugin.Log.LogInfo(
+                $"NpcValheim: '{GetHoverName()}' approved travel to '{destination.Name}' " +
+                $"[{destination.Id}] for player {playerId}");
             Nview.InvokeRPC(sender, "RPC_TeleportApproved", destination.Id);
         }
 
@@ -619,8 +630,14 @@ namespace NpcValheim.Npc
                 string.IsNullOrWhiteSpace(reason) ? "Teleporte recusado" : reason, 0, null);
         }
 
+        /// <summary>Refuses a trip on the asker's screen and on the server log at once.
+        /// The refusals used to be screen-only, which put the one fact needed to diagnose
+        /// them -- the reason -- on the machine that cannot be read remotely.</summary>
         private void DenyTeleport(long peer, string reason)
         {
+            Plugin.Log.LogWarning(
+                $"NpcValheim: '{GetHoverName()}' [{Nview.GetZDO().m_uid}] refused tp-use " +
+                $"from peer {peer}: {reason}");
             Nview.InvokeRPC(peer, "RPC_TeleportDenied", reason ?? "Teleporte recusado");
         }
 
