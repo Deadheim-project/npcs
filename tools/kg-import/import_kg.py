@@ -294,12 +294,20 @@ def convert_traders(configs_dir, out_dir, report):
                     sells.append((get_item, unit))
                 elif get_item.lower() == COINS.lower() and pay_item.lower() != COINS.lower():
                     # Player hands the item over: the merchant buys it. Rounded down, so the
-                    # conversion never invents money the original did not pay.
-                    unit = get_amount // pay_amount
-                    if unit <= 0:
-                        report.append("%s [%s]: %dx %s for %d coins is under 1/un, dropped"
-                                      % (filename, kg_id, pay_amount, pay_item, get_amount))
-                        continue
+                    # conversion never invents money the original did not pay -- but never to
+                    # zero, because a price of zero is not a cheaper trade, it is no trade at
+                    # all. The two directions used to disagree about this: a sell under 1/un
+                    # became 1 and survived, a buy under 1/un became 0 and was discarded, so
+                    # bulk buy offers vanished while their mirror image did not. KG only had
+                    # one such line (50x BoneFragments for 30 coins) out of 20 buys, so the
+                    # loss was small -- but it was silent past the report, and the asymmetry
+                    # would eat more on any config that priced buying in bulk.
+                    unit = max(1, get_amount // pay_amount)
+                    if get_amount % pay_amount:
+                        report.append(
+                            "%s [%s]: %dx %s for %d coins is %.3f/un, bought at %d/un"
+                            % (filename, kg_id, pay_amount, pay_item, get_amount,
+                               get_amount / pay_amount, unit))
                     buys.append((pay_item, unit))
                 else:
                     report.append("%s [%s]: barter without coins is not supported: %r"

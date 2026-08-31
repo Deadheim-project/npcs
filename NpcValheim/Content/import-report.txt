@@ -25,7 +25,7 @@ TraderProfiles.cfg [CarvaoG]: 50 coins for 100x Coal is 0.500/un, sold at 1/un
 TraderProfiles.cfg [fazendeiro]: 100 coins for 3x CarrotSeeds is 33.333/un, sold at 34/un
 TraderProfiles.cfg [MateriaisG]: 25 coins for 100x Wood is 0.250/un, sold at 1/un
 TraderProfiles.cfg [MateriaisG]: 25 coins for 100x Stone is 0.250/un, sold at 1/un
-TraderProfiles.cfg [Trofeu]: 50x BoneFragments for 30 coins is under 1/un, dropped
+TraderProfiles.cfg [Trofeu]: 50x BoneFragments for 30 coins is 0.600/un, bought at 1/un
 TraderProfiles.cfg [TraderBronze]: 2000 coins for 30x Bronze is 66.667/un, sold at 67/un
 TraderProfiles.cfg [TraderBronze]: 1000 coins for 60x CopperOre is 16.667/un, sold at 17/un
 TraderProfiles.cfg [TraderBronze]: 500 coins for 30x TinOre is 16.667/un, sold at 17/un

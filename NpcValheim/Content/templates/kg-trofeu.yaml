@@ -21,3 +21,5 @@ marketplace:
       price: 100
     - itemName: "TrophyBlob"
       price: 30
+    - itemName: "BoneFragments"
+      price: 1
