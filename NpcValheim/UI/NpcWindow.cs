@@ -31,7 +31,7 @@ namespace NpcValheim.UI
 
         public bool Alive => _canvas != null;
 
-        public NpcWindow(NpcBase npc, Player player, System.Action onClose)
+        public NpcWindow(NpcBase npc, Player player, System.Action onClose, bool servicesOnly = false)
         {
             _canvas = ValheimUi.CreateCanvas("NpcValheim_Window", 5000);
             if (_canvas == null) return;
@@ -77,11 +77,11 @@ namespace NpcValheim.UI
             ValheimUi.Anchor((RectTransform)_status.transform, new Vector2(0f, 0f), new Vector2(1f, 0f),
                 new Vector2(26f, 14f), new Vector2(-26f, 44f));
 
-            BuildTabs(npc, player);
+            BuildTabs(npc, player, servicesOnly);
             SetActive(0);
         }
 
-        private void BuildTabs(NpcBase npc, Player player)
+        private void BuildTabs(NpcBase npc, Player player, bool servicesOnly)
         {
             // A marketplace does two distinct jobs -- trading with other players, and trading
             // with the merchant himself -- so it gets a tab for each rather than cramming
@@ -111,7 +111,7 @@ namespace NpcValheim.UI
                     break;
             }
 
-            bool canAdminister = npc.CanLocalPlayerAdminister();
+            bool canAdminister = !servicesOnly && npc.CanLocalPlayerAdminister();
             Plugin.Log.LogInfo(
                 $"NpcValheim UI: admin gate for '{npc.GetHoverName()}' -- " +
                 $"vanilla={ZNet.instance != null && ZNet.instance.LocalPlayerIsAdminOrHost()} " +

@@ -339,6 +339,14 @@ O serviço nunca é restrito: comprar, vender, sacar moedas, receber correio e
 aceitar/entregar missões funcionam para qualquer jogador. A permissão governa
 *configuração*, não *uso*.
 
+### Acesso VIP global
+
+Com `VipList.dll` instalado, um jogador presente em `Detalhes.VipList.cfg` pode
+pressionar **F7** em qualquer lugar do mapa. O servidor envia o catálogo dos NPCs
+persistidos e o jogador escolhe qual deseja abrir. O painel remoto expõe somente
+as abas de serviço (Loja, Leilão, Correio, Missões e Teleportar); nunca concede
+as abas Aparência ou Admin. A tecla pode ser alterada em `VIP.NpcMenuKey`.
+
 ### A escalação que existia aqui
 
 `IsOwner()` devolvia `true` sempre que o campo de dono estava vazio, e o

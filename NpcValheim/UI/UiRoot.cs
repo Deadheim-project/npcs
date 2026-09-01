@@ -19,6 +19,7 @@ namespace NpcValheim.UI
         private NpcBase _npc;
         private Player _player;
         private NpcWindow _window;
+        private bool _servicesOnly;
 
         public static void EnsureCreated()
         {
@@ -31,7 +32,13 @@ namespace NpcValheim.UI
         public static void Open(NpcBase npc, Player player)
         {
             if (_instance == null || npc == null || player == null) return;
-            _instance.OpenInternal(npc, player);
+            _instance.OpenInternal(npc, player, false);
+        }
+
+        internal static void OpenVipRemote(NpcBase npc, Player player)
+        {
+            if (_instance == null || npc == null || player == null) return;
+            _instance.OpenInternal(npc, player, true);
         }
 
         public static void RequestClose() => _instance?.Close();
@@ -42,7 +49,7 @@ namespace NpcValheim.UI
 
         public static bool IsOpen => _instance != null && _instance._window != null;
 
-        private void OpenInternal(NpcBase npc, Player player)
+        private void OpenInternal(NpcBase npc, Player player, bool servicesOnly)
         {
             // Assets live in the game's UI scene; if they are not up yet there is nothing to
             // build a Valheim-looking window out of, and a half-styled one is worse than
@@ -56,7 +63,8 @@ namespace NpcValheim.UI
             Close();
             _npc = npc;
             _player = player;
-            _window = new NpcWindow(npc, player, Close);
+            _servicesOnly = servicesOnly;
+            _window = new NpcWindow(npc, player, Close, servicesOnly);
 
             if (!_window.Alive)
             {
@@ -71,11 +79,14 @@ namespace NpcValheim.UI
 
         private void Close()
         {
+            bool closingRemote = _servicesOnly;
             _window?.Destroy();
             _window = null;
             _npc = null;
+            _servicesOnly = false;
             UiInputBlocker.IsOpen = false;
             ReleaseCursor();
+            if (closingRemote) VipNpcDirectory.ReleaseRemoteProxy();
         }
 
         private void Update()

@@ -92,9 +92,8 @@ namespace NpcValheim.Npc
         // The obvious suspect -- a client taking the ZDO, since these NPCs are Character-based
         // and Valheim hands a Character's ZDO to the nearest peer -- does not fit: the server
         // owned the ZDO throughout, KeepServerOwned logs every reclaim it makes, and no reclaim
-        // was logged for any of the three cases. Nor is it string length; "Wood;3
-Stone;2
-Coal;1"
+        // was logged for any of the three cases. Nor is it string length; "Wood;3 / Stone;2 /
+        // Coal;1"
         // is a handful of bytes. Whatever discards the write, it is not visible from this source.
         //
         // So the guard is empirical rather than explanatory, and it is the third NPC to need

@@ -10,11 +10,12 @@ using NpcValheim.UI;
 namespace NpcValheim
 {
     [BepInPlugin(Guid, Name, Version)]
+    [BepInDependency(VipList.VipListPlugin.PluginGuid)]
     public class Plugin : BaseUnityPlugin
     {
         public const string Guid = "com.npcvalheim.mod";
         public const string Name = "NpcValheim";
-        public const string Version = "0.1.39";
+        public const string Version = "0.1.40";
 
         internal static ManualLogSource Log;
         private Harmony _harmony;
@@ -59,6 +60,7 @@ namespace NpcValheim
         internal static ConfigEntry<float> TeleportCooldownSeconds;
         internal static ConfigEntry<int> ListingDurationHours;
         internal static ConfigEntry<UnityEngine.KeyCode> QuestJournalKey;
+        internal static ConfigEntry<UnityEngine.KeyCode> VipNpcMenuKey;
         internal static ConfigEntry<bool> ShowQuestButton;
         internal static ConfigEntry<bool> ShowQuestTracker;
         internal static ConfigEntry<float> QuestTrackerX;
@@ -88,6 +90,9 @@ namespace NpcValheim
 
             QuestJournalKey = Config.Bind("Quests", "JournalKey", UnityEngine.KeyCode.J,
                 "Opens the player's quest journal from anywhere in the world.");
+
+            VipNpcMenuKey = Config.Bind("VIP", "NpcMenuKey", UnityEngine.KeyCode.F7,
+                "VIP-only shortcut that opens the server-wide NPC directory from anywhere in the world.");
 
             ShowQuestTracker = Config.Bind("Quests", "ShowTracker", true,
                 "Shows the on-screen objective tracker: what you are doing and how far along, without opening a menu.");
@@ -136,6 +141,7 @@ namespace NpcValheim
                 UI.QuestMapPins.EnsureCreated();
                 UI.QuestHudButton.EnsureCreated();
                 UI.QuestTracker.EnsureCreated();
+                UI.VipNpcDirectory.EnsureCreated();
             }
 
             _harmony = new Harmony(Guid);

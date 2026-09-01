@@ -6,6 +6,12 @@ using YamlDotNet.Serialization.NamingConventions;
 
 namespace NpcValheim.Persistence
 {
+    public sealed class NpcInstanceRecord
+    {
+        public string ProfileId { get; set; }
+        public NpcProfile Profile { get; set; }
+    }
+
     /// <summary>
     /// Reads/writes NpcProfile YAML files on disk. All calls here run on whichever peer owns
     /// the NPC's ZDO (the dedicated server in a real multiplayer setup, the host in a solo
@@ -159,6 +165,29 @@ namespace NpcValheim.Persistence
         {
             var path = FindInstanceFile(profileId);
             return path != null ? LoadFile(path) : null;
+        }
+
+        public static List<NpcInstanceRecord> ListInstances()
+        {
+            var result = new List<NpcInstanceRecord>();
+            if (!Directory.Exists(InstancesDir)) return result;
+
+            foreach (string path in Directory.GetFiles(InstancesDir, "*.yaml"))
+            {
+                string stem = Path.GetFileNameWithoutExtension(path);
+                int marker = stem.LastIndexOf("--", System.StringComparison.Ordinal);
+                string profileId = marker >= 0 ? stem.Substring(marker + 2) : stem;
+                if (string.IsNullOrWhiteSpace(profileId)) continue;
+
+                var profile = LoadFile(path);
+                if (profile == null || string.IsNullOrWhiteSpace(profile.ForType)) continue;
+                result.Add(new NpcInstanceRecord { ProfileId = profileId, Profile = profile });
+            }
+
+            return result
+                .OrderBy(entry => entry.Profile?.Name ?? "", System.StringComparer.OrdinalIgnoreCase)
+                .ThenBy(entry => entry.ProfileId, System.StringComparer.OrdinalIgnoreCase)
+                .ToList();
         }
 
         private static void Save(string dir, string name, NpcProfile profile)

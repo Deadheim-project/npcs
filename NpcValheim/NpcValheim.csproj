@@ -47,6 +47,10 @@
       <HintPath>$(ValheimManaged)\Splatform.dll</HintPath>
       <Private>false</Private>
     </Reference>
+    <Reference Include="VipList">
+      <HintPath>..\..\Deadheim\bin\Release\VipList.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
 
     <!-- Unity engine modules used by NPC / UI / interaction code -->
     <Reference Include="UnityEngine">

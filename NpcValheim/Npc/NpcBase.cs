@@ -29,6 +29,7 @@ namespace NpcValheim.Npc
         public const string Scale = "npcv_scale";
         public const string AppearanceRevision = "npcv_appearance_rev";
         public const string ProfileId = "npcv_profile_id";
+        public const string VipProxy = "npcv_vip_proxy";
     }
 
     /// <summary>
@@ -85,7 +86,7 @@ namespace NpcValheim.Npc
 
             // Nameplate and quest markers are purely a client-side reading of state; a
             // headless server has no camera, no local player and no UI assets to build from.
-            if (!Application.isBatchMode)
+            if (!Application.isBatchMode && !IsVipProxy)
                 gameObject.AddComponent<NpcNameplate>();
         }
 
@@ -131,6 +132,12 @@ namespace NpcValheim.Npc
             // A frame first: the zone this NPC sits in may still be loading, and terrain that
             // does not exist yet cannot be measured.
             yield return null;
+
+            if (IsVipProxy)
+            {
+                HideVipProxy();
+                yield break;
+            }
 
             var body = GetComponent<Rigidbody>();
             var character = GetComponent<Character>();
@@ -182,6 +189,11 @@ namespace NpcValheim.Npc
         protected virtual void Update()
         {
             if (Nview == null || !Nview.IsValid()) return;
+            if (IsVipProxy)
+            {
+                HideVipProxy();
+                return;
+            }
 
             // Before the batch-mode gate below: this is the half that matters most on a
             // headless server, where the rest of this method does nothing.
@@ -1065,6 +1077,38 @@ namespace NpcValheim.Npc
         /// <summary>Stable id this NPC's yaml snapshot is filed under
         /// (npcs/instances/&lt;ProfileId&gt;.yaml). Public for test/tooling use.</summary>
         public string ProfileId => Nview != null && Nview.IsValid() ? GetOrCreateProfileId() : "";
+
+        public bool IsVipProxy => Nview != null && Nview.IsValid() &&
+                                  Nview.GetZDO().GetBool(ZdoKeys.VipProxy, false);
+
+        internal void InitializeVipProxy(string profileId, NpcProfile profile)
+        {
+            if (Nview == null || !Nview.IsValid() || profile == null) return;
+            var zdo = Nview.GetZDO();
+            Nview.m_persistent = false;
+            zdo.Persistent = false;
+            zdo.Set(ZdoKeys.VipProxy, true);
+            zdo.Set(ZdoKeys.ProfileId, profileId ?? Guid.NewGuid().ToString("N"));
+            zdo.Set(ZdoKeys.Owner, 0L);
+            ApplyProfileAuthoritative(profile);
+            HideVipProxy();
+        }
+
+        internal void DestroyVipProxy()
+        {
+            if (!IsVipProxy) return;
+            if (Nview != null && Nview.IsValid() && Nview.IsOwner()) Nview.Destroy();
+        }
+
+        private void HideVipProxy()
+        {
+            foreach (var renderer in GetComponentsInChildren<Renderer>(true)) renderer.enabled = false;
+            foreach (var collider in GetComponentsInChildren<Collider>(true)) collider.enabled = false;
+            var nameplate = GetComponent<NpcNameplate>();
+            if (nameplate != null) Destroy(nameplate);
+            var body = GetComponent<Rigidbody>();
+            if (body != null) body.constraints = RigidbodyConstraints.FreezeAll;
+        }
 
         private static bool TryNormalizeColor(Vector3 color, out Vector3 normalized)
         {

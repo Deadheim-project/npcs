@@ -492,6 +492,35 @@ namespace NpcValheim.Npc
             return _socketGetHostName?.Invoke(socket, Array.Empty<object>()) as string;
         }
 
+        /// <summary>The stable platform account id behind an RPC sender.</summary>
+        public static string GetPlatformUserId(long senderId)
+        {
+            try
+            {
+                return GetPeerHostName(FindPeer(senderId)) ?? string.Empty;
+            }
+            catch (Exception e)
+            {
+                Plugin.Log.LogWarning($"NpcValheim: platform-id lookup failed for {senderId}: {e.Message}");
+                return string.Empty;
+            }
+        }
+
+        public static Vector3 GetPlayerPosition(long senderId)
+        {
+            if (TryGetPlayer(senderId, out var player) && player != null)
+                return player.transform.position;
+
+            string name = GetPlayerName(senderId);
+            if (ZNet.instance != null && !string.IsNullOrWhiteSpace(name))
+            {
+                foreach (var info in ZNet.instance.GetPlayerList())
+                    if (string.Equals(info.m_name, name, StringComparison.OrdinalIgnoreCase))
+                        return info.m_position;
+            }
+            return Vector3.zero;
+        }
+
         /// <summary>Whether the peer behind an RPC sender id is on the server's admin list.
         ///
         /// Uses the same normalized-list lookup as ServerSync, but always starts from the
