@@ -527,7 +527,8 @@ namespace NpcValheim.Npc
 
             if (experience > 0) EpicMmoApi.AddExp(experience);
             player.Message(MessageHud.MessageType.Center,
-                "Missão concluída. Recompensas enviadas ao Correio.", 0, null);
+                "Missão concluída! Recompensa a caminho -- o que não couber na mochila fica no Correio.",
+                0, null);
         }
 
         /// <summary>
@@ -690,16 +691,27 @@ namespace NpcValheim.Npc
             }
 
             int completionNumber = progress.TimesCompleted + 1;
-            if (!GrantRewards(playerId, quest, completionNumber))
+            if (!GrantRewards(playerId, quest, completionNumber, out var rewardMailIds))
             {
+                Plugin.Log.LogWarning(
+                    $"NpcValheim: turn-in of '{questId}' by peer {sender} refused -- " +
+                    $"could not post the reward ({DescribeRewards(quest)}) to the Correio");
                 ServiceNpcAuthority.SendStatus(sender,
                     "O Correio está cheio. Libere espaço antes de entregar a missão.");
                 return;
             }
 
             QuestDatabase.Complete(playerId, questId, quest.Repeatable);
+            Plugin.Log.LogInfo(
+                $"NpcValheim: peer {sender} turned in '{questId}' (completion #{completionNumber}) -- " +
+                $"reward {DescribeRewards(quest)}; {rewardMailIds.Count} parcel(s) posted, pushing to the bag");
             ServiceNpcAuthority.SendQuestPlayerResponse(sender, "turnin-complete",
                 PackTurnInCompletion(playerId, quest, completionNumber, steps));
+
+            // The reward is already safe in the Correio; this hands it straight to the player
+            // so a finished quest normally drops the coins in the bag instead of forcing a
+            // walk to the post office. Anything that does not fit is simply left waiting.
+            DeliverRewardsNow(sender, playerId, rewardMailIds);
             SendQuestsTo(sender);
         }
 
@@ -711,8 +723,19 @@ namespace NpcValheim.Npc
             EpicMmoApi.AddExp(amount);
         }
 
-        private static bool GrantRewards(long playerId, QuestDefinition quest, int completionNumber)
+        /// <summary>
+        /// Posts a quest's reward to the player's Correio, idempotently. Every parcel it
+        /// creates (or finds already created by an earlier attempt) is reported in
+        /// <paramref name="createdMailIds"/> so the caller can hand them straight to the
+        /// player -- see DeliverRewardsNow.
+        ///
+        /// Returns false and posts nothing when the mailbox cannot hold the whole reward, so
+        /// a quest is never marked done for half a payout.
+        /// </summary>
+        private static bool GrantRewards(long playerId, QuestDefinition quest, int completionNumber,
+            out List<string> createdMailIds)
         {
+            createdMailIds = new List<string>();
             var rewards = quest.Rewards;
             if (rewards == null) return true;
 
@@ -732,17 +755,23 @@ namespace NpcValheim.Npc
             if (!MailDatabase.CanInsertDeliveries(playerId, deliveryIds)) return false;
 
             if (rewards.Coins > 0)
-                if (MailDatabase.SendCoins(playerId, $"Recompensa: {quest.Name}", rewards.Coins,
-                    prefix + ":coins") == null) return false;
+            {
+                var parcel = MailDatabase.SendCoins(playerId, $"Recompensa: {quest.Name}", rewards.Coins,
+                    prefix + ":coins");
+                if (parcel == null) return false;
+                createdMailIds.Add(parcel.Id);
+            }
 
             if (rewards.Items == null) return true;
             for (int i = 0; i < rewards.Items.Count; i++)
             {
                 var item = rewards.Items[i];
                 if (item == null || string.IsNullOrEmpty(item.ItemName) || item.Amount <= 0) continue;
-                if (MailDatabase.SendItem(playerId, $"Recompensa: {quest.Name}", item.ItemName,
+                var parcel = MailDatabase.SendItem(playerId, $"Recompensa: {quest.Name}", item.ItemName,
                     item.Quality, item.Amount,
-                    prefix + ":item:" + i.ToString(CultureInfo.InvariantCulture)) == null) return false;
+                    prefix + ":item:" + i.ToString(CultureInfo.InvariantCulture));
+                if (parcel == null) return false;
+                createdMailIds.Add(parcel.Id);
             }
             return true;
         }
@@ -783,22 +812,34 @@ namespace NpcValheim.Npc
         /// bag is full, or the player disconnects mid-hand-in, the parcel is simply still
         /// waiting at the Correio. Nothing can be lost by the collection failing.
         /// </summary>
-        private void DeliverRewardsNow(long sender, long playerId)
+        private void DeliverRewardsNow(long sender, long playerId, List<string> mailIds)
         {
-            var owed = MailDatabase.GetMail(playerId);
-            if (owed.Count == 0) return;
+            string packed = PackRewardParcels(playerId, mailIds);
+            if (string.IsNullOrEmpty(packed)) return;
+            ServiceNpcAuthority.SendQuestResponse(sender, this, "rewards", packed);
+        }
+
+        /// <summary>Turns the parcels this turn-in just created into the wire string the
+        /// client's ReceiveQuestRewards expects: "mailId;prefab;amount;quality" per line.
+        /// Only the named parcels are packed -- a quest hand-in must not also vacuum up the
+        /// player's unrelated market mail. Written letters carry nothing and are skipped.</summary>
+        private static string PackRewardParcels(long playerId, IEnumerable<string> mailIds)
+        {
+            if (mailIds == null) return "";
+            var wanted = new HashSet<string>(mailIds, StringComparer.Ordinal);
+            if (wanted.Count == 0) return "";
 
             var packed = new StringBuilder();
-            foreach (var parcel in owed)
+            foreach (var parcel in MailDatabase.GetMail(playerId))
             {
+                if (parcel == null || !wanted.Contains(parcel.Id) || parcel.IsMessage) continue;
                 if (packed.Length > 0) packed.Append('\n');
                 packed.Append(parcel.Id).Append(';')
                       .Append(parcel.IsCoins ? MarketplaceNpc.CoinPrefabName : parcel.ItemName).Append(';')
                       .Append(parcel.IsCoins ? parcel.Coins : parcel.Amount).Append(';')
                       .Append(Mathf.Max(1, parcel.Quality));
             }
-
-            ServiceNpcAuthority.SendQuestResponse(sender, this, "rewards", packed.ToString());
+            return packed.ToString();
         }
 
         /// <summary>Client side: try to take each parcel into the bag. Whatever fits is
@@ -825,7 +866,7 @@ namespace NpcValheim.Npc
                 if (player.GetInventory().AddItem(p[1], amount, quality, 0, 0L, "") == null)
                 {
                     player.Message(MessageHud.MessageType.Center,
-                        $"InventÃ¡rio cheio: {ItemNames.Display(p[1])} aguarda no correio", 0, null);
+                        $"Inventário cheio: {ItemNames.Display(p[1])} aguarda no Correio", 0, null);
                     continue;
                 }
 

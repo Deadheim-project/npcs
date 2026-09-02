@@ -1,8 +1,10 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
 using LiteDB;
+using NpcValheim.Npc;
 using NpcValheim.Persistence;
 
 class Program
@@ -185,6 +187,80 @@ class Program
         }
     }
 
+    /// <summary>
+    /// Turning a quest in has to pay the player. 0.1.20 rerouted the reward through the
+    /// Correio and dropped the call that hands it to the player, so a finished quest paid
+    /// nothing until the player happened to visit a mailbox. This drives the real
+    /// GrantRewards / PackRewardParcels on a throwaway db and checks a coin reward both
+    /// lands in the Correio and is packed for delivery to the bag.
+    /// </summary>
+    static void CheckQuestRewards(string root)
+    {
+        string questRoot = Path.Combine(root, "quest-rewards");
+        Directory.CreateDirectory(questRoot);
+        QuestDatabase.Init(Path.Combine(questRoot, "quests.db"));
+        MailDatabase.Init(Path.Combine(questRoot, "mail.db"));
+
+        var giver = typeof(QuestGiverNpc);
+        MethodInfo grant = giver.GetMethod("GrantRewards", BindingFlags.NonPublic | BindingFlags.Static);
+        MethodInfo pack = giver.GetMethod("PackRewardParcels", BindingFlags.NonPublic | BindingFlags.Static);
+
+        try
+        {
+            System.Console.WriteLine();
+            System.Console.WriteLine("== quest turn-in rewards ==");
+
+            Check("the reward methods still exist", grant != null && pack != null);
+            if (grant == null || pack == null) return;
+
+            const long playerId = 51001;
+            var quest = QuestStore.Get("eikthyr");
+            Check("the reward fixture quest loaded",
+                  quest != null && quest.Rewards.Coins == 200 && quest.Rewards.Items.Count == 1,
+                  quest == null ? "missing" : quest.Rewards.Coins + "c/" + quest.Rewards.Items.Count + "i");
+            if (quest == null) return;
+
+            QuestDatabase.Accept(playerId, quest.Id);
+            int completionNumber = QuestDatabase.Get(playerId, quest.Id).TimesCompleted + 1;
+
+            var grantArgs = new object[] { playerId, quest, completionNumber, null };
+            bool granted = (bool)grant.Invoke(null, grantArgs);
+            var mailIds = (List<string>)grantArgs[3];
+            Check("a quest reward posts to the Correio",
+                  granted && mailIds != null && mailIds.Count == 2,
+                  "granted=" + granted + " parcels=" + (mailIds?.Count ?? -1));
+
+            var mail = MailDatabase.GetMail(playerId);
+            Check("the coin reward is a real coin parcel",
+                  mail.Any(m => m.IsCoins && m.Coins == 200 && m.Subject.Contains(quest.Name)));
+            Check("the item reward keeps its prefab and amount",
+                  mail.Any(m => m.ItemName == "PickaxeAntler" && m.Amount == 1));
+
+            string wire = (string)pack.Invoke(null, new object[] { playerId, mailIds });
+            var lines = (wire ?? "").Split('\n');
+            Check("the reward is packed for delivery to the bag", lines.Length == 2, "lines=" + lines.Length);
+            Check("the coin line names the Coins prefab and the full amount",
+                  lines.Any(l =>
+                  {
+                      var f = l.Split(';');
+                      return f.Length == 4 && f[1] == "Coins" && f[2] == "200";
+                  }), wire);
+            Check("packing ignores parcels that are not this reward",
+                  ((string)pack.Invoke(null, new object[] { playerId, new string[0] })).Length == 0);
+
+            var retryArgs = new object[] { playerId, quest, completionNumber, null };
+            bool grantedAgain = (bool)grant.Invoke(null, retryArgs);
+            Check("a retried turn-in does not double the reward",
+                  grantedAgain &&
+                  MailDatabase.GetMail(playerId).Count(m => m.Subject.Contains(quest.Name)) == 2);
+        }
+        finally
+        {
+            QuestDatabase.Shutdown();
+            MailDatabase.Shutdown();
+        }
+    }
+
     static int Main(string[] args)
     {
         string root = Path.Combine(Path.GetTempPath(), "npcv-contentcheck");
@@ -344,6 +420,7 @@ class Program
         }
 
         CheckEconomyAndMail(root);
+        CheckQuestRewards(root);
 
         System.Console.WriteLine();
         System.Console.WriteLine(failed == 0 ? $"ALL {passed} CHECKS PASSED" : $"{failed} FAILED, {passed} passed");
