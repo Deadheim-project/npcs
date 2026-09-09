@@ -366,7 +366,10 @@ namespace NpcValheim.Npc
                 var realPiece = instance.GetComponent<Piece>();
                 if (realPiece != null)
                 {
-                    realPiece.SetCreator(creator);
+                    // O 1.0 pede tambem o PlatformUserID. O NPC e' colocado pelo servidor em nome
+                    // do admin, e o id de plataforma dele nao chega ate aqui -- o default
+                    // deixa o campo vazio, que e' o que o jogo grava para peca sem dono de plataforma.
+                    realPiece.SetCreator(creator, Splatform.PlatformUserID.None);
                     realPiece.m_canBeRemoved = false;
                 }
 

@@ -276,6 +276,16 @@ namespace NpcValheim.Npc
         /// (about head height); a mailbox is furniture and wants it just above the box.</summary>
         public virtual float NameplateHeight => 2.15f;
 
+        /// <summary>
+        /// Where the game draws its own hover text, in metres above the object's origin.
+        ///
+        /// New required member of Hoverable in Valheim 1.0 -- before it, the game placed the
+        /// crosshair text itself and there was nothing to answer. Answering with
+        /// NameplateHeight keeps it with the floating name this mod already draws, instead of
+        /// at the NPC's feet, and means a subclass that moves one moves both.
+        /// </summary>
+        public virtual float GetHoverOffset() => NameplateHeight;
+
         /// <summary>The Appearance tab only makes sense on a Player body. A mailbox has none.</summary>
         public virtual bool ShowsAppearanceTab => true;
 
@@ -553,15 +563,31 @@ namespace NpcValheim.Npc
             PersistProfileSnapshot();
         }
 
+        /// <summary>
+        /// Prefab name to the hash VisEquipment takes since Valheim 1.0.
+        ///
+        /// The empty name has to stay "nothing equipped", and it no longer can be a hash of
+        /// the empty string: the game reads 0 as the empty slot, and "".GetStableHashCode()
+        /// is not 0. Without this an NPC with a bare slot asks for a prefab that does not
+        /// exist instead of asking for nothing.
+        /// </summary>
+        private static int VisualHash(string itemName) =>
+            string.IsNullOrEmpty(itemName) ? 0 : itemName.GetStableHashCode();
+
+        /// <summary>Quality of the pieces the NPC wears. Purely cosmetic here -- an NPC's
+        /// gear is never used in combat -- so the first tier is the honest answer.</summary>
+        private const int VisualQuality = 1;
+
         private void ApplyArmorVisual(ArmorSlot slot, string itemName)
         {
             if (VisEq == null) return;
+            int hash = VisualHash(itemName);
             switch (slot)
             {
-                case ArmorSlot.Helmet: VisEq.SetHelmetItem(itemName); break;
-                case ArmorSlot.Chest: VisEq.SetChestItem(itemName); break;
-                case ArmorSlot.Legs: VisEq.SetLegItem(itemName); break;
-                case ArmorSlot.Shoulder: VisEq.SetShoulderItem(itemName, 0); break;
+                case ArmorSlot.Helmet: VisEq.SetHelmetItem(hash); break;
+                case ArmorSlot.Chest: VisEq.SetChestItem(hash); break;
+                case ArmorSlot.Legs: VisEq.SetLegItem(hash); break;
+                case ArmorSlot.Shoulder: VisEq.SetShoulderItem(hash, 0, VisualQuality); break;
             }
         }
 
@@ -577,18 +603,18 @@ namespace NpcValheim.Npc
             }
 
             var hair = zdo.GetString(ZdoKeys.Hair, "");
-            VisEq.SetHairItem(hair);
+            VisEq.SetHairItem(VisualHash(hair));
 
             var beard = zdo.GetString(ZdoKeys.Beard, "");
-            VisEq.SetBeardItem(beard);
+            VisEq.SetBeardItem(VisualHash(beard));
 
             int model = zdo.GetInt(ZdoKeys.Model, -1);
             if (model >= 0) VisEq.SetModel(model);
 
             VisEq.SetSkinColor(GetSkinColor(zdo));
             VisEq.SetHairColor(GetHairColor(zdo));
-            VisEq.SetRightItem(zdo.GetString(ZdoKeys.RightHand, ""));
-            VisEq.SetLeftItem(zdo.GetString(ZdoKeys.LeftHand, ""), 0);
+            VisEq.SetRightItem(VisualHash(zdo.GetString(ZdoKeys.RightHand, "")), VisualQuality);
+            VisEq.SetLeftItem(VisualHash(zdo.GetString(ZdoKeys.LeftHand, "")), 0, VisualQuality);
             ApplyScale(zdo.GetFloat(ZdoKeys.Scale, 1f));
         }
 

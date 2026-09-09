@@ -52,7 +52,9 @@ namespace NpcValheim.Npc
                 int stack = Mathf.Min(maxStack, amount - given);
                 // A refusal means the bag is full; stop rather than retry a smaller stack,
                 // so a full inventory costs one failed call and not one per unit.
-                if (inventory.AddItem(prefabName, stack, safeQuality, 0, 0L, "") == null) break;
+                // cheated:false / pickedUp:true sao novos e obrigatorios no 1.0 -- um item
+                // entregue por NPC conta como coletado, e nao como spawn de trapaca.
+                if (inventory.AddItem(prefabName, stack, safeQuality, 0, 0L, "", false, true) == null) break;
                 given += stack;
             }
             return given;

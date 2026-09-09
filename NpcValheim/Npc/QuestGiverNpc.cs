@@ -822,7 +822,7 @@ namespace NpcValheim.Npc
                 if (!int.TryParse(p[2], out int amount) || amount <= 0) continue;
                 if (!int.TryParse(p[3], out int quality) || quality <= 0) quality = 1;
 
-                if (player.GetInventory().AddItem(p[1], amount, quality, 0, 0L, "") == null)
+                if (player.GetInventory().AddItem(p[1], amount, quality, 0, 0L, "", false, true) == null)
                 {
                     player.Message(MessageHud.MessageType.Center,
                         $"InventÃ¡rio cheio: {ItemNames.Display(p[1])} aguarda no correio", 0, null);
