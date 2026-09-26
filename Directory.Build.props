@@ -1,11 +1,47 @@
 <Project>
   <PropertyGroup>
-    <!-- Override by setting the VALHEIM_PATH environment variable if your install lives elsewhere -->
+    <!-- Sobrescreva com a variavel de ambiente VALHEIM_PATH (ou -p:ValheimPath=) para
+         compilar contra outra arvore de referencia.
+
+         O default NAO e a instalacao da Steam. Motivo: os publicized_assemblies de
+         dentro da pasta da Steam sao gerados uma vez e nao voltam a ser gerados quando
+         o jogo recebe patch. Em 26/09/2026 as DLLs de la eram 1.0.16 e os publicized
+         ao lado delas eram de 14/03/2026, pre-1.0: compilar contra eles da build limpo
+         e DLL que quebra em runtime.
+
+         D:\valheim-ref e uma juncao que aponta para a arvore da versao atual. Depois de
+         um patch do jogo rode deadheim-deploy\bin\new-valheim-ref.ps1: ele monta a
+         arvore nova, regera os publicized e move a juncao. Nenhum csproj precisa mudar.
+
+         O alvo ValidateValheimReferences recusa uma arvore em que os publicized estejam
+         mais velhos que as DLLs do jogo. -->
     <ValheimPath Condition="'$(ValheimPath)' == '' AND '$(VALHEIM_PATH)' != ''">$(VALHEIM_PATH)</ValheimPath>
-    <ValheimPath Condition="'$(ValheimPath)' == ''">C:\Program Files (x86)\Steam\steamapps\common\Valheim</ValheimPath>
+    <ValheimPath Condition="'$(ValheimPath)' == ''">D:\valheim-ref</ValheimPath>
     <ValheimManaged>$(ValheimPath)\valheim_Data\Managed</ValheimManaged>
     <ValheimPublicized>$(ValheimManaged)\publicized_assemblies</ValheimPublicized>
     <BepInExCore>$(ValheimPath)\BepInEx\core</BepInExCore>
+    <BepInExCorePath>$(ValheimPath)\BepInEx\core</BepInExCorePath>
     <BepInExPlugins>$(ValheimPath)\BepInEx\plugins</BepInExPlugins>
   </PropertyGroup>
+
+  <Target Name="ValidateValheimReferences" BeforeTargets="ResolveAssemblyReferences">
+    <Error Condition="!Exists('$(ValheimManaged)\assembly_valheim.dll')"
+           Text="assembly_valheim.dll nao existe em $(ValheimManaged). Rode deadheim-deploy\bin\new-valheim-ref.ps1 ou aponte VALHEIM_PATH para uma arvore valida." />
+    <Error Condition="!Exists('$(ValheimPublicized)\assembly_valheim_publicized.dll')"
+           Text="assembly_valheim_publicized.dll nao existe em $(ValheimPublicized). Rode deadheim-deploy\bin\new-valheim-ref.ps1." />
+    <ItemGroup>
+      <_ValheimGameAsm Include="$(ValheimManaged)\assembly_valheim.dll" />
+      <_ValheimPubAsm Include="$(ValheimPublicized)\assembly_valheim_publicized.dll" />
+    </ItemGroup>
+    <PropertyGroup>
+      <!-- %(ModifiedTime) vem como "yyyy-MM-dd HH:mm:ss.fffffff"; vira um inteiro de
+           14 digitos (ate os segundos) para dar comparacao numerica no MSBuild. -->
+      <_ValheimGameStamp>@(_ValheimGameAsm->'%(ModifiedTime)')</_ValheimGameStamp>
+      <_ValheimPubStamp>@(_ValheimPubAsm->'%(ModifiedTime)')</_ValheimPubStamp>
+      <_ValheimGameStamp>$(_ValheimGameStamp.Replace('-','').Replace(':','').Replace(' ','').Substring(0,14))</_ValheimGameStamp>
+      <_ValheimPubStamp>$(_ValheimPubStamp.Replace('-','').Replace(':','').Replace(' ','').Substring(0,14))</_ValheimPubStamp>
+    </PropertyGroup>
+    <Error Condition="$(_ValheimPubStamp) &lt; $(_ValheimGameStamp)"
+           Text="publicized_assemblies DESATUALIZADOS em $(ValheimPath): assembly_valheim_publicized.dll ($(_ValheimPubStamp)) e mais antigo que assembly_valheim.dll ($(_ValheimGameStamp)). Compilar assim gera DLL contra a API antiga, que passa no build e quebra em runtime. Rode deadheim-deploy\bin\new-valheim-ref.ps1." />
+  </Target>
 </Project>
