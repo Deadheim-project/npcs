@@ -35,6 +35,26 @@ namespace NpcValheim.UI
             _instance = go.AddComponent<QuestHudButton>();
         }
 
+        // The offset is baked in when the canvas is built, so a cfg reloaded while the game
+        // runs throws the canvas away and the next Update builds it where it now belongs.
+        private void Awake()
+        {
+            Plugin.QuestButtonX.SettingChanged += OnPositionChanged;
+            Plugin.QuestButtonY.SettingChanged += OnPositionChanged;
+        }
+
+        private void OnDestroy()
+        {
+            Plugin.QuestButtonX.SettingChanged -= OnPositionChanged;
+            Plugin.QuestButtonY.SettingChanged -= OnPositionChanged;
+        }
+
+        private void OnPositionChanged(object sender, System.EventArgs e)
+        {
+            if (_canvas != null) Destroy(_canvas);
+            _canvas = null;
+        }
+
         private void Update()
         {
             if (Player.m_localPlayer == null)

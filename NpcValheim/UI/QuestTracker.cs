@@ -42,6 +42,22 @@ namespace NpcValheim.UI
             _instance = go.AddComponent<QuestTracker>();
         }
 
+        // The offset is baked in when the canvas is built, so a cfg reloaded while the game
+        // runs tears the tracker down and the next Update builds it where it now belongs.
+        private void Awake()
+        {
+            Plugin.QuestTrackerX.SettingChanged += OnPositionChanged;
+            Plugin.QuestTrackerY.SettingChanged += OnPositionChanged;
+        }
+
+        private void OnDestroy()
+        {
+            Plugin.QuestTrackerX.SettingChanged -= OnPositionChanged;
+            Plugin.QuestTrackerY.SettingChanged -= OnPositionChanged;
+        }
+
+        private void OnPositionChanged(object sender, System.EventArgs e) => Teardown();
+
         private void Update()
         {
             if (Player.m_localPlayer == null || !Plugin.ShowQuestTracker.Value)

@@ -79,6 +79,10 @@ namespace NpcValheim
                 CurrentVersion = Version,
                 MinimumRequiredVersion = Version,
                 ModRequired = true,
+                // Without the lock ServerSync also accepts values pushed by clients, so any
+                // player with ConfigurationManager could reprice every new teleporter.
+                // Admins stay exempt and can still edit from in game.
+                IsLocked = true,
             };
 
             TeleportCostItem = Config.Bind("Teleporter", "CostItem", "",
@@ -113,9 +117,18 @@ namespace NpcValheim
             ListingDurationHours = Config.Bind("Marketplace", "ListingDurationHours", 48,
                 "How long a listing stays up before it expires and the unsold stock is mailed back to the seller.");
 
-            ConfigSync.AddConfigEntry(TeleportCostItem);
-            ConfigSync.AddConfigEntry(TeleportCostAmount);
-            ConfigSync.AddConfigEntry(TeleportCooldownSeconds);
+            // Server-authoritative entries. The Quests/VIP keys and HUD positions are left out
+            // on purpose: they are each player's own preferences.
+            ConfigSync.AddConfigEntry(TeleportCostItem).SynchronizedConfig = true;
+            ConfigSync.AddConfigEntry(TeleportCostAmount).SynchronizedConfig = true;
+            ConfigSync.AddConfigEntry(TeleportCooldownSeconds).SynchronizedConfig = true;
+            ConfigSync.AddConfigEntry(ListingDurationHours).SynchronizedConfig = true;
+
+            // Everything above is read where it is used (a new teleporter, a new listing, the
+            // HUD every frame), so a reload takes effect on its own. The HUD offsets are the
+            // exception and QuestTracker/QuestHudButton rebuild themselves when they change.
+            // Teleporters already placed keep the cost stored on them.
+            Deadheim.Shared.ConfigWatcher.Watch(Config, Name);
 
             var databaseDirectory = NpcStoragePaths.DatabaseDirectory;
             Directory.CreateDirectory(databaseDirectory);
