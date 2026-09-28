@@ -696,6 +696,28 @@ namespace NpcValheim.Npc
             return Dedup(result);
         }
 
+        /// <summary>The routed-RPC id of every connected peer. Their characters are resolved
+        /// separately (GetPlayerId), because a peer that has not spawned yet has none.</summary>
+        internal static List<long> ConnectedPeerIds()
+        {
+            var ids = new List<long>();
+            try
+            {
+                if (ZNet.instance == null) return ids;
+                var peers = GetPeerList();
+                if (peers == null) return ids;
+                _peerUid ??= typeof(ZNetPeer).GetField("m_uid", AnyInstance);
+                foreach (var item in peers)
+                    if (item is ZNetPeer peer && _peerUid?.GetValue(peer) is long uid && uid != 0L)
+                        ids.Add(uid);
+            }
+            catch (Exception e)
+            {
+                Plugin.Log.LogWarning($"NpcValheim: could not list connected peers: {e.Message}");
+            }
+            return ids;
+        }
+
         private static IEnumerable GetPeerList()
         {
             var method = typeof(ZNet).GetMethod("GetPeers", AnyInstance, null, Type.EmptyTypes, null)
