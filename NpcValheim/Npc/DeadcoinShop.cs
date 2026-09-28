@@ -248,7 +248,12 @@ namespace NpcValheim.Npc
     }
 
     /// <summary>
-    /// The client's side of the Deadcoins counter, and the one channel the server answers it on.
+    /// Both halves of the Deadcoins counter: the purchase rules the server runs, and the
+    /// client's view of its own balance.
+    ///
+    /// None of it belongs to an NPC. The price list is the server's config and the balance is
+    /// the player's file, so the NPC is only a way in. There are two ways in: the NPC's own
+    /// service channel, and a VIP-only request that needs no NPC (see RPC_RemoteRequest).
     ///
     /// Answers are addressed to the player, not to the NPC: a purchase has already been charged
     /// by the time its answer is sent, and an answer routed through the NPC would be dropped if
@@ -257,7 +262,11 @@ namespace NpcValheim.Npc
     internal static class DeadcoinShop
     {
         private const string RpcResponse = "NpcValheim_DeadcoinResponse";
+        private const string RpcRemoteRequest = "NpcValheim_DeadcoinRemoteRequest";
         private const float PurchaseTimeout = 10f;
+
+        internal const string ActionBalance = "RPC_DeadcoinBalance";
+        internal const string ActionBuy = "RPC_DeadcoinBuy";
 
         /// <summary>The last balance the server reported, or -1 before it has answered.</summary>
         internal static int Balance { get; private set; } = -1;
@@ -279,6 +288,28 @@ namespace NpcValheim.Npc
             LastMessage = null;
             EndPurchase();
             rpc.Register(RpcResponse, (Action<long, string, string>)RPC_Response);
+            rpc.Register(RpcRemoteRequest, (Action<long, string, string>)RPC_RemoteRequest);
+        }
+
+        // ---- client -> server ----
+
+        /// <summary>At the counter when `at` is given, remotely (VIP, F7) when it is null.</summary>
+        internal static bool RequestBalance(DeadcoinShopNpc at) =>
+            at != null ? at.RequestService(ActionBalance, "") : RequestRemote(ActionBalance, "");
+
+        internal static bool RequestBuy(DeadcoinShopNpc at, DeadcoinOffer offer)
+        {
+            if (offer == null) return false;
+            string payload = offer.Prefab + "\n" + offer.Price.ToString(CultureInfo.InvariantCulture);
+            return at != null ? at.RequestService(ActionBuy, payload) : RequestRemote(ActionBuy, payload);
+        }
+
+        private static bool RequestRemote(string action, string payload)
+        {
+            if (ZRoutedRpc.instance == null) return false;
+            ZRoutedRpc.instance.InvokeRoutedRPC(GameApi.GetServerPeerId(), RpcRemoteRequest,
+                new object[] { action, payload ?? "" });
+            return true;
         }
 
         /// <summary>One purchase in flight at a time, as the old Home panel had. The server's
@@ -292,6 +323,173 @@ namespace NpcValheim.Npc
         }
 
         internal static void EndPurchase() => _purchaseSentAt = -PurchaseTimeout;
+
+        // ---- server ----
+
+        /// <summary>
+        /// The counter without an NPC, for the VIP directory (F7).
+        ///
+        /// The directory normally opens an NPC by spawning a hidden copy of it next to the VIP
+        /// player. On a dedicated server that copy does not survive: the server has no player
+        /// of its own, so it only keeps objects instantiated around the world origin, and
+        /// ZNetScene.RemoveObjects destroys anything else on the next frame -- including the
+        /// ZDO, because the copy is non-persistent and server-owned. The counter has no
+        /// per-NPC state to put on a copy, so it does without one. VIP status, checked here on
+        /// the server, is what entitles a player to shop from anywhere.
+        /// </summary>
+        private static void RPC_RemoteRequest(long sender, string action, string payload)
+        {
+            if (ZNet.instance == null || !ZNet.instance.IsServer()) return;
+
+            if (!UI.VipNpcDirectory.SenderIsVip(sender))
+            {
+                // The panel polls, so this would otherwise repeat every few seconds.
+                if (NpcRequestGuard.AllowRate(sender, "deadcoin-remote-denied", 1, 60f))
+                    Plugin.Log.LogWarning($"NpcValheim: remote Deadcoins request '{action}' from non-VIP peer {sender}");
+
+                // Said either way: a VIP the server does not recognise would otherwise sit in
+                // front of "consultando o seu saldo" with no idea why.
+                const string vipOnly = "A loja remota é só para VIP. Compre no NPC.";
+                if (action == ActionBuy) SendRefusal(sender, -1, vipOnly);
+                else SendNotice(sender, vipOnly);
+                return;
+            }
+
+            switch (action)
+            {
+                case ActionBalance:
+                    ServeBalance(sender);
+                    break;
+                case ActionBuy:
+                    ServePurchase(sender, payload ?? "", "VIP remote (F7)");
+                    break;
+                default:
+                    Plugin.Log.LogWarning($"NpcValheim: unknown remote Deadcoins request '{action}' from peer {sender}");
+                    break;
+            }
+        }
+
+        internal static void ServeBalance(long sender)
+        {
+            // The panel asks every few seconds while it is open, so that a donation credited by
+            // hand shows up without reopening it.
+            if (!NpcRequestGuard.AllowRate(sender, "deadcoin-balance", 6, 5f)) return;
+
+            if (!DeadcoinLedger.TryResolveAccount(sender, out string path, out string who))
+            {
+                Plugin.Log.LogWarning($"NpcValheim: no Deadcoins account for peer {sender} ({who})");
+                SendNotice(sender, "O servidor não conseguiu identificar a sua conta.");
+                return;
+            }
+
+            try
+            {
+                DeadcoinLedger.EnsureExists(path);
+                if (!DeadcoinLedger.TryRead(path, out int balance))
+                {
+                    Plugin.Log.LogError($"NpcValheim: Deadcoins balance of {who} is not a number: {path}");
+                    SendNotice(sender, "Seu saldo de Deadcoins está ilegível no servidor. Fale com um admin.");
+                    return;
+                }
+                SendBalance(sender, balance);
+            }
+            catch (Exception e)
+            {
+                Plugin.Log.LogError($"NpcValheim: could not read the Deadcoins balance of {who}: {e.Message}");
+                SendNotice(sender, "Falha ao ler o seu saldo. Tente de novo.");
+            }
+        }
+
+        /// <summary>
+        /// A purchase. `payload` is "prefab\nprice": the item, and the price the buyer's panel
+        /// showed. That price is only compared, never charged.
+        ///
+        /// Every refusal says why, both in the server log and on the buyer's screen, and none of
+        /// them touches the balance. The balance is written before the item is sent, so a
+        /// failed write costs the player nothing. `where` names the way in, for the log.
+        /// </summary>
+        internal static void ServePurchase(long sender, string payload, string where)
+        {
+            Plugin.Log.LogInfo($"NpcValheim: 'deadcoin-buy' from peer {sender} at {where}: \"{payload}\"");
+
+            if (!NpcRequestGuard.AllowRate(sender, "deadcoin-buy", 4, 2f))
+            {
+                Refuse(sender, -1, "the rate limit", "Muitos pedidos seguidos. Espere um instante.");
+                return;
+            }
+
+            var parts = payload.Split('\n');
+            if (parts.Length != 2 || !int.TryParse(parts[1], NumberStyles.Integer,
+                    CultureInfo.InvariantCulture, out int shownPrice))
+            {
+                Refuse(sender, -1, "a malformed request", "Pedido malformado.");
+                return;
+            }
+
+            // The server's own list, read now. Neither the amount nor the price comes from the
+            // client, and a prefab that is not on the list is not for sale at any price.
+            string prefab = parts[0];
+            var offer = DeadcoinCatalog.Current().Find(o => string.Equals(o.Prefab, prefab, StringComparison.Ordinal));
+            if (offer == null)
+            {
+                Refuse(sender, -1, $"'{prefab}' is not on the list", "Este item não está à venda.");
+                return;
+            }
+            if (shownPrice != offer.Price)
+            {
+                Refuse(sender, -1, $"the buyer saw {shownPrice}, the price is {offer.Price}",
+                    $"O preço de {ItemNames.Display(offer.Prefab)} agora é {offer.Price} Deadcoins. Confira e compre de novo.");
+                return;
+            }
+
+            if (!DeadcoinLedger.TryResolveAccount(sender, out string path, out string who))
+            {
+                Refuse(sender, -1, $"no account for {who}", "O servidor não conseguiu identificar a sua conta.");
+                return;
+            }
+
+            int balance, after;
+            try
+            {
+                if (!DeadcoinLedger.TryRead(path, out balance))
+                {
+                    Plugin.Log.LogError($"NpcValheim: Deadcoins balance of {who} is not a number: {path}");
+                    Refuse(sender, -1, "an unreadable balance file",
+                        "Seu saldo de Deadcoins está ilegível no servidor. Fale com um admin.");
+                    return;
+                }
+                if (balance < offer.Price)
+                {
+                    Refuse(sender, balance, $"{who} has {balance}, the price is {offer.Price}",
+                        $"Você não tem Deadcoins suficientes: saldo {balance}, custa {offer.Price}.");
+                    return;
+                }
+
+                after = balance - offer.Price;
+                DeadcoinLedger.Write(path, after);
+            }
+            catch (Exception e)
+            {
+                Plugin.Log.LogError($"NpcValheim: could not charge {who} for {offer.Prefab}: {e.Message}");
+                Refuse(sender, -1, "a ledger error", "Falha ao registrar a compra. Nada foi cobrado.");
+                return;
+            }
+
+            SendDelivery(sender, offer, after);
+            Plugin.Log.LogInfo(
+                $"NpcValheim: {who} bought {offer.Amount}x {offer.Prefab} for {offer.Price} Deadcoins at {where} ({balance} -> {after})");
+
+            // After the delivery on purpose: the purchase has happened either way, and a log
+            // file that cannot be written must not stand between the player and the item.
+            try { DeadcoinLedger.AppendLog(who, offer, balance, after); }
+            catch (Exception e) { Plugin.Log.LogWarning($"NpcValheim: Deadcoins purchase log not written: {e.Message}"); }
+        }
+
+        private static void Refuse(long sender, int balance, string reason, string message)
+        {
+            Plugin.Log.LogWarning($"NpcValheim: refused a Deadcoins purchase from peer {sender}: {reason}");
+            SendRefusal(sender, balance, message);
+        }
 
         // ---- server -> client ----
 

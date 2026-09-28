@@ -312,8 +312,24 @@ foi descontado, e uma resposta endereçada ao NPC se perderia se ele saísse da
 couber cai no chão, como no Mercador.
 
 Não há checagem de distância. Saldo e preço nunca saem do servidor, então estar
-perto do balcão não protege nada. Além disso, o acesso VIP abre o painel num
-proxy que fica 200 m abaixo do jogador, e uma regra de distância recusaria isso.
+perto do balcão não protege nada.
+
+### Pelo F7 (VIP), sem NPC
+
+No diretório VIP, a Loja Deadcoins abre direto, sem a cópia escondida que o F7
+cria para os outros NPCs. O saldo é do jogador e a lista é do servidor, então a
+loja não precisa de NPC nenhum. Os pedidos vão por uma RPC própria
+(`NpcValheim_DeadcoinRemoteRequest`), e o **servidor** confere se quem pediu é
+VIP antes de responder. Um não-VIP que tente comprar por ela recebe "A loja
+remota é só para VIP". No NPC, a compra continua valendo para todo mundo.
+
+Os outros NPCs não funcionam pelo F7 num servidor dedicado, e o motivo não é só
+a distância. A cópia é criada ao lado do jogador VIP, mas o servidor dedicado
+não tem jogador próprio e só mantém instanciados os objetos em volta da origem
+do mapa (`ZNet.GetReferencePosition()` fica em zero). No quadro seguinte o
+`ZNetScene.RemoveObjects` destrói a cópia e, como ela é não persistente e do
+servidor, apaga o ZDO junto. O cliente nunca a recebe e o F7 termina em "O NPC
+remoto não pôde ser carregado".
 
 ## Interface: Unity UI com os assets do próprio Valheim
 
@@ -392,6 +408,10 @@ pressionar **F7** em qualquer lugar do mapa. O servidor envia o catálogo dos NP
 persistidos e o jogador escolhe qual deseja abrir. O painel remoto expõe somente
 as abas de serviço (Loja, Leilão, Correio, Missões, Teleportar e Deadcoins); nunca concede
 as abas Aparência ou Admin. A tecla pode ser alterada em `VIP.NpcMenuKey`.
+
+Hoje, num servidor dedicado, isso só funciona para a Loja Deadcoins, que abre sem
+cópia do NPC. Os outros tipos dependem de uma cópia que o servidor apaga no quadro
+seguinte (veja *Pelo F7 (VIP), sem NPC*).
 
 ### A escalação que existia aqui
 

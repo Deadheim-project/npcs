@@ -20,6 +20,7 @@ namespace NpcValheim.UI
         private Player _player;
         private NpcWindow _window;
         private bool _servicesOnly;
+        private bool _standalone;
 
         public static void EnsureCreated()
         {
@@ -41,6 +42,16 @@ namespace NpcValheim.UI
             _instance.OpenInternal(npc, player, true);
         }
 
+        /// <summary>Opens a single service page that belongs to no NPC (the Deadcoins counter
+        /// from the VIP directory). It stays open until closed, since there is no NPC whose
+        /// disappearance should close it.</summary>
+        internal static void OpenStandalone(string title, string tabLabel, NpcViewBase view, Player player)
+        {
+            if (_instance == null || view == null || player == null) return;
+            _instance.Show(null, player, false, true,
+                () => new NpcWindow(title, tabLabel, view, player, _instance.Close));
+        }
+
         public static void RequestClose() => _instance?.Close();
 
         /// <summary>Showcase-only: steps to the next tab so an off-screen capture can show
@@ -49,7 +60,11 @@ namespace NpcValheim.UI
 
         public static bool IsOpen => _instance != null && _instance._window != null;
 
-        private void OpenInternal(NpcBase npc, Player player, bool servicesOnly)
+        private void OpenInternal(NpcBase npc, Player player, bool servicesOnly) =>
+            Show(npc, player, servicesOnly, false, () => new NpcWindow(npc, player, Close, servicesOnly));
+
+        private void Show(NpcBase npc, Player player, bool servicesOnly, bool standalone,
+            System.Func<NpcWindow> build)
         {
             // Assets live in the game's UI scene; if they are not up yet there is nothing to
             // build a Valheim-looking window out of, and a half-styled one is worse than
@@ -64,7 +79,8 @@ namespace NpcValheim.UI
             _npc = npc;
             _player = player;
             _servicesOnly = servicesOnly;
-            _window = new NpcWindow(npc, player, Close, servicesOnly);
+            _standalone = standalone;
+            _window = build();
 
             if (!_window.Alive)
             {
@@ -84,6 +100,7 @@ namespace NpcValheim.UI
             _window = null;
             _npc = null;
             _servicesOnly = false;
+            _standalone = false;
             UiInputBlocker.IsOpen = false;
             ReleaseCursor();
             if (closingRemote) VipNpcDirectory.ReleaseRemoteProxy();
@@ -108,7 +125,7 @@ namespace NpcValheim.UI
 
             // The NPC can be destroyed or unloaded while the panel is open -- Unity's == null
             // is true for destroyed objects, so this catches it.
-            if (_window != null && _npc == null) Close();
+            if (_window != null && _npc == null && !_standalone) Close();
             if (_window != null && Input.GetKeyDown(KeyCode.Escape)) Close();
 
             _window?.Refresh(_npc);

@@ -32,6 +32,25 @@ namespace NpcValheim.UI
         public bool Alive => _canvas != null;
 
         public NpcWindow(NpcBase npc, Player player, System.Action onClose, bool servicesOnly = false)
+            : this(npc.GetHoverName(), onClose)
+        {
+            if (_canvas == null) return;
+            BuildTabs(npc, player, servicesOnly);
+            SetActive(0);
+        }
+
+        /// <summary>A single service page that belongs to no NPC -- the Deadcoins counter opened
+        /// from the VIP directory. Same frame, same status line, no Admin or Appearance tabs,
+        /// because there is no NPC for them to act on.</summary>
+        internal NpcWindow(string title, string tabLabel, NpcViewBase view, Player player, System.Action onClose)
+            : this(title, onClose)
+        {
+            if (_canvas == null) return;
+            AddTab(tabLabel, view, null, player);
+            SetActive(0);
+        }
+
+        private NpcWindow(string title, System.Action onClose)
         {
             _canvas = ValheimUi.CreateCanvas("NpcValheim_Window", 5000);
             if (_canvas == null) return;
@@ -47,7 +66,7 @@ namespace NpcValheim.UI
             titleBar.gameObject.AddComponent<Image>().color = new Color(0f, 0f, 0f, 0f); // raycast target only
             titleBar.gameObject.AddComponent<DragWindow>().Target = _panel;
 
-            _title = ValheimUi.CreateLabel(titleBar, npc.GetHoverName(), 30, ValheimUi.Orange,
+            _title = ValheimUi.CreateLabel(titleBar, title, 30, ValheimUi.Orange,
                 TextAlignmentOptions.Center, display: true);
             ValheimUi.Stretch((RectTransform)_title.transform, 60f, 10f);
 
@@ -76,9 +95,6 @@ namespace NpcValheim.UI
             _status = ValheimUi.CreateLabel(_panel, "", 15, ValheimUi.Yellow, TextAlignmentOptions.Left);
             ValheimUi.Anchor((RectTransform)_status.transform, new Vector2(0f, 0f), new Vector2(1f, 0f),
                 new Vector2(26f, 14f), new Vector2(-26f, 44f));
-
-            BuildTabs(npc, player, servicesOnly);
-            SetActive(0);
         }
 
         private void BuildTabs(NpcBase npc, Player player, bool servicesOnly)

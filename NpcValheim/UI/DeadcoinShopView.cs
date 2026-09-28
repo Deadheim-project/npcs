@@ -13,11 +13,15 @@ namespace NpcValheim.UI
     /// The balance shown is the server's, asked for when the tab opens and every few seconds
     /// after that. The ledger is a file on the server that an admin edits by hand when a
     /// donation arrives, and nothing tells the client when that happens.
+    ///
+    /// Hosted two ways: as the tab of a DeadcoinShopNpc, or on its own from the VIP directory
+    /// (F7), where there is no NPC and <see cref="Shop"/> is null. The requests follow suit.
     /// </summary>
     internal sealed class DeadcoinShopView : NpcViewBase
     {
         private const float PollSeconds = 5f;
 
+        /// <summary>The NPC this counter was opened at, or null when opened remotely.</summary>
         private DeadcoinShopNpc Shop => Npc as DeadcoinShopNpc;
 
         private TextMeshProUGUI _balance;
@@ -28,10 +32,16 @@ namespace NpcValheim.UI
         private int _offerCount;
         private int _seenMessage;
         private float _nextPoll;
+        private bool _remote;
         private readonly List<GameObject> _rows = new List<GameObject>();
 
         protected override void OnBuild()
         {
+            // Decided once, by reference: an NPC destroyed while the panel is open also compares
+            // equal to null under Unity's operator, and must not quietly turn this into a remote
+            // counter.
+            _remote = ReferenceEquals(Npc, null);
+
             _balance = ValheimUi.CreateLabel(Root, "", 18, ValheimUi.Yellow, TextAlignmentOptions.Center);
             ValheimUi.Anchor((RectTransform)_balance.transform, new Vector2(0f, 1f), new Vector2(1f, 1f),
                 new Vector2(0f, -30f), new Vector2(0f, 0f));
@@ -59,13 +69,13 @@ namespace NpcValheim.UI
 
         public override void Refresh()
         {
-            var shop = Shop;
-            if (shop == null) return;
+            var shop = _remote ? null : Shop;
+            if (!_remote && shop == null) return;
 
             if (Time.unscaledTime >= _nextPoll)
             {
                 _nextPoll = Time.unscaledTime + PollSeconds;
-                shop.RequestBalance();
+                DeadcoinShop.RequestBalance(shop);
             }
 
             _balance.text = DeadcoinShop.Balance < 0
@@ -127,7 +137,7 @@ namespace NpcValheim.UI
                 return;
             }
 
-            if (shop.RequestBuy(offer))
+            if (DeadcoinShop.RequestBuy(shop, offer))
             {
                 Say($"Comprando {offer.Amount}x {ItemNames.Display(offer.Prefab)}...");
                 return;

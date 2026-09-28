@@ -167,7 +167,7 @@ namespace NpcValheim.UI
             }
         }
 
-        private static bool SenderIsVip(long sender)
+        internal static bool SenderIsVip(long sender)
         {
             string platformId = GameApi.GetPlatformUserId(sender);
             if (VipList.VipListApi.IsVip(platformId)) return true;
@@ -223,7 +223,11 @@ namespace NpcValheim.UI
 
                 var open = ValheimUi.CreateButton(row, "Abrir", 130f, 42f, 16);
                 string profileId = entry.ProfileId;
-                open.onClick.AddListener(() => RequestOpen(profileId));
+                string name = entry.Name;
+                if (entry.Type == "DeadcoinShop")
+                    open.onClick.AddListener(() => OpenDeadcoins(name));
+                else
+                    open.onClick.AddListener(() => RequestOpen(profileId));
             }
 
             if (_empty != null)
@@ -231,6 +235,23 @@ namespace NpcValheim.UI
                 _empty.gameObject.SetActive(_entries.Count == 0);
                 _empty.text = "Nenhum NPC persistido foi encontrado no servidor.";
             }
+        }
+
+        /// <summary>
+        /// The Deadcoins counter opens at once, without the hidden copy RequestOpen spawns.
+        ///
+        /// That copy is what fails on a dedicated server: it is created next to the VIP, the
+        /// server only keeps objects instantiated around the world origin, and the next
+        /// ZNetScene.RemoveObjects destroys it -- ZDO included, since it is non-persistent and
+        /// server-owned -- before this client ever sees it. The counter keeps nothing on its
+        /// NPC, so it needs no copy; its requests go straight to the server, which checks VIP
+        /// status itself (DeadcoinShop.RPC_RemoteRequest).
+        /// </summary>
+        private void OpenDeadcoins(string title)
+        {
+            Close();
+            UiRoot.OpenStandalone(string.IsNullOrWhiteSpace(title) ? "Loja Deadcoins" : title,
+                "Deadcoins", new DeadcoinShopView(), Player.m_localPlayer);
         }
 
         private void RequestOpen(string profileId)
@@ -333,7 +354,7 @@ namespace NpcValheim.UI
             "Auction" => "NpcValheim_Auction",
             "Mailbox" => "NpcValheim_Mailbox",
             "QuestGiver" => "NpcValheim_QuestGiver",
-            "DeadcoinShop" => "NpcValheim_DeadcoinShop",
+            // DeadcoinShop is absent on purpose: it opens without a proxy (OpenDeadcoins).
             _ => string.Empty,
         };
 
