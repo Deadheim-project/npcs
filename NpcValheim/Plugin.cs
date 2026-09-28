@@ -15,7 +15,7 @@ namespace NpcValheim
     {
         public const string Guid = "com.npcvalheim.mod";
         public const string Name = "NpcValheim";
-        public const string Version = "0.1.50";
+        public const string Version = "0.1.51";
 
         internal static ManualLogSource Log;
         private Harmony _harmony;
@@ -59,6 +59,7 @@ namespace NpcValheim
         internal static ConfigEntry<int> TeleportCostAmount;
         internal static ConfigEntry<float> TeleportCooldownSeconds;
         internal static ConfigEntry<int> ListingDurationHours;
+        internal static ConfigEntry<string> DeadcoinShopItems;
         internal static ConfigEntry<UnityEngine.KeyCode> QuestJournalKey;
         internal static ConfigEntry<UnityEngine.KeyCode> VipNpcMenuKey;
         internal static ConfigEntry<bool> ShowQuestButton;
@@ -117,12 +118,21 @@ namespace NpcValheim
             ListingDurationHours = Config.Bind("Marketplace", "ListingDurationHours", 48,
                 "How long a listing stays up before it expires and the unsold stock is mailed back to the seller.");
 
+            // Same text as the ShopItems line of the retired DonationShop mod, so the server's
+            // value can be pasted in as it is. Synchronized for display only: the server reads
+            // its own copy on every purchase and never takes a price from the client.
+            DeadcoinShopItems = Config.Bind("DeadcoinShop", "Items", Npc.DeadcoinCatalog.DefaultItems,
+                "What the Deadcoins NPC sells: prefab=<item>;amount=<units per purchase>;price=<Deadcoins>, " +
+                "entries separated by |. Entries with a non-positive amount or price, or an unknown item, are skipped and named in the log. " +
+                "Balances live in BepInEx/config/DonationShop/<player>-<account>.json, as they did with DonationShop.");
+
             // Server-authoritative entries. The Quests/VIP keys and HUD positions are left out
             // on purpose: they are each player's own preferences.
             ConfigSync.AddConfigEntry(TeleportCostItem).SynchronizedConfig = true;
             ConfigSync.AddConfigEntry(TeleportCostAmount).SynchronizedConfig = true;
             ConfigSync.AddConfigEntry(TeleportCooldownSeconds).SynchronizedConfig = true;
             ConfigSync.AddConfigEntry(ListingDurationHours).SynchronizedConfig = true;
+            ConfigSync.AddConfigEntry(DeadcoinShopItems).SynchronizedConfig = true;
 
             // Everything above is read where it is used (a new teleporter, a new listing, the
             // HUD every frame), so a reload takes effect on its own. The HUD offsets are the

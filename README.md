@@ -269,6 +269,52 @@ calculado em `long`, checado contra a faixa e recusado fora dela
 fazia isso certo; a compra pelo NPC, que escrevi depois, não. Travado por 4
 verificações na suíte.
 
+## Loja Deadcoins (substitui o mod DonationShop)
+
+NPC colocável **Loja Deadcoins** (`DeadcoinShopNpc`, prefab
+`NpcValheim_DeadcoinShop`) que vende itens pela moeda de doação. Ocupa o lugar do
+mod DonationShop e do painel que abria com **Home**: aquele mod sai do modpack
+quando esta versão entrar.
+
+- **Lista:** `[DeadcoinShop] Items` no cfg do NpcValheim, no mesmo formato do
+  `ShopItems` antigo (`prefab=Wood;amount=50;price=100|...`). Dá para colar o
+  valor do servidor como está. Entrada com quantidade ou preço não positivo, ou
+  com item que o jogo não conhece, é ignorada e aparece no log. A primeira
+  entrada do default antigo (`prefabs=Blueberriesamount=50;...`) nunca foi
+  válida e é justamente o caso que o log aponta.
+- **Saldos:** continuam em `BepInEx/config/DonationShop/<nome>-<conta>.json`,
+  um número por arquivo. Os saldos que já existem passam sem migração, e doação
+  continua sendo creditada editando esses arquivos. O arquivo (com `0`) aparece
+  na primeira vez que o jogador abre a loja, que é como o admin descobre o nome
+  exato. Arquivo inexistente vale 0; arquivo que não contém um número faz a
+  compra ser recusada, em vez de ser sobrescrito.
+- **Log:** `BepInEx/config/DonationShop/log/log.txt`, uma linha por compra com
+  data, conta, item e o saldo antes e depois.
+
+### O que o DonationShop confiava ao cliente
+
+O cliente mandava `preço,quantidade,prefab,conta` e o servidor só conferia
+`preço <= saldo`. Então um cliente modificado podia mandar preço negativo (o
+saldo **subia**), preço 0 (item de graça), qualquer prefab do jogo, qualquer
+quantidade, e a conta de outro jogador.
+
+Agora o cliente manda só o item e o preço que a tela mostrou. Esse preço só é
+comparado, nunca cobrado: se o admin mudou o preço, a compra é recusada em vez
+de cobrar um valor que o jogador não viu. Quantidade e preço vêm da lista do
+**servidor**, relida a cada compra, então salvar o cfg com o servidor ligado já
+vale para o próximo clique. A conta é derivada da própria conexão:
+`Steam_<SteamID>`, o mesmo formato que o `PlayFabManager.m_customId` gerava para
+o nome dos arquivos antigos.
+
+A resposta vai para o **jogador**, não para o NPC. Quando ela chega, o saldo já
+foi descontado, e uma resposta endereçada ao NPC se perderia se ele saísse da
+área carregada do cliente nesse meio-tempo. O item cai na bolsa, e o que não
+couber cai no chão, como no Mercador.
+
+Não há checagem de distância. Saldo e preço nunca saem do servidor, então estar
+perto do balcão não protege nada. Além disso, o acesso VIP abre o painel num
+proxy que fica 200 m abaixo do jogador, e uma regra de distância recusaria isso.
+
 ## Interface: Unity UI com os assets do próprio Valheim
 
 O painel era IMGUI (`OnGUI`) e agora é Unity UI (uGUI), construído em
@@ -331,7 +377,7 @@ pura justamente pra que os dois lados decidam pelo mesmo código:
 
 | Quem | Abas visíveis |
 |---|---|
-| Visitante | só a aba de serviço (Mercado / Correio / Missões / Teleportar) |
+| Visitante | só a aba de serviço (Mercado / Correio / Missões / Teleportar / Deadcoins) |
 | Dono do NPC | + Aparência + Admin |
 | Admin do servidor | + Aparência + Admin, em qualquer NPC |
 
@@ -344,7 +390,7 @@ aceitar/entregar missões funcionam para qualquer jogador. A permissão governa
 Com `VipList.dll` instalado, um jogador presente em `Detalhes.VipList.cfg` pode
 pressionar **F7** em qualquer lugar do mapa. O servidor envia o catálogo dos NPCs
 persistidos e o jogador escolhe qual deseja abrir. O painel remoto expõe somente
-as abas de serviço (Loja, Leilão, Correio, Missões e Teleportar); nunca concede
+as abas de serviço (Loja, Leilão, Correio, Missões, Teleportar e Deadcoins); nunca concede
 as abas Aparência ou Admin. A tecla pode ser alterada em `VIP.NpcMenuKey`.
 
 ### A escalação que existia aqui

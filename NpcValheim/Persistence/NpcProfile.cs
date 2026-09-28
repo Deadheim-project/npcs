@@ -31,7 +31,8 @@ namespace NpcValheim.Persistence
 
         /// <summary>
         /// Which kind of NPC this profile was made for -- "Marketplace", "Auction",
-        /// "Teleporter", "Mailbox", "QuestGiver", or empty for one that suits any of them.
+        /// "Teleporter", "Mailbox", "QuestGiver", "DeadcoinShop", or empty for one that suits
+        /// any of them.
         ///
         /// Without it the admin panel offered every saved template to every NPC, so applying
         /// a travel network to a merchant was one wrong click away. A look can be shared; a

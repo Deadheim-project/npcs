@@ -99,6 +99,9 @@ namespace NpcValheim.UI
                 case QuestGiverNpc _:
                     AddTab("Missões", new QuestView(), npc, player);
                     break;
+                case DeadcoinShopNpc _:
+                    AddTab("Deadcoins", new DeadcoinShopView(), npc, player);
+                    break;
                 // A marketplace NPC decides for itself which side of the economy it runs. The
                 // auction house and the merchant are different NPCs now, so nobody has to work
                 // out who they are trading with from which tab happens to be open.

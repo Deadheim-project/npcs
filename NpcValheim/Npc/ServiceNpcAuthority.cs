@@ -41,6 +41,7 @@ namespace NpcValheim.Npc
             "NpcValheim_Auction",
             "NpcValheim_Mailbox",
             "NpcValheim_QuestGiver",
+            "NpcValheim_DeadcoinShop",
         };
 
         private static readonly HashSet<ZDOID> ProcessedStubs = new HashSet<ZDOID>();
@@ -62,6 +63,7 @@ namespace NpcValheim.Npc
             rpc.Register<ZPackage>(RpcQuestPlayerResponse, RPC_QuestPlayerResponse);
             rpc.Register(RpcConsumeStub, (Action<long, ZDOID>)RPC_ConsumeStub);
             rpc.Register(RpcStatus, (Action<long, string>)RPC_Status);
+            DeadcoinShop.Register(rpc);
             Plugin.Log.LogInfo("NpcValheim: server-authoritative service NPC RPCs registered");
         }
 

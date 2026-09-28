@@ -333,6 +333,7 @@ namespace NpcValheim.UI
             "Auction" => "NpcValheim_Auction",
             "Mailbox" => "NpcValheim_Mailbox",
             "QuestGiver" => "NpcValheim_QuestGiver",
+            "DeadcoinShop" => "NpcValheim_DeadcoinShop",
             _ => string.Empty,
         };
 
@@ -343,6 +344,7 @@ namespace NpcValheim.UI
             "Auction" => "Leilão",
             "Mailbox" => "Correio",
             "QuestGiver" => "Missões",
+            "DeadcoinShop" => "Loja Deadcoins",
             _ => type,
         };
 
