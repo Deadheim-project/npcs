@@ -327,21 +327,18 @@ namespace NpcValheim.Npc
         // ---- server ----
 
         /// <summary>
-        /// The counter without an NPC, for the VIP directory (F7).
+        /// The counter without an NPC, for VIPs pressing F7 (UI/VipShopShortcut). This is the
+        /// only thing in the mod that can be used from anywhere; every other NPC has to be
+        /// visited.
         ///
-        /// The directory normally opens an NPC by spawning a hidden copy of it next to the VIP
-        /// player. On a dedicated server that copy does not survive: the server has no player
-        /// of its own, so it only keeps objects instantiated around the world origin, and
-        /// ZNetScene.RemoveObjects destroys anything else on the next frame -- including the
-        /// ZDO, because the copy is non-persistent and server-owned. The counter has no
-        /// per-NPC state to put on a copy, so it does without one. VIP status, checked here on
-        /// the server, is what entitles a player to shop from anywhere.
+        /// VIP status, checked here on the server, is what entitles a player to it. The client
+        /// only hides the key from non-VIPs, and a hidden key is not a boundary.
         /// </summary>
         private static void RPC_RemoteRequest(long sender, string action, string payload)
         {
             if (ZNet.instance == null || !ZNet.instance.IsServer()) return;
 
-            if (!UI.VipNpcDirectory.SenderIsVip(sender))
+            if (!UI.VipShopShortcut.SenderIsVip(sender))
             {
                 // The panel polls, so this would otherwise repeat every few seconds.
                 if (NpcRequestGuard.AllowRate(sender, "deadcoin-remote-denied", 1, 60f))

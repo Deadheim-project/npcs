@@ -61,7 +61,7 @@ namespace NpcValheim
         internal static ConfigEntry<int> ListingDurationHours;
         internal static ConfigEntry<string> DeadcoinShopItems;
         internal static ConfigEntry<UnityEngine.KeyCode> QuestJournalKey;
-        internal static ConfigEntry<UnityEngine.KeyCode> VipNpcMenuKey;
+        internal static ConfigEntry<UnityEngine.KeyCode> VipShopKey;
         internal static ConfigEntry<bool> ShowQuestButton;
         internal static ConfigEntry<bool> ShowQuestTracker;
         internal static ConfigEntry<float> QuestTrackerX;
@@ -96,8 +96,8 @@ namespace NpcValheim
             QuestJournalKey = Config.Bind("Quests", "JournalKey", UnityEngine.KeyCode.J,
                 "Opens the player's quest journal from anywhere in the world.");
 
-            VipNpcMenuKey = Config.Bind("VIP", "NpcMenuKey", UnityEngine.KeyCode.F7,
-                "VIP-only shortcut that opens the server-wide NPC directory from anywhere in the world.");
+            VipShopKey = Config.Bind("VIP", "ShopKey", UnityEngine.KeyCode.F7,
+                "VIP-only shortcut that opens the Deadcoins shop from anywhere in the world. It opens nothing else.");
 
             ShowQuestTracker = Config.Bind("Quests", "ShowTracker", true,
                 "Shows the on-screen objective tracker: what you are doing and how far along, without opening a menu.");
@@ -164,7 +164,7 @@ namespace NpcValheim
                 UI.QuestMapPins.EnsureCreated();
                 UI.QuestHudButton.EnsureCreated();
                 UI.QuestTracker.EnsureCreated();
-                UI.VipNpcDirectory.EnsureCreated();
+                UI.VipShopShortcut.EnsureCreated();
             }
 
             _harmony = new Harmony(Guid);

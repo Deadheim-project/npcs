@@ -31,17 +31,17 @@ namespace NpcValheim.UI
 
         public bool Alive => _canvas != null;
 
-        public NpcWindow(NpcBase npc, Player player, System.Action onClose, bool servicesOnly = false)
+        public NpcWindow(NpcBase npc, Player player, System.Action onClose)
             : this(npc.GetHoverName(), onClose)
         {
             if (_canvas == null) return;
-            BuildTabs(npc, player, servicesOnly);
+            BuildTabs(npc, player);
             SetActive(0);
         }
 
         /// <summary>A single service page that belongs to no NPC -- the Deadcoins counter opened
-        /// from the VIP directory. Same frame, same status line, no Admin or Appearance tabs,
-        /// because there is no NPC for them to act on.</summary>
+        /// with the VIP key. Same frame, same status line, no Admin or Appearance tabs, because
+        /// there is no NPC for them to act on.</summary>
         internal NpcWindow(string title, string tabLabel, NpcViewBase view, Player player, System.Action onClose)
             : this(title, onClose)
         {
@@ -97,7 +97,7 @@ namespace NpcValheim.UI
                 new Vector2(26f, 14f), new Vector2(-26f, 44f));
         }
 
-        private void BuildTabs(NpcBase npc, Player player, bool servicesOnly)
+        private void BuildTabs(NpcBase npc, Player player)
         {
             // A marketplace does two distinct jobs -- trading with other players, and trading
             // with the merchant himself -- so it gets a tab for each rather than cramming
@@ -130,7 +130,7 @@ namespace NpcValheim.UI
                     break;
             }
 
-            bool canAdminister = !servicesOnly && npc.CanLocalPlayerAdminister();
+            bool canAdminister = npc.CanLocalPlayerAdminister();
             Plugin.Log.LogInfo(
                 $"NpcValheim UI: admin gate for '{npc.GetHoverName()}' -- " +
                 $"vanilla={ZNet.instance != null && ZNet.instance.LocalPlayerIsAdminOrHost()} " +
