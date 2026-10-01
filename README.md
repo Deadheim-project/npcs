@@ -269,6 +269,53 @@ calculado em `long`, checado contra a faixa e recusado fora dela
 fazia isso certo; a compra pelo NPC, que escrevi depois, não. Travado por 4
 verificações na suíte.
 
+### Reembolso pago com a palavra do cliente
+
+Comprar no balcão ou no leilão funciona assim: o cliente tira as moedas da
+própria bolsa e manda `quantidade;pago`. O servidor não enxerga o inventário de
+quem está conectado, então `pago` é só a palavra do cliente — e o servidor
+devolvia essa palavra em moedas de verdade: tudo, se o item não estava à venda;
+a diferença como "Troco", se passava do preço. Um cliente modificado mandava
+`pago = 2.000.000.000` por um item de 1 moeda e recebia ~2 bilhões.
+
+Limitar o reembolso ao preço não fecharia o buraco: "pagamento insuficiente"
+também reembolsava, e alegar uma moeda a menos do que custam 2.000 unidades a
+1.000.000 devolvia quase 2 bilhões a cada clique. A regra agora é **nunca devolver mais
+do que um cliente honesto pagou**, contado com os números do servidor:
+
+- **Balcão do Mercador** (`RPC_BuyFromNpc`): não devolve moeda nenhuma. A compra
+  fecha pelo preço que o jogador viu — o atual, ou um que o balcão mostrou no
+  último minuto, para o caso de o admin trocar ou tirar o preço entre o clique e
+  o pedido chegar (`MarketplaceNpc.ClosingPrice`). Pagou o preço atual ou mais:
+  leva o item, sem troco. Pagou exatamente o que a quantidade custava num preço
+  recente: leva pelo preço que viu. Qualquer outro valor não é algo que o
+  cliente do mod mande; não entrega nem devolve nada, e fica um aviso no log do
+  servidor.
+- **Leilão** (`MarketDatabase.Buy`): o preço de um anúncio nunca muda, então o
+  comprador honesto paga exatamente o preço e não existe troco. A única recusa
+  que ele pode encontrar é o anúncio sair do quadro antes do pedido chegar
+  (vendido, cancelado ou expirado) — o quadro só atualiza quando o painel abre
+  ou depois de uma ação, então isso pode acontecer minutos depois. Aí o servidor
+  devolve o **preço do anúncio**, nunca o valor alegado, por no máximo tantas
+  unidades quantas o anúncio foi publicado, somando todos os cliques daquele
+  comprador: quem apertou "Comprar 1" três vezes num quadro velho recebe as três
+  de volta, e repetir a alegação não passa do valor do anúncio. Nada volta para o
+  próprio vendedor. As outras recusas (anúncio de outro mercado, o próprio
+  anúncio, quantidade além do estoque, pagamento menor que o preço) não devolvem
+  nada. Anúncio expirado sai do quadro já no vencimento, sem esperar a
+  varredura.
+
+O formato de rede não mudou (`quantidade;pago` continua igual), e o cliente
+honesto não percebe diferença fora dessas corridas com o admin ou com outro
+comprador. O servidor continua sem poder confirmar que as moedas saíram da
+bolsa; isso só fecha com o saldo guardado no servidor, como faz a Loja
+Deadcoins.
+
+Travado em `tools/checks`: no `wire`, os preços pelos quais uma compra fecha e
+uma leitura do IL de `RPC_BuyFromNpc` provando que não sobrou nenhum pagamento
+de moedas nele; no `content`, os reembolsos do leilão contra o LiteDB de
+verdade, incluindo a alegação de 2 bilhões.
+
 ## Loja Deadcoins (substitui o mod DonationShop)
 
 NPC colocável **Loja Deadcoins** (`DeadcoinShopNpc`, prefab

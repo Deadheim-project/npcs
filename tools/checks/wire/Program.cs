@@ -91,13 +91,51 @@ class Program
         (string)Ledger.GetMethod("FileNameFor", BindingFlags.NonPublic | BindingFlags.Static)
                       .Invoke(null, new object[] { playerName, accountId });
 
+    static readonly Type Merchant = typeof(MarketplaceNpc);
+
+    static int ClosingPrice(int paid, int amount, int currentPrice, params int[] shown) =>
+        (int)Merchant.GetMethod("ClosingPrice", BindingFlags.NonPublic | BindingFlags.Static)
+                     .Invoke(null, new object[] { paid, amount, currentPrice, shown });
+
+    static readonly Type ShownPricesType = typeof(MarketplaceNpc).Assembly.GetType("NpcValheim.Npc.ShownPrices");
+
+    /// <summary>
+    /// Whether a method's own body calls `methodName` or loads the string `literal`, read
+    /// straight from its IL. Not a disassembler: every byte is tried as the start of a call or
+    /// ldstr, and a token only counts when it resolves to exactly the thing asked for -- so it
+    /// can miss nothing that is there, and four random bytes resolving to precisely that
+    /// method or string is not a coincidence worth planning for.
+    /// </summary>
+    static bool BodyReaches(Type owner, string method, string methodName, string literal)
+    {
+        var info = owner.GetMethod(method, BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static);
+        var il = info?.GetMethodBody()?.GetILAsByteArray();
+        if (il == null) throw new InvalidOperationException(owner.Name + "." + method + " has no body to read");
+
+        var module = info.Module;
+        for (int i = 0; i + 4 < il.Length; i++)
+        {
+            int token = BitConverter.ToInt32(il, i + 1);
+            try
+            {
+                if ((il[i] == 0x28 || il[i] == 0x6F) && module.ResolveMethod(token).Name == methodName) return true;
+                if (il[i] == 0x72 && module.ResolveString(token) == literal) return true;
+            }
+            // A token that does not resolve here -- not a method, or a member of a game
+            // assembly this harness does not carry -- is not the call being looked for. The
+            // positive controls in Main prove real ones are still found.
+            catch (Exception e) when (!(e is OutOfMemoryException)) { }
+        }
+        return false;
+    }
+
     /// <summary>Whether this NPC type answers server-decided requests itself, rather than
     /// inheriting NpcBase's refusal.</summary>
     static bool HandlesOnServer(Type npc, string dispatcher) =>
         npc.GetMethod(dispatcher, BindingFlags.NonPublic | BindingFlags.Instance)
            ?.DeclaringType == npc;
 
-    static void Main()
+    static int Main()
     {
         GiveTheModALogger();
 
@@ -317,6 +355,65 @@ class Program
         Check("a missing part is refused", FileNameFor("", "Steam_1") == null && FileNameFor("Ragnar", "") == null);
 
         System.Console.WriteLine();
+        System.Console.WriteLine("== merchant counter: what the client says it paid ==");
+
+        // The live hole: "amount;paid" is the client's own word, and the counter used to pay
+        // it back -- in full for an item not for sale, as change above the price otherwise.
+        Check("a 2e9 claim for a 1-coin item buys the item at 1",
+              ClosingPrice(2000000000, 1, 1) == 1);
+        Check("a 2e9 claim for an item that is not for sale buys nothing",
+              ClosingPrice(2000000000, 1, 0) == 0);
+        // What capping the refund at the price would have left open: 2000 units at the
+        // 1,000,000 ceiling cost 2e9, and one coin short used to come back almost whole.
+        Check("one coin short of an expensive stack buys nothing",
+              ClosingPrice(1999999999, 2000, 1000000) == 0);
+        Check("an honest payment at the posted price buys",
+              ClosingPrice(50, 10, 5) == 5);
+
+        // The race the old refund existed for: the admin changes the price between the
+        // client reading it and the request landing. The buyer gets the goods at the price
+        // they paid, instead of coins.
+        Check("a price raised a moment ago still sells at the one the buyer saw",
+              ClosingPrice(10, 10, 2, 1) == 1);
+        Check("an item removed a moment ago still sells at the price the buyer saw",
+              ClosingPrice(50, 5, 0, 10) == 10);
+        Check("a recent price counts only for exactly what the amount costs at it",
+              ClosingPrice(49, 5, 0, 10) == 0 && ClosingPrice(51, 5, 0, 10) == 0);
+        Check("a claim that matches no price the counter showed buys nothing",
+              ClosingPrice(7, 10, 2, 1, 3) == 0);
+        Check("a free or negative claim never buys a removed item",
+              ClosingPrice(0, 1, 0, 0) == 0 && ClosingPrice(-5, 1, 0, -5) == 0);
+        // 50000 x 100000 wraps to +705,032,704 in int; PayoutFor refuses it on both paths.
+        Check("an overflowing stack is no price, current or recent",
+              ClosingPrice(705032704, 50000, 100000, 100000) == 0);
+
+        var shownPrices = Activator.CreateInstance(ShownPricesType, nonPublic: true);
+        var remember = ShownPricesType.GetMethod("Remember");
+        var pricesFor = ShownPricesType.GetMethod("For");
+        remember.Invoke(shownPrices, new object[] { new Dictionary<string, int> { { "Wood", 3 }, { "Stone", 0 } }, 60f });
+        remember.Invoke(shownPrices, new object[] { new Dictionary<string, int> { { "Wood", 5 } }, 90f });
+        var woodAt30 = (List<int>)pricesFor.Invoke(shownPrices, new object[] { "Wood", 30f });
+        var woodAt75 = (List<int>)pricesFor.Invoke(shownPrices, new object[] { "Wood", 75f });
+        var woodAt91 = (List<int>)pricesFor.Invoke(shownPrices, new object[] { "Wood", 91f });
+        Check("every price a counter showed is honoured inside its window",
+              woodAt30.Count == 2 && woodAt30.Contains(3) && woodAt30.Contains(5), string.Join(",", woodAt30));
+        Check("and each one stops being honoured when its window ends",
+              woodAt75.Count == 1 && woodAt75[0] == 5 && woodAt91.Count == 0, string.Join(",", woodAt75));
+        Check("a price of zero is never remembered as one somebody paid",
+              ((List<int>)pricesFor.Invoke(shownPrices, new object[] { "Stone", 0f })).Count == 0);
+
+        // Structural: the purchase path has no coin payout left in it at all. The two
+        // positive controls make sure the IL reader is actually finding calls and strings.
+        Check("the reader sees the auction's refund call (control)",
+              BodyReaches(Merchant, "RPC_Buy", "Refund", null));
+        Check("the reader sees the payout string in a sale to the NPC (control)",
+              BodyReaches(Merchant, "RPC_SellToNpc", null, "RPC_Paid"));
+        Check("buying from the counter can no longer pay coins back",
+              !BodyReaches(Merchant, "RPC_BuyFromNpc", "Refund", "RPC_Paid") &&
+              !BodyReaches(Merchant, "RPC_BuyFromNpc", "GiveCoins", null));
+
+        System.Console.WriteLine();
         System.Console.WriteLine(failed == 0 ? $"ALL {passed} CHECKS PASSED" : $"{failed} FAILED, {passed} passed");
+        return failed == 0 ? 0 : 1;
     }
 }
