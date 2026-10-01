@@ -1807,7 +1807,7 @@ namespace NpcValheim.Arena
                          .OrderByDescending(t => t.Rating).ThenBy(t => t.Name, StringComparer.OrdinalIgnoreCase).Take(100))
                 rows.Add(Record("T", I(RankOf(team)), team.Name, I(team.Rating), I(team.SeasonGames), I(team.SeasonWins),
                     I(team.Id), team.Member(playerId) != null ? "1" : "0"));
-            _host.Send(playerId, Ladder, Lines(rows));
+            _host.Send(playerId, ArenaWire.Ladder, Lines(rows));
         }
 
         /// <summary>Everything one player's arena panel draws, in one message.</summary>
