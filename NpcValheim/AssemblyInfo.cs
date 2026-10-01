@@ -7,3 +7,5 @@ using System.Runtime.CompilerServices;
 [assembly: InternalsVisibleTo("NpcValheim.Server")]
 // The arena engine is checked outside the game against a fake server (tools/checks/arena).
 [assembly: InternalsVisibleTo("arenacheck")]
+// ...and in the game, by two real clients driven by tools/arena-e2e. Never shipped to players.
+[assembly: InternalsVisibleTo("ArenaTestDriver")]
