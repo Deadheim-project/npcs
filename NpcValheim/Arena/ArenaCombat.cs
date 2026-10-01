@@ -16,7 +16,11 @@ namespace NpcValheim.Arena
     /// </summary>
     internal static class ArenaCombat
     {
-        private static readonly int PlayerPrefab = "Player".GetStableHashCode();
+        private static int _playerPrefab;
+
+        /// <summary>Lazy, so the rule above can be checked outside the game, where the
+        /// assembly that hashes names is not loaded.</summary>
+        private static int PlayerPrefab => _playerPrefab != 0 ? _playerPrefab : _playerPrefab = "Player".GetStableHashCode();
 
         /// <summary>The rule itself, on plain values so the checks can run it.</summary>
         internal static bool Forbidden(long attackerMatch, int attackerSide, int attackerPhase,
