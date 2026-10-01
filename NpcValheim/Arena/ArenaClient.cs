@@ -47,6 +47,8 @@ namespace NpcValheim.Arena
         internal static int Side { get; private set; }
         internal static int Phase { get; private set; }
         internal static string MapName { get; private set; }
+        /// <summary>How many times the gates pulled this player back (for the in-game test).</summary>
+        internal static int GatePulls { get; private set; }
         private static Vector3 _spawn;
         private static float _spawnYaw;
         private static float _gateRadius = 6f;
@@ -324,9 +326,15 @@ namespace NpcValheim.Arena
 
             var back = _spawn + (new Vector3(flat.x, 0f, flat.y).normalized * Mathf.Max(0f, _gateRadius - 1f));
             back.y = Mathf.Max(_spawn.y, here.y);
+            // Both: the character's Rigidbody would put it back where it was otherwise.
             player.transform.position = back;
             var body = player.GetComponent<Rigidbody>();
-            if (body != null) body.linearVelocity = Vector3.zero;
+            if (body != null)
+            {
+                body.position = back;
+                body.linearVelocity = Vector3.zero;
+            }
+            GatePulls++;
             if (Time.realtimeSinceStartup >= _nextGateMessage)
             {
                 _nextGateMessage = Time.realtimeSinceStartup + 3f;

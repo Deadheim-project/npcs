@@ -510,10 +510,15 @@ namespace ArenaTestDriver
 
             // Portoes: tentar sair da sala de preparacao.
             var spawn = ArenaConfig.Current.Maps[0].SpawnOf(mySide);
-            Me.transform.position = Ground(spawn + Vector3.forward * 15f);
+            int pulls = ArenaClient.GatePulls;
+            var outside = Ground(spawn + Vector3.forward * 15f);
+            Me.transform.position = outside;
+            Me.m_body.position = outside;
+            Me.m_body.linearVelocity = Vector3.zero;
             yield return new WaitForSeconds(1.5f);
-            Check("ranqueada/portoes-seguram-na-preparacao", Vector3.Distance(Me.transform.position, spawn) < 8f,
-                $"dist={Vector3.Distance(Me.transform.position, spawn):0.0}");
+            Check("ranqueada/portoes-seguram-na-preparacao",
+                ArenaClient.GatePulls > pulls && Vector3.Distance(Me.transform.position, spawn) < 8f,
+                $"puxoes={ArenaClient.GatePulls - pulls} dist={Vector3.Distance(Me.transform.position, spawn):0.0}");
             if (IsA)
             {
                 yield return Shot("08-hud-preparacao");
