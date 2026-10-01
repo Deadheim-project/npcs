@@ -55,8 +55,7 @@ namespace NpcValheim.UI
                 return;
             }
 
-            if (ArenaConfig.PanelKey != null && Input.GetKeyDown(ArenaConfig.PanelKey.Value) && !Console.IsVisible() &&
-                (Chat.instance == null || !Chat.instance.HasFocus()) && (TextInput.instance == null || !TextInput.IsVisible()))
+            if (ArenaConfig.PanelKey != null && Input.GetKeyDown(ArenaConfig.PanelKey.Value) && !Typing())
                 TogglePanel();
 
             if (_canvas == null) Build();
@@ -75,6 +74,18 @@ namespace NpcValheim.UI
             {
                 _canvas.SetActive(false);
             }
+        }
+
+        /// <summary>The key is a letter: typed into a name field (Charlie) it must stay a letter.</summary>
+        private static bool Typing()
+        {
+            if (Console.IsVisible() || (Chat.instance != null && Chat.instance.HasFocus()) ||
+                (TextInput.instance != null && TextInput.IsVisible())) return true;
+            var selected = UnityEngine.EventSystems.EventSystem.current != null
+                ? UnityEngine.EventSystems.EventSystem.current.currentSelectedGameObject
+                : null;
+            var field = selected != null ? selected.GetComponent<TMP_InputField>() : null;
+            return field != null && field.isFocused;
         }
 
         private static string Text()
