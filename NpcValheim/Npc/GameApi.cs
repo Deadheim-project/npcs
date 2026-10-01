@@ -696,6 +696,69 @@ namespace NpcValheim.Npc
             return Dedup(result);
         }
 
+        internal struct OnlineCharacter
+        {
+            /// <summary>Routed-RPC id of the connection: the peer's m_uid, or this process' own
+            /// id for the host's local player.</summary>
+            public long Peer;
+            public long PlayerId;
+            public string Name;
+            public bool HasPosition;
+            public Vector3 Position;
+        }
+
+        /// <summary>
+        /// Every character in the world right now with where it stands, resolved the same way
+        /// as an RPC sender (peer -> character ZDO), so it works on a dedicated server that has
+        /// no Player objects. Used to decide who was present at a boss's death.
+        /// </summary>
+        internal static List<OnlineCharacter> ListOnlineCharacters()
+        {
+            var result = new List<OnlineCharacter>();
+            try
+            {
+                var local = Player.m_localPlayer;
+                if (local != null && local.GetComponent<NpcMarker>() == null && local.GetPlayerID() != 0L)
+                    result.Add(new OnlineCharacter
+                    {
+                        Peer = LocalRpcSenderId(),
+                        PlayerId = local.GetPlayerID(),
+                        Name = local.GetPlayerName(),
+                        HasPosition = true,
+                        Position = local.transform.position,
+                    });
+
+                if (ZNet.instance == null) return result;
+                var peers = GetPeerList();
+                if (peers == null) return result;
+
+                foreach (var item in peers)
+                {
+                    if (!(item is ZNetPeer peer) || peer == null) continue;
+                    long uid = GetPeerUid(peer);
+                    if (uid == 0L) continue;
+
+                    long playerId = GetPlayerId(uid);
+                    if (playerId == 0L) continue;
+
+                    bool hasPosition = TryGetSenderPosition(uid, out var position);
+                    result.Add(new OnlineCharacter
+                    {
+                        Peer = uid,
+                        PlayerId = playerId,
+                        Name = GetPlayerName(uid),
+                        HasPosition = hasPosition,
+                        Position = position,
+                    });
+                }
+            }
+            catch (Exception e)
+            {
+                Plugin.Log.LogWarning($"NpcValheim: could not list online characters: {e.Message}");
+            }
+            return result;
+        }
+
         private static IEnumerable GetPeerList()
         {
             var method = typeof(ZNet).GetMethod("GetPeers", AnyInstance, null, Type.EmptyTypes, null)

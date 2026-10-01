@@ -31,6 +31,44 @@ class Program
     }
 
     /// <summary>
+    /// The pass ledger against a real file, including the two edits an admin makes by hand
+    /// while the server runs: taking a pass away and giving one.
+    /// </summary>
+    static void CheckBossPassLedger()
+    {
+        System.Console.WriteLine();
+        System.Console.WriteLine("== boss pass ledger (file) ==");
+
+        var ledger = Type.GetType("NpcValheim.Npc.BossPassLedger, NpcValheim");
+        const BindingFlags anyStatic = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static;
+        string path = (string)ledger.GetProperty("FilePath", anyStatic).GetValue(null);
+        bool Has(long id, string boss) => (bool)ledger.GetMethod("Has", anyStatic).Invoke(null, new object[] { id, boss });
+        bool Grant(long id, string name, string boss, string how) =>
+            (bool)ledger.GetMethod("Grant", anyStatic).Invoke(null, new object[] { id, name, boss, how });
+
+        if (File.Exists(path)) File.Delete(path);
+        Check("nobody holds a pass before the file exists", !Has(5001, "gd_king"));
+        Check("a kill writes a pass", Grant(5001, "Ragnar", "gd_king", "kill"));
+        Check("the file is created with its explanation", File.Exists(path) &&
+              File.ReadAllText(path).StartsWith("# Passes de loja por boss"));
+        Check("the pass is held by that character, for that boss only",
+              Has(5001, "gd_king") && !Has(5001, "Bonemass") && !Has(5002, "gd_king"));
+        Check("a second grant is no grant", !Grant(5001, "Ragnar", "gd_king", "gold:1000"));
+        Check("and writes no second line",
+              File.ReadAllLines(path).Count(l => l.StartsWith("5001;gd_king;")) == 1);
+
+        // An admin deletes the line with the server running.
+        File.WriteAllLines(path, File.ReadAllLines(path).Where(l => !l.StartsWith("5001;")).ToArray());
+        Check("deleting the line takes the pass away", !Has(5001, "gd_king"));
+
+        // And gives one by hand, in the short form.
+        File.AppendAllText(path, "5002;Bonemass" + Environment.NewLine);
+        Check("a hand-written line gives a pass", Has(5002, "Bonemass"));
+        Check("the character can win it again after losing it", Grant(5001, "Ragnar", "gd_king", "kill") &&
+              Has(5001, "gd_king") && Has(5002, "Bonemass"));
+    }
+
+    /// <summary>
     /// Exercises the real LiteDB-backed market/mail implementations against throwaway files.
     /// These are integration checks, not mocks: listing transactions, the durable outbox and
     /// the claim state machine all run through the same public methods used by the mod.
@@ -310,6 +348,28 @@ class Program
         Check("a quest board lists quests that actually exist",
               board != null && board.QuestGiver.Quests.Count == 4 &&
               board.QuestGiver.Quests.All(id => QuestStore.Get(id) != null));
+
+        // The boss lock rides the template's patch rule: written = applied, omitted = untouched.
+        var application = typeof(NpcProfile).GetMethod("TypeSpecificApplication",
+            BindingFlags.NonPublic | BindingFlags.Instance);
+        File.WriteAllText(Path.Combine(liveTemplates, "trava-pantano.yaml"),
+            "forType: Marketplace\nmarketplace:\n  requiredBoss: gd_king\n");
+        File.WriteAllText(Path.Combine(liveTemplates, "destrava.yaml"),
+            "forType: Marketplace\nmarketplace:\n  requiredBoss: ''\n");
+        var lockTemplate = NpcConfigStore.LoadTemplate("trava-pantano");
+        var unlockTemplate = NpcConfigStore.LoadTemplate("destrava");
+        var lockApplied = (NpcProfile)application.Invoke(lockTemplate, new object[] { null });
+        var unlockApplied = (NpcProfile)application.Invoke(unlockTemplate, new object[] { null });
+        var pescadorApplied = (NpcProfile)application.Invoke(pescador, new object[] { null });
+        Check("a template can lock a counter behind a boss",
+              lockApplied?.Marketplace?.RequiredBoss == "gd_king", lockApplied?.Marketplace?.RequiredBoss ?? "null");
+        Check("a template can open a locked counter", unlockApplied?.Marketplace?.RequiredBoss == "");
+        Check("a template that says nothing about the lock leaves it alone",
+              pescadorApplied?.Marketplace != null && pescadorApplied.Marketplace.RequiredBoss == null);
+        Check("and still applies its price list",
+              pescadorApplied?.Marketplace?.Sells != null && pescadorApplied.Marketplace.Sells.Count == 4);
+
+        CheckBossPassLedger();
 
         System.Console.WriteLine();
         System.Console.WriteLine("== player directory identity ==");

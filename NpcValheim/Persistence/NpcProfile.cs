@@ -100,6 +100,9 @@ namespace NpcValheim.Persistence
                         Presence.Marketplace.Contains("buys")),
                     Sells = PriceListForApplication(Marketplace.Sells,
                         Presence.Marketplace.Contains("sells")),
+                    RequiredBoss = Presence.Marketplace.Contains("requiredBoss")
+                        ? Marketplace.RequiredBoss ?? ""
+                        : null,
                 };
             }
 
@@ -269,6 +272,11 @@ namespace NpcValheim.Persistence
 
         /// <summary>What this merchant offers for sale, and for how much each.</summary>
         public List<ShopPrice> Sells { get; set; } = new List<ShopPrice>();
+
+        /// <summary>The boss whose pass this counter requires (a creature prefab listed in
+        /// [BossPass] Bosses), or empty for a counter open to everyone. Omitted from a
+        /// template, it leaves the NPC's lock as it is.</summary>
+        public string RequiredBoss { get; set; } = "";
     }
 
     public class ShopPrice

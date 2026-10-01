@@ -64,6 +64,8 @@ namespace NpcValheim.Npc
             rpc.Register(RpcConsumeStub, (Action<long, ZDOID>)RPC_ConsumeStub);
             rpc.Register(RpcStatus, (Action<long, string>)RPC_Status);
             DeadcoinShop.Register(rpc);
+            BossPass.Register(rpc);
+            BossKillWatcher.Reset();
             Plugin.Log.LogInfo("NpcValheim: server-authoritative service NPC RPCs registered");
         }
 

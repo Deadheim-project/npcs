@@ -91,6 +91,74 @@ class Program
         (string)Ledger.GetMethod("FileNameFor", BindingFlags.NonPublic | BindingFlags.Static)
                       .Invoke(null, new object[] { playerName, accountId });
 
+    // ---- BossPass: everything below is internal to the mod, so it is reached by name ----
+
+    const BindingFlags AnyStatic = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static;
+    const BindingFlags AnyMember = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
+
+    static Type ModType(string name) => typeof(QuestGiverNpc).Assembly.GetType("NpcValheim.Npc." + name);
+
+    static readonly Type PassCatalog = ModType("BossPassCatalog");
+    static readonly Type PassLedger = ModType("BossPassLedger");
+    static readonly Type KillMatcher = ModType("BossKillMatcher");
+    static readonly Type Death = ModType("BossDeath");
+    static readonly Type Witness = ModType("BossWitness");
+    static readonly Type Witnesses = ModType("BossWitnesses");
+
+    static List<BossPassEntry> ParseBosses(string raw, List<string> problems) =>
+        (List<BossPassEntry>)PassCatalog.GetMethod("Parse", AnyStatic).Invoke(null, new object[] { raw, problems });
+
+    static string DefaultBosses => (string)PassCatalog.GetField("DefaultBosses", AnyStatic).GetRawConstantValue();
+
+    static Dictionary<long, HashSet<string>> ParseLedger(string[] lines, List<string> problems) =>
+        (Dictionary<long, HashSet<string>>)PassLedger.GetMethod("Parse", AnyStatic)
+            .Invoke(null, new object[] { lines, problems });
+
+    static string LedgerLine(long playerId, string boss, string source, string name) =>
+        (string)PassLedger.GetMethod("FormatLine", AnyStatic)
+            .Invoke(null, new object[] { playerId, boss, source, new DateTime(2026, 10, 1, 12, 0, 0), name });
+
+    static object NewMatcher(float window) =>
+        Activator.CreateInstance(KillMatcher, AnyMember, null, new object[] { window }, null);
+
+    static object NewDeath(string boss, string defeatKey, float time)
+    {
+        var death = Activator.CreateInstance(Death, true);
+        Death.GetField("Entry").SetValue(death, new BossPassEntry { Boss = boss, Name = boss });
+        Death.GetField("DefeatKey").SetValue(death, defeatKey);
+        Death.GetField("Time").SetValue(death, time);
+        return death;
+    }
+
+    static bool Gone(object matcher, object death, float now) =>
+        (bool)KillMatcher.GetMethod("OnGone", AnyMember).Invoke(matcher, new[] { death, (object)now });
+
+    static object Key(object matcher, string key, float now) =>
+        KillMatcher.GetMethod("OnKey", AnyMember).Invoke(matcher, new object[] { key, now });
+
+    static object NewWitness(long playerId, float x, float y, float z, bool attacker, bool hasPosition = true)
+    {
+        object witness = Activator.CreateInstance(Witness);
+        Witness.GetField("PlayerId").SetValue(witness, playerId);
+        Witness.GetField("Name").SetValue(witness, "p" + playerId);
+        Witness.GetField("HasPosition").SetValue(witness, hasPosition);
+        Witness.GetField("Position").SetValue(witness, new UnityEngine.Vector3(x, y, z));
+        Witness.GetField("Attacker").SetValue(witness, attacker);
+        return witness;
+    }
+
+    /// <summary>The character ids SelectWitnesses keeps, in order.</summary>
+    static List<long> SelectWitnesses(float radius, params object[] candidates)
+    {
+        var list = (System.Collections.IList)Activator.CreateInstance(typeof(List<>).MakeGenericType(Witness));
+        foreach (var c in candidates) list.Add(c);
+        var kept = (System.Collections.IList)Witnesses.GetMethod("Select", AnyStatic)
+            .Invoke(null, new object[] { new UnityEngine.Vector3(0f, 0f, 0f), radius, list });
+        var ids = new List<long>();
+        foreach (var w in kept) ids.Add((long)Witness.GetField("PlayerId").GetValue(w));
+        return ids;
+    }
+
     /// <summary>Whether this NPC type answers server-decided requests itself, rather than
     /// inheriting NpcBase's refusal.</summary>
     static bool HandlesOnServer(Type npc, string dispatcher) =>
@@ -264,6 +332,10 @@ class Program
               HandlesOnServer(Giver, "DispatchServiceAction"));
         Check("the Deadcoins counter decides purchases on the server channel",
               HandlesOnServer(typeof(DeadcoinShopNpc), "DispatchServiceAction"));
+        Check("the merchant sells boss passes on the server channel",
+              HandlesOnServer(typeof(MarketplaceNpc), "DispatchServiceAction"));
+        Check("the merchant takes its boss lock on the admin channel",
+              HandlesOnServer(typeof(MarketplaceNpc), "DispatchAdminMutation"));
 
         System.Console.WriteLine();
         System.Console.WriteLine("== Deadcoins counter ==");
@@ -315,6 +387,112 @@ class Program
               FileNameFor("../Ragnar", "Steam_1") == null && FileNameFor("..\\Ragnar", "Steam_1") == null);
         Check("an account cannot leave the folder", FileNameFor("Ragnar", "Steam_1/../x") == null);
         Check("a missing part is refused", FileNameFor("", "Steam_1") == null && FileNameFor("Ragnar", "") == null);
+
+        System.Console.WriteLine();
+        System.Console.WriteLine("== boss pass prices ==");
+
+        var bossProblems = new List<string>();
+        var bosses = ParseBosses(DefaultBosses, bossProblems);
+        Check("the default lists the six bosses the server owner priced, Eikthyr left out",
+              string.Join(",", bosses.Select(b => b.Boss)) == "gd_king,Bonemass,Dragon,GoblinKing,SeekerQueen,Fader",
+              string.Join(",", bosses.Select(b => b.Boss)));
+        Check("and parses without a complaint", bossProblems.Count == 0, string.Join(" / ", bossProblems));
+        Check("the swamp pass is 1000 Coins or 500 Deadcoins (R$5 at 100 per real)",
+              bosses.Count > 0 && bosses[0].Gold == 1000 && bosses[0].Deadcoins == 500 &&
+              bosses[0].Shop == "Loja do Pântano");
+        Check("the Deep North pass is 25000 Coins or 20000 Deadcoins (R$200)",
+              bosses.Count == 6 && bosses[5].Gold == 25000 && bosses[5].Deadcoins == 20000);
+        Check("the price ladder matches the table, boss by boss",
+              string.Join(",", bosses.Select(b => b.Gold + "/" + b.Deadcoins)) ==
+              "1000/500,3000/1000,5000/2500,10000/5000,15000/10000,25000/20000");
+
+        Check("a negative price is refused", ParseBosses("boss=Bonemass;gold=-1;deadcoins=10", null).Count == 0);
+        Check("a non-numeric price is refused", ParseBosses("boss=Bonemass;gold=muito", null).Count == 0);
+        Check("an entry without a boss is refused", ParseBosses("name=Bonemass;gold=10", null).Count == 0);
+        Check("a boss id that would break the wire is refused",
+              ParseBosses("boss=gd king;gold=10|boss=a,b;gold=10", null).Count == 0);
+        var unpriced = new List<string>();
+        var killOnly = ParseBosses("boss=Eikthyr", unpriced);
+        Check("a boss with no price is kept (kill only) and said so",
+              killOnly.Count == 1 && killOnly[0].Gold == 0 && killOnly[0].Deadcoins == 0 && unpriced.Count == 1);
+        Check("a boss with no name shows its prefab", killOnly.Count == 1 && killOnly[0].Name == "Eikthyr");
+        var repeated = ParseBosses("boss=Dragon;gold=5|boss=Dragon;gold=1", null);
+        Check("a repeated boss keeps its first price", repeated.Count == 1 && repeated[0].Gold == 5);
+        Check("an empty list is empty, not an error", ParseBosses("", null).Count == 0);
+
+        System.Console.WriteLine();
+        System.Console.WriteLine("== boss pass ledger ==");
+
+        string passLine = LedgerLine(76561, "gd_king", "kill", "Rag;nar");
+        Check("a pass line starts with the character and the boss", passLine.StartsWith("76561;gd_king;kill;"), passLine);
+        Check("a name cannot add a field to the line", passLine.Split(';').Length == 5, passLine);
+        var ledgerProblems = new List<string>();
+        var held = ParseLedger(new[]
+        {
+            "# comentario",
+            "",
+            passLine,
+            "76561;Bonemass;gold:3000;2026-10-01 12:00:00;Ragnar",
+            "99;Dragon",
+            "abc;Dragon;x",
+            "0;Dragon;x",
+            "77;gd king;x",
+        }, ledgerProblems);
+        Check("a written pass reads back", held.ContainsKey(76561) && held[76561].Contains("gd_king"));
+        Check("one character holds several passes", held.ContainsKey(76561) && held[76561].Count == 2);
+        Check("a hand-added two-field line is a pass", held.ContainsKey(99) && held[99].Contains("Dragon"));
+        Check("lines that are not passes are skipped and named",
+              held.Count == 2 && ledgerProblems.Count == 3, string.Join(" / ", ledgerProblems));
+
+        System.Console.WriteLine();
+        System.Console.WriteLine("== boss deaths ==");
+
+        // The order a kill arrives in: the defeat key, then the ZDO.
+        var matcher = NewMatcher(20f);
+        Check("a defeat key alone is not a kill", Key(matcher, "defeated_gdking", 100f) == null);
+        Check("the boss vanishing right after it is", Gone(matcher, NewDeath("gd_king", "defeated_gdking", 101f), 101f));
+
+        // And the other order, should the network deliver it so.
+        var gone = NewDeath("Bonemass", "defeated_bonemass", 200f);
+        Check("a boss vanishing alone is not a kill", !Gone(matcher, gone, 200f));
+        Check("its defeat key a moment later confirms it", ReferenceEquals(Key(matcher, "defeated_bonemass", 203f), gone));
+
+        Check("a key does not confirm a different boss",
+              !Gone(matcher, NewDeath("Dragon", "defeated_dragon", 300f), 300f) &&
+              Key(matcher, "defeated_gdking", 301f) == null);
+        Check("a key from too long ago does not count",
+              Key(matcher, "defeated_goblinking", 400f) == null &&
+              !Gone(matcher, NewDeath("GoblinKing", "defeated_goblinking", 425f), 425f));
+        Check("one key confirms one death, not two",
+              Key(matcher, "defeated_queen", 500f) == null &&
+              Gone(matcher, NewDeath("SeekerQueen", "defeated_queen", 501f), 501f) &&
+              !Gone(matcher, NewDeath("SeekerQueen", "defeated_queen", 502f), 502f));
+        Check("a boss with no defeat key counts on its own", Gone(matcher, NewDeath("Modded", "", 600f), 600f));
+        Check("keys match regardless of case",
+              Key(matcher, "Defeated_Fader", 700f) == null &&
+              Gone(matcher, NewDeath("Fader", "defeated_fader", 701f), 701f));
+
+        System.Console.WriteLine();
+        System.Console.WriteLine("== who was at the fight ==");
+
+        Check("someone standing within the radius counts", SelectWitnesses(60f, NewWitness(1, 40f, 0f, 30f, false)).Count == 1);
+        Check("height does not count against them (Moder dies in the air)",
+              SelectWitnesses(60f, NewWitness(1, 10f, 500f, 0f, false)).Count == 1);
+        Check("someone outside it does not", SelectWitnesses(60f, NewWitness(1, 61f, 0f, 0f, false)).Count == 0);
+        Check("someone who hit the boss counts from anywhere",
+              SelectWitnesses(60f, NewWitness(1, 900f, 0f, 0f, true)).Count == 1);
+        Check("an attacker the server cannot place still counts",
+              SelectWitnesses(60f, NewWitness(1, 0f, 0f, 0f, true, hasPosition: false)).Count == 1);
+        Check("a character the server cannot place, who did not hit it, does not",
+              SelectWitnesses(60f, NewWitness(1, 0f, 0f, 0f, false, hasPosition: false)).Count == 0);
+        Check("an unresolved character is never given a pass",
+              SelectWitnesses(60f, NewWitness(0, 0f, 0f, 0f, true)).Count == 0);
+        var crowd = SelectWitnesses(60f, NewWitness(1, 1f, 0f, 0f, false), NewWitness(2, 500f, 0f, 0f, false),
+            NewWitness(3, 2f, 0f, 0f, true), NewWitness(1, 3f, 0f, 0f, true));
+        Check("a party counts once each, the far bystander left out",
+              string.Join(",", crowd) == "1,3", string.Join(",", crowd));
+        Check("a broken radius counts only the attackers",
+              string.Join(",", SelectWitnesses(float.NaN, NewWitness(1, 1f, 0f, 0f, false), NewWitness(2, 1f, 0f, 0f, true))) == "2");
 
         System.Console.WriteLine();
         System.Console.WriteLine(failed == 0 ? $"ALL {passed} CHECKS PASSED" : $"{failed} FAILED, {passed} passed");

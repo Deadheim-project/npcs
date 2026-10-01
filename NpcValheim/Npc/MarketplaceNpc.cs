@@ -24,7 +24,16 @@ namespace NpcValheim.Npc
     {
         private const string KeyTaxPercent = "npcv_mk_tax";
 
+        /// <summary>The boss whose pass this counter requires (a creature prefab from
+        /// BossPass.Bosses), or empty for an open counter.</summary>
+        private const string KeyRequiredBoss = "npcv_mk_boss";
+
         public string NpcIdPublic => NpcId;
+
+        /// <summary>Which boss pass this counter requires, as the ZDO has it. On the server
+        /// that is the decision; on a client it only chooses what the Loja tab shows.</summary>
+        public string RequiredBoss =>
+            Nview != null && Nview.IsValid() ? Nview.GetZDO().GetString(KeyRequiredBoss, "") : "";
 
         /// <summary>Whether this NPC runs a counter of his own (buys and sells at posted
         /// prices). Both halves of the economy are implemented here because they share the
@@ -103,6 +112,7 @@ namespace NpcValheim.Npc
         // for finding the real cause, not for a fourth copy of the workaround.
         private string _authoritativeBuys;
         private string _authoritativeSells;
+        private string _authoritativeBoss;
         private float _nextCounterCheck;
 
         /// <summary>Restores one side of the counter if the ZDO has drifted away from what the
@@ -139,6 +149,9 @@ namespace NpcValheim.Npc
                 _nextCounterCheck = Time.unscaledTime + 1f;
                 RestoreIfDrifted(KeyBuyPrices, ref _authoritativeBuys, "buys");
                 RestoreIfDrifted(KeySellPrices, ref _authoritativeSells, "sells");
+                // The lock rides the same guard: a counter that silently reopens is the one
+                // failure of this setting nobody would notice.
+                RestoreIfDrifted(KeyRequiredBoss, ref _authoritativeBoss, "requires");
             }
 
             if (Nview == null || !Nview.IsValid() || !Nview.IsOwner()) return;
@@ -238,10 +251,94 @@ namespace NpcValheim.Npc
                 case "RPC_ConfigureTax" when arguments.Length == 1 && arguments[0] is int taxPercent:
                     RPC_ConfigureTax(sender, taxPercent);
                     return true;
+                case "RPC_SetRequiredBoss" when arguments.Length == 1 && arguments[0] is string boss:
+                    RPC_SetRequiredBoss(sender, boss);
+                    return true;
                 default:
                     return base.DispatchAdminMutation(sender, method, arguments);
             }
         }
+
+        // ---- the boss lock (BossPass) ----
+
+        /// <summary>Admin: lock this counter behind a boss's pass, or "" to open it.</summary>
+        public void RequestSetRequiredBoss(Player requester, string boss)
+        {
+            if (Nview == null || !Nview.IsValid()) return;
+            if (!CanLocalPlayerAdminister())
+            {
+                Player.m_localPlayer?.Message(MessageHud.MessageType.Center,
+                    "Seu cliente não considera você admin", 0, null);
+                return;
+            }
+            InvokeAuthoritativeRpc("RPC_SetRequiredBoss", boss ?? "");
+        }
+
+        private void RPC_SetRequiredBoss(long sender, string boss)
+        {
+            Plugin.Log.LogInfo($"NpcValheim: 'shop-set-boss' from peer {sender} on '{GetHoverName()}': \"{boss}\"");
+            if (!CanAdminister(sender)) return;
+            if (!NpcRequestGuard.AllowRate(sender, "shop-set-boss", 6, 2f))
+            {
+                ServiceNpcAuthority.SendStatus(sender, "Muitos pedidos seguidos. Espere um instante.");
+                return;
+            }
+            if (!HasShop)
+            {
+                ServiceNpcAuthority.SendStatus(sender, "Uma casa de leilão não tem balcão para trancar.");
+                return;
+            }
+
+            boss = (boss ?? "").Trim();
+            BossPassEntry entry = null;
+            if (boss.Length > 0 && (entry = BossPassCatalog.Find(boss)) == null)
+            {
+                ServiceNpcAuthority.SendStatus(sender, $"'{boss}' não está em [BossPass] Bosses no servidor.");
+                return;
+            }
+
+            SetRequiredBoss(boss);
+            Plugin.Log.LogInfo($"NpcValheim: '{GetHoverName()}' now requires '{boss}' (peer {sender})");
+            ServiceNpcAuthority.SendStatus(sender, entry == null
+                ? "Loja aberta para todos."
+                : $"Loja trancada: exige o passe de {entry.Name} ({BossPassCatalog.ShopName(entry)}).");
+        }
+
+        private void SetRequiredBoss(string boss)
+        {
+            Nview.GetZDO().Set(KeyRequiredBoss, boss ?? "");
+            if (ZNet.instance != null && ZNet.instance.IsServer()) _authoritativeBoss = boss ?? "";
+            PersistProfileSnapshot();
+        }
+
+        /// <summary>Client: what this character's passes are. Answered to the player, not to
+        /// the NPC (see BossPass).</summary>
+        public bool RequestBossPassStatus() => InvokeServiceAction(BossPass.ActionStatus, "");
+
+        /// <summary>Client: buy this counter's pass. The boss is not sent -- the server reads
+        /// it off its own copy of this NPC.</summary>
+        public bool RequestBossPass(string method, int shownPrice) =>
+            InvokeServiceAction(BossPass.ActionBuy, BossPass.BuyPayload(method, shownPrice));
+
+        internal override bool DispatchServiceAction(long sender, string action, string payload)
+        {
+            switch (action)
+            {
+                case BossPass.ActionStatus:
+                    BossPass.ServeStatus(sender);
+                    return true;
+                case BossPass.ActionBuy:
+                    BossPass.ServePurchase(sender, HasShop ? RequiredBoss : "", $"'{GetHoverName()}'", payload ?? "");
+                    return true;
+                default:
+                    return base.DispatchServiceAction(sender, action, payload);
+            }
+        }
+
+        /// <summary>The server's check, run inside both halves of the counter. False when this
+        /// character has no pass for a locked counter; `refusal` then says so in Portuguese.</summary>
+        private bool CounterOpenFor(long playerId, out string refusal) =>
+            BossPass.CanTrade(playerId, HasShop ? RequiredBoss : "", out refusal);
 
         /// <summary>
         /// Admin-side write to one half of the counter.
@@ -363,6 +460,18 @@ namespace NpcValheim.Npc
                 return;
             }
 
+            // The counter's boss lock. Here and not only in the panel: the panel hides the
+            // lists from a player without the pass, and a hidden list is not a boundary.
+            if (!CounterOpenFor(playerId, out string locked))
+            {
+                Plugin.Log.LogInfo($"NpcValheim: '{GetHoverName()}' refused a sale to {playerId}: no '{RequiredBoss}' pass");
+                // Capped at the price: `paid` is the client's own claim, and refunding it
+                // whole would pay out whatever a modified client chose to write there.
+                Refund(sender, playerId, Math.Min(paid, cost), "Loja trancada");
+                ServiceNpcAuthority.SendStatus(sender, locked);
+                return;
+            }
+
             // Handed to the buyer rather than dropped at the merchant's feet. Goods on the
             // ground are goods somebody else can pick up, and they are easy to walk away from
             // without noticing.
@@ -477,6 +586,14 @@ namespace NpcValheim.Npc
 
             long playerId = GameApi.GetPlayerId(sender);
             if (playerId == 0L) return;
+
+            if (!CounterOpenFor(playerId, out string locked))
+            {
+                Plugin.Log.LogInfo($"NpcValheim: '{GetHoverName()}' refused to buy from {playerId}: no '{RequiredBoss}' pass");
+                ReturnItem(sender, itemName, quality, amount, "Loja trancada");
+                ServiceNpcAuthority.SendStatus(sender, locked);
+                return;
+            }
 
             // From here on the client has already removed the stack from its inventory (see
             // ShopView) on the strength of prices it read moments ago. Every refusal below has
@@ -796,7 +913,8 @@ namespace NpcValheim.Npc
             var profile = base.BuildProfile();
             profile.Marketplace = new MarketplaceSettings
             {
-                TaxPercent = Nview.GetZDO().GetInt(KeyTaxPercent, 0)
+                TaxPercent = Nview.GetZDO().GetInt(KeyTaxPercent, 0),
+                RequiredBoss = HasShop ? RequiredBoss : "",
             };
             foreach (var kv in GetBuyPrices())
                 profile.Marketplace.Buys.Add(new ShopPrice { ItemName = kv.Key, Price = kv.Value });
@@ -815,6 +933,24 @@ namespace NpcValheim.Npc
             // look-only template to a working shop doesn't wipe its prices.
             ApplyPriceTable(KeyBuyPrices, profile.Marketplace.Buys);
             ApplyPriceTable(KeySellPrices, profile.Marketplace.Sells);
+
+            // Null means the template did not mention the lock, which leaves it as it is, the
+            // same patch rule as the price lists. A boss the config does not list is applied
+            // anyway (the counter then stays shut, see BossPass.CanTrade) and said in the log:
+            // the template may simply be ahead of the cfg.
+            var boss = profile.Marketplace.RequiredBoss;
+            if (boss != null && HasShop)
+            {
+                boss = boss.Trim();
+                if (boss.Length > 0 && !BossPassCatalog.IsCleanId(boss))
+                    Plugin.Log.LogWarning($"NpcValheim: template lock '{boss}' is not a prefab name; lock left as it was");
+                else
+                {
+                    if (boss.Length > 0 && BossPassCatalog.Find(boss) == null)
+                        Plugin.Log.LogWarning($"NpcValheim: template locks '{GetHoverName()}' behind '{boss}', which [BossPass] Bosses does not list");
+                    SetRequiredBoss(boss);
+                }
+            }
         }
 
         private void ApplyPriceTable(string key, List<ShopPrice> entries)

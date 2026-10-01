@@ -238,12 +238,16 @@ namespace NpcValheim.Npc
         /// <summary>One line per purchase in the log the old mod kept, now with a timestamp, a
         /// line break and both balances -- enough to settle a "my Deadcoins vanished" from the
         /// file alone.</summary>
-        internal static void AppendLog(string who, DeadcoinOffer offer, int before, int after)
+        internal static void AppendLog(string who, DeadcoinOffer offer, int before, int after) =>
+            AppendLogLine($"{who} bought {offer.Amount}x {offer.Prefab} for {offer.Price} Deadcoins " +
+                          $"(balance {before} -> {after})");
+
+        /// <summary>Any other spend of Deadcoins (a boss pass), in the same file, so one place
+        /// still answers where a balance went.</summary>
+        internal static void AppendLogLine(string text)
         {
             Directory.CreateDirectory(Path.GetDirectoryName(LogPath));
-            File.AppendAllText(LogPath,
-                $"{DateTime.Now:yyyy-MM-dd HH:mm:ss} {who} bought {offer.Amount}x {offer.Prefab} " +
-                $"for {offer.Price} Deadcoins (balance {before} -> {after}){Environment.NewLine}");
+            File.AppendAllText(LogPath, $"{DateTime.Now:yyyy-MM-dd HH:mm:ss} {text}{Environment.NewLine}");
         }
     }
 

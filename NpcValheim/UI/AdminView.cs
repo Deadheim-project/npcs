@@ -230,6 +230,8 @@ namespace NpcValheim.UI
                 }
                 else
                 {
+                    BuildBossLock(column, market);
+
                     // Two lists on one counter: he deals only in what he is told to deal in.
                     Heading(column, "Balcão (item / preço)");
                     var buyRow = Row(column, 40f);
@@ -247,7 +249,9 @@ namespace NpcValheim.UI
                     // picking a result fills it in.
                     Dim(column, "Digite para buscar; clique num resultado para preencher.");
                     var searchArea = ValheimUi.CreateRect("SearchArea", column);
-                    ValheimUi.SetHeight(searchArea.gameObject, 150f);
+                    // 110 rather than 150: the boss lock row above took the difference, and the
+                    // column was already full.
+                    ValheimUi.SetHeight(searchArea.gameObject, 110f);
                     _itemResults = ValheimUi.CreateScrollList(searchArea, spacing: 2f);
                 }
             }
@@ -330,6 +334,55 @@ namespace NpcValheim.UI
             var area = ValheimUi.CreateRect("Area", templatePane);
             ValheimUi.Anchor(area, Vector2.zero, Vector2.one, Vector2.zero, new Vector2(0f, -38f));
             _templates = ValheimUi.CreateScrollList(area, spacing: 4f);
+        }
+
+        /// <summary>
+        /// One row: which boss's pass this counter requires. Stepped with arrows through
+        /// "nenhum" plus the bosses in [BossPass] Bosses, and sent with Aplicar, so stepping
+        /// past a boss does not lock the counter on the way.
+        ///
+        /// A lock the config no longer lists still shows up in the list, under its prefab
+        /// name: hiding it would make the counter look open while the server keeps it shut.
+        /// </summary>
+        private void BuildBossLock(Transform column, MarketplaceNpc market)
+        {
+            var options = new List<string> { "" };
+            options.AddRange(BossPassCatalog.Current().Select(e => e.Boss));
+            string current = market.RequiredBoss;
+            if (!options.Contains(current)) options.Add(current);
+            int index = options.IndexOf(current);
+
+            var row = Row(column, 38f);
+            ValheimUi.CreateLabel(row, "Requisito", 15, ValheimUi.Beige, TextAlignmentOptions.Left);
+            var previous = ValheimUi.CreateButton(row, "<", 34f, 34f, 16);
+            var label = ValheimUi.CreateLabel(row, DescribeLock(current), 14, ValheimUi.Yellow,
+                TextAlignmentOptions.Center);
+            Flexible(label.gameObject);
+            var next = ValheimUi.CreateButton(row, ">", 34f, 34f, 16);
+            var apply = ValheimUi.CreateButton(row, "Aplicar", 100f, 34f, 15);
+
+            void Step(int delta)
+            {
+                index = (index + delta + options.Count) % options.Count;
+                label.text = DescribeLock(options[index]);
+            }
+            previous.onClick.AddListener(() => Step(-1));
+            next.onClick.AddListener(() => Step(1));
+            apply.onClick.AddListener(() =>
+            {
+                // The server answers with what it actually did, see RPC_SetRequiredBoss.
+                market.RequestSetRequiredBoss(Player, options[index]);
+                Say("Enviando o requisito ao servidor...");
+            });
+        }
+
+        private static string DescribeLock(string boss)
+        {
+            if (string.IsNullOrEmpty(boss)) return "Nenhum (loja aberta)";
+            var entry = BossPassCatalog.Find(boss);
+            return entry == null
+                ? $"{boss} (fora da config!)"
+                : $"{entry.Name} ({BossPassCatalog.ShopName(entry)})";
         }
 
         /// <summary>Adds or removes one entry on one side of the merchant's counter.</summary>

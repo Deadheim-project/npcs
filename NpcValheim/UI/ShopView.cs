@@ -33,6 +33,19 @@ namespace NpcValheim.UI
         private readonly List<GameObject> _sellRows = new List<GameObject>();
         private readonly List<GameObject> _buyRows = new List<GameObject>();
 
+        // The boss lock (BossPass): shown instead of the counter to a player without the pass.
+        private RectTransform _amountRow;
+        private RectTransform _sellPane;
+        private RectTransform _buyPane;
+        private RectTransform _lock;
+        private TextMeshProUGUI _lockTitle;
+        private TextMeshProUGUI _lockBody;
+        private Button _payGold;
+        private Button _payDeadcoins;
+        private string _lockSignature;
+        private float _nextPassPoll;
+        private int _seenPassMessage;
+
         protected override void OnBuild()
         {
             _balance = ValheimUi.CreateLabel(Root, "", 18, ValheimUi.Yellow, TextAlignmentOptions.Center);
@@ -42,6 +55,7 @@ namespace NpcValheim.UI
             // A stepper rather than a bare box: the amount decides what every button on the
             // page does, so it has to be obvious and adjustable without typing.
             var amountRow = ValheimUi.CreateRect("Amount", Root);
+            _amountRow = amountRow;
             ValheimUi.Anchor(amountRow, new Vector2(0.5f, 1f), new Vector2(0.5f, 1f),
                 new Vector2(-215f, -72f), new Vector2(215f, -34f));
             var amountLayout = amountRow.gameObject.AddComponent<HorizontalLayoutGroup>();
@@ -74,15 +88,56 @@ namespace NpcValheim.UI
                 chip.onClick.AddListener(() => _amount.text = value.ToString());
             }
 
-            _sells = BuildColumn("O NPC vende", true, out _sellsEmpty);
-            _buys = BuildColumn("O NPC compra", false, out _buysEmpty);
+            _sells = BuildColumn("O NPC vende", true, out _sellsEmpty, out _sellPane);
+            _buys = BuildColumn("O NPC compra", false, out _buysEmpty, out _buyPane);
+            BuildLock();
+
+            // Messages from before this panel opened are not about anything on it.
+            _seenPassMessage = BossPass.MessageRevision;
 
             Market?.RequestMarketData();
         }
 
-        private RectTransform BuildColumn(string title, bool left, out TextMeshProUGUI empty)
+        /// <summary>What a player without the pass sees in place of the two lists: why the
+        /// counter is shut, how to open it for free, and the two ways to pay.</summary>
+        private void BuildLock()
         {
-            var pane = ValheimUi.CreateInlay(Root, title);
+            _lock = ValheimUi.CreateInlay(Root, "BossLock");
+            ValheimUi.Anchor(_lock, Vector2.zero, Vector2.one, Vector2.zero, new Vector2(0f, -40f));
+
+            _lockTitle = ValheimUi.CreateLabel(_lock, "", 24, ValheimUi.Orange, TextAlignmentOptions.Center, display: true);
+            ValheimUi.Anchor((RectTransform)_lockTitle.transform, new Vector2(0f, 1f), new Vector2(1f, 1f),
+                new Vector2(24f, -64f), new Vector2(-24f, -16f));
+
+            _lockBody = ValheimUi.CreateLabel(_lock, "", 17, ValheimUi.Beige, TextAlignmentOptions.Top);
+            ValheimUi.Anchor((RectTransform)_lockBody.transform, Vector2.zero, Vector2.one,
+                new Vector2(60f, 100f), new Vector2(-60f, -76f));
+
+            var buttons = ValheimUi.CreateRect("Pay", _lock);
+            ValheimUi.Anchor(buttons, new Vector2(0f, 0f), new Vector2(1f, 0f),
+                new Vector2(24f, 30f), new Vector2(-24f, 78f));
+            var layout = buttons.gameObject.AddComponent<HorizontalLayoutGroup>();
+            layout.spacing = 24f;
+            layout.childControlWidth = true;
+            layout.childControlHeight = true;
+            layout.childForceExpandWidth = false;
+            layout.childAlignment = TextAnchor.MiddleCenter;
+
+            _payGold = ValheimUi.CreateButton(buttons, "", 260f, 48f, 16);
+            ValheimUi.SetWidth(_payGold.gameObject, 260f);
+            Iconify(_payGold, MarketplaceNpc.CoinPrefabName);
+            _payGold.onClick.AddListener(PayGold);
+
+            _payDeadcoins = ValheimUi.CreateButton(buttons, "", 260f, 48f, 16);
+            ValheimUi.SetWidth(_payDeadcoins.gameObject, 260f);
+            _payDeadcoins.onClick.AddListener(PayDeadcoins);
+
+            _lock.gameObject.SetActive(false);
+        }
+
+        private RectTransform BuildColumn(string title, bool left, out TextMeshProUGUI empty, out RectTransform pane)
+        {
+            pane = ValheimUi.CreateInlay(Root, title);
             ValheimUi.Anchor(pane,
                 new Vector2(left ? 0f : 0.5f, 0f), new Vector2(left ? 0.5f : 1f, 1f),
                 new Vector2(left ? 0f : 6f, 0f), new Vector2(left ? -6f : 0f, -76f));
@@ -106,6 +161,34 @@ namespace NpcValheim.UI
         {
             var market = Market;
             if (market == null) return;
+
+            if (BossPass.MessageRevision != _seenPassMessage)
+            {
+                _seenPassMessage = BossPass.MessageRevision;
+                Say(BossPass.LastMessage);
+            }
+
+            // The lock is the server's to enforce (RPC_BuyFromNpc / RPC_SellToNpc); this only
+            // decides what to draw, from the passes the server says this character holds.
+            string boss = market.HasShop ? market.RequiredBoss : "";
+            if (boss.Length > 0 && Time.unscaledTime >= _nextPassPoll)
+            {
+                // Often while shut, so a pass bought or won elsewhere opens it in place; rarely
+                // once open, only to notice an admin taking it away.
+                _nextPassPoll = Time.unscaledTime + (BossPass.HasLocalPass(boss) ? 30f : 5f);
+                market.RequestBossPassStatus();
+            }
+
+            bool locked = boss.Length > 0 && !BossPass.HasLocalPass(boss);
+            _lock.gameObject.SetActive(locked);
+            _amountRow.gameObject.SetActive(!locked);
+            _sellPane.gameObject.SetActive(!locked);
+            _buyPane.gameObject.SetActive(!locked);
+            if (locked)
+            {
+                RefreshLock(boss);
+                return;
+            }
 
             // Read straight off the player's own inventory. There is no round trip and no
             // second wallet to disagree with it -- what the panel says is what you are
@@ -213,6 +296,102 @@ namespace NpcValheim.UI
                     market.RequestSellToNpc(item, 1, amount);
                 });
             }
+        }
+
+        private void RefreshLock(string boss)
+        {
+            string deadcoins = BossPass.DeadcoinBalance >= 0 ? BossPass.DeadcoinBalance.ToString() : "?";
+            _balance.text = $"<color=#9a9188>Na sua bolsa:</color> {MarketplaceNpc.CoinsOf(Player)} moedas" +
+                            $"   <color=#9a9188>Deadcoins:</color> {deadcoins}";
+
+            var entry = BossPassCatalog.Find(boss);
+            float radius = Plugin.BossPassKillRadius?.Value ?? 60f;
+            string signature = $"{boss}|{BossPass.Known}|{entry?.Name}|{entry?.Shop}|{entry?.Gold}|{entry?.Deadcoins}|{radius}";
+            if (signature == _lockSignature) return;
+            _lockSignature = signature;
+
+            bool offered = entry != null && BossPass.Known;
+            _payGold.gameObject.SetActive(offered && entry.Gold > 0);
+            _payDeadcoins.gameObject.SetActive(offered && entry.Deadcoins > 0);
+
+            if (!BossPass.Known)
+            {
+                _lockTitle.text = "Loja trancada";
+                _lockBody.text = "Consultando o seu passe...";
+                return;
+            }
+            if (entry == null)
+            {
+                _lockTitle.text = "Loja trancada";
+                _lockBody.text = $"Esta loja exige o passe de um boss ('{boss}') que o servidor não tem configurado.\n" +
+                                 "Fale com um admin.";
+                return;
+            }
+
+            _lockTitle.text = $"{BossPassCatalog.ShopName(entry)} trancada";
+            _lockBody.text =
+                $"Para comprar e vender aqui você precisa do passe de {entry.Name}.\n\n" +
+                $"Ele é de graça para quem derrotar {entry.Name}: vale acertar um golpe nele ou estar " +
+                $"a até {radius:0} m quando ele morrer.\n\n" +
+                (entry.Gold > 0 || entry.Deadcoins > 0
+                    ? "Ou pague uma vez. O passe é deste personagem e abre todo mercador que exige " +
+                      $"{entry.Name}."
+                    : "Este passe não está à venda: só derrotando o boss.");
+
+            SetLabel(_payGold, $"Pagar {entry.Gold} moedas");
+            SetLabel(_payDeadcoins, $"Pagar {entry.Deadcoins} Deadcoins");
+        }
+
+        private static void SetLabel(Button button, string text)
+        {
+            var label = button.GetComponentInChildren<TextMeshProUGUI>();
+            if (label != null) label.text = text;
+        }
+
+        private void PayGold()
+        {
+            var entry = BossPassCatalog.Find(Market?.RequiredBoss);
+            if (entry == null || entry.Gold <= 0) return;
+
+            // Nothing leaves the bag yet. The server first checks the whole purchase and
+            // answers with a quote; the coins are taken when that arrives (BossPass.Pay).
+            int coins = MarketplaceNpc.CoinsOf(Player);
+            if (coins < entry.Gold)
+            {
+                Say($"Você tem {coins} moedas; o passe custa {entry.Gold}.");
+                return;
+            }
+            RequestPass(BossPass.MethodGold, entry.Gold);
+        }
+
+        private void PayDeadcoins()
+        {
+            var entry = BossPassCatalog.Find(Market?.RequiredBoss);
+            if (entry == null || entry.Deadcoins <= 0) return;
+
+            // A courtesy only -- the server charges the balance it holds, not this copy.
+            if (BossPass.DeadcoinBalance >= 0 && BossPass.DeadcoinBalance < entry.Deadcoins)
+            {
+                Say($"Você tem {BossPass.DeadcoinBalance} Deadcoins; o passe custa {entry.Deadcoins}.");
+                return;
+            }
+            RequestPass(BossPass.MethodDeadcoins, entry.Deadcoins);
+        }
+
+        private void RequestPass(string method, int price)
+        {
+            if (!BossPass.TryBeginPurchase())
+            {
+                Say("Aguarde o pagamento anterior terminar.");
+                return;
+            }
+            if (Market != null && Market.RequestBossPass(method, price))
+            {
+                Say("Pedindo o passe ao servidor...");
+                return;
+            }
+            BossPass.EndPurchase();
+            Say("O pedido não chegou ao servidor.");
         }
 
         private void Nudge(int delta)

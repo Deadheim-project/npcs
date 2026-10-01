@@ -326,6 +326,81 @@ Pelo F7 ela abre sozinha e fala direto com o servidor por uma RPC própria
 antes de responder, e um não-VIP recebe "A loja remota é só para VIP". No NPC, a
 compra continua valendo para todo mundo.
 
+## Passe de boss: lojas trancadas por bioma
+
+Um **Mercador** pode exigir o passe de um boss. Na aba **Admin**, linha
+**Requisito**, o admin escolhe com as setas entre "Nenhum" e os bosses da config e
+clica em **Aplicar**. Sem o passe, a aba **Loja** daquele mercador mostra um cadeado
+no lugar das duas listas, e o servidor recusa comprar e vender com ele (a moeda ou o
+item voltam). O leilão não é afetado.
+
+O passe é **por personagem e por boss**, não por NPC. Pago ou ganho uma vez, abre
+todo mercador que exige aquele boss.
+
+**De graça, matando o boss.** O servidor percebe a morte sozinho e dá o passe a
+quem estava lá:
+
+- quem estava a até `[BossPass] KillRadius` metros (padrão 60, medido no chão,
+  porque o Moder morre no ar);
+- quem acertou pelo menos um golpe no boss, de qualquer distância. É a lista que o
+  próprio Valheim 1.0 grava no ZDO do boss (`ZDOVars.s_attackers` + nome), e serve
+  para o arqueiro na borda da arena e para quem morreu no meio da luta.
+
+Uma morte só conta quando o servidor vê as duas coisas que ela produz, com até 20 s
+de diferença: a **chave de derrota** (`defeated_gdking` etc., que o
+`Character.OnDeath` manda) e o **ZDO do boss sendo destruído**. Uma sozinha não
+basta. ZDO some sem morte quando um admin remove o boss ou um mod despawna boss
+parado, e a chave é uma global key que `setkey` ou um cliente modificado mandam
+quando quiserem. A chave de cada boss é lida do prefab do jogo
+(`Character.m_defeatSetGlobalKey`) e não escrita na config. O log do servidor, a
+cada morte, lista todo mundo online com a distância até o boss e se acertou ou não.
+
+**Pagando, no próprio mercador.** O cadeado tem um botão para cada forma de
+pagamento que a config oferece:
+
+- **Deadcoins**: descontado do saldo do servidor
+  (`config/DonationShop/<nome>-<conta>.json`) e registrado no mesmo log da Loja
+  Deadcoins. Fica 100% no servidor.
+- **Moedas (Coins) da bolsa**: em duas etapas. O servidor confere tudo e responde
+  com um token de uso único (personagem, boss e preço). Só então o cliente tira as
+  moedas e devolve o token. O jeito usual (pagar primeiro e receber reembolso
+  quando recusado) deixa um cliente modificado dizer que pagou qualquer valor e
+  receber de volta moedas que nunca teve. Aqui um reembolso só devolve o preço da
+  própria cotação, uma vez. O que continua dependendo do cliente é o que o Valheim
+  sempre deixa com ele: a bolsa. Um cliente modificado pode mandar o token sem ter
+  tirado as moedas e ganhar o passe sem pagar, mas não consegue criar moedas.
+
+### Config (`[BossPass]`, sincronizada e travada, recarrega ao vivo)
+
+- `Bosses`: mesmo formato da `[DeadcoinShop] Items`:
+  `boss=<prefab>;name=<nome>;shop=<nome da loja>;gold=<Coins>;deadcoins=<Deadcoins>`,
+  separados por `|`. Preço 0 = aquela forma de pagar não é oferecida. Padrão
+  (Eikthyr fora de propósito, 100 Deadcoins = R$1):
+
+  | Boss (prefab) | Abre | Coins | Deadcoins |
+  |---|---|---|---|
+  | Ancião (`gd_king`) | Loja do Pântano | 1000 | 500 |
+  | Bonemass | Loja da Montanha | 3000 | 1000 |
+  | Moder (`Dragon`) | Loja da Planície | 5000 | 2500 |
+  | Yagluth (`GoblinKing`) | Loja de Mistlands | 10000 | 5000 |
+  | Rainha (`SeekerQueen`) | Loja de Ashlands | 15000 | 10000 |
+  | Fader | Loja do Norte Profundo | 25000 | 20000 |
+
+- `KillRadius`: metros, padrão 60.
+
+Um mercador que exige um boss que saiu da config continua **trancado** (e diz isso
+na tela). Quem destranca é a aba Admin, de propósito.
+
+### Onde ficam os passes
+
+`bosspass.txt`, na pasta do mod ao lado do `market.db` (`BepInEx/plugins/npcs/` na instalação do launcher), uma linha por passe:
+`<id do personagem>;<boss>;<como>;<quando>;<nome>`. O servidor relê o arquivo quando
+ele muda, então dá para tirar um passe apagando a linha ou dar um à mão escrevendo
+`<id>;<boss>`, sem reiniciar.
+
+O requisito também entra no YAML do NPC (`marketplace.requiredBoss`). Um modelo que
+não fala do requisito deixa o NPC como está; `requiredBoss: ''` destranca.
+
 ## Interface: Unity UI com os assets do próprio Valheim
 
 O painel era IMGUI (`OnGUI`) e agora é Unity UI (uGUI), construído em

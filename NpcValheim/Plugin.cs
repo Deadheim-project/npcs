@@ -60,6 +60,8 @@ namespace NpcValheim
         internal static ConfigEntry<float> TeleportCooldownSeconds;
         internal static ConfigEntry<int> ListingDurationHours;
         internal static ConfigEntry<string> DeadcoinShopItems;
+        internal static ConfigEntry<string> BossPassBosses;
+        internal static ConfigEntry<float> BossPassKillRadius;
         internal static ConfigEntry<UnityEngine.KeyCode> QuestJournalKey;
         internal static ConfigEntry<UnityEngine.KeyCode> VipShopKey;
         internal static ConfigEntry<bool> ShowQuestButton;
@@ -126,6 +128,18 @@ namespace NpcValheim
                 "entries separated by |. Entries with a non-positive amount or price, or an unknown item, are skipped and named in the log. " +
                 "Balances live in BepInEx/config/DonationShop/<player>-<account>.json, as they did with DonationShop.");
 
+            // Same shape as DeadcoinShop.Items, for the same reason: one line an admin can read
+            // and paste. Synchronized so the counter can show the prices; the server re-reads its
+            // own copy on every payment and on every boss death.
+            BossPassBosses = Config.Bind("BossPass", "Bosses", Npc.BossPassCatalog.DefaultBosses,
+                "Bosses that can lock a Mercador's shop: boss=<creature prefab>;name=<shown name>;shop=<shop it opens>;" +
+                "gold=<Coins>;deadcoins=<Deadcoins>, entries separated by |. A price of 0 means that way of paying is not offered. " +
+                "Killing the boss (being within KillRadius when it dies, or having hit it) unlocks it for free. " +
+                "The lock itself is chosen per NPC in its Admin tab. Passes live in bosspass.txt, in the mod folder next to market.db.");
+            BossPassKillRadius = Config.Bind("BossPass", "KillRadius", 60f,
+                "Metres from the boss, measured on the ground, within which a player counts as present at its death. " +
+                "Players who hit the boss count regardless of distance.");
+
             // Server-authoritative entries. The Quests/VIP keys and HUD positions are left out
             // on purpose: they are each player's own preferences.
             ConfigSync.AddConfigEntry(TeleportCostItem).SynchronizedConfig = true;
@@ -133,6 +147,8 @@ namespace NpcValheim
             ConfigSync.AddConfigEntry(TeleportCooldownSeconds).SynchronizedConfig = true;
             ConfigSync.AddConfigEntry(ListingDurationHours).SynchronizedConfig = true;
             ConfigSync.AddConfigEntry(DeadcoinShopItems).SynchronizedConfig = true;
+            ConfigSync.AddConfigEntry(BossPassBosses).SynchronizedConfig = true;
+            ConfigSync.AddConfigEntry(BossPassKillRadius).SynchronizedConfig = true;
 
             // Everything above is read where it is used (a new teleporter, a new listing, the
             // HUD every frame), so a reload takes effect on its own. The HUD offsets are the
