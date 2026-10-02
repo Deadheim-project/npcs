@@ -118,6 +118,12 @@ namespace NpcValheim.UI
                 case DeadcoinShopNpc _:
                     AddTab("Deadcoins", new DeadcoinShopView(), npc, player);
                     break;
+                // WoW style: the trainer teaches the riding skill and sells the mounts, and
+                // the two are different purchases, so each gets its own tab.
+                case MountTrainerNpc _:
+                    AddTab("Treinamento", new MountTrainerView(MountOfferKind.Skill), npc, player);
+                    AddTab("Montarias", new MountTrainerView(MountOfferKind.Mount), npc, player);
+                    break;
                 // A marketplace NPC decides for itself which side of the economy it runs. The
                 // auction house and the merchant are different NPCs now, so nobody has to work
                 // out who they are trading with from which tab happens to be open.

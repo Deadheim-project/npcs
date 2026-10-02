@@ -70,6 +70,7 @@ namespace NpcValheim.Prefabs
             RegisterMailbox(scene);
             RegisterNpcType(scene, source, "NpcValheim_QuestGiver", typeof(QuestGiverNpc), "Missões", "quests.png");
             RegisterNpcType(scene, source, "NpcValheim_DeadcoinShop", typeof(DeadcoinShopNpc), "Loja Deadcoins", "deadcoins.png");
+            RegisterNpcType(scene, source, "NpcValheim_MountTrainer", typeof(MountTrainerNpc), "Mestre das Montarias", "mounts.png");
         }
 
         /// <summary>

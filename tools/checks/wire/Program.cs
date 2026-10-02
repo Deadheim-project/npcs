@@ -83,6 +83,18 @@ class Program
         (List<DeadcoinOffer>)Catalog.GetMethod("Parse", BindingFlags.NonPublic | BindingFlags.Static)
                                     .Invoke(null, new object[] { raw, problems });
 
+    static readonly Type MountCatalogType = typeof(QuestGiverNpc).Assembly.GetType("NpcValheim.Npc.MountCatalog");
+
+    static string DefaultMountOffers =>
+        (string)MountCatalogType.GetField("DefaultOffers", BindingFlags.NonPublic | BindingFlags.Static).GetRawConstantValue();
+
+    /// <summary>MountOffer is internal, so its rows come back as objects and are read by name.</summary>
+    static System.Collections.IList ParseMountOffers(string raw, List<string> problems) =>
+        (System.Collections.IList)MountCatalogType.GetMethod("Parse", BindingFlags.NonPublic | BindingFlags.Static)
+                                                  .Invoke(null, new object[] { raw, problems });
+
+    static string OfferField(object offer, string name) => offer.GetType().GetField(name).GetValue(offer)?.ToString();
+
     static string CanonicalAccountId(string hostName) =>
         (string)Ledger.GetMethod("CanonicalAccountId", BindingFlags.NonPublic | BindingFlags.Static)
                       .Invoke(null, new object[] { hostName });
@@ -302,6 +314,8 @@ class Program
               HandlesOnServer(Giver, "DispatchServiceAction"));
         Check("the Deadcoins counter decides purchases on the server channel",
               HandlesOnServer(typeof(DeadcoinShopNpc), "DispatchServiceAction"));
+        Check("the Mestre das Montarias decides purchases on the server channel",
+              HandlesOnServer(typeof(MountTrainerNpc), "DispatchServiceAction"));
 
         System.Console.WriteLine();
         System.Console.WriteLine("== Deadcoins counter ==");
@@ -336,6 +350,39 @@ class Program
         Check("spacing and key case do not matter",
               loose.Count == 1 && loose[0].Prefab == "Wood" && loose[0].Price == 10);
         Check("an empty list is empty, not an error", ParseOffers("", null).Count == 0);
+
+        System.Console.WriteLine();
+        System.Console.WriteLine("== Mestre das Montarias ==");
+
+        var mountProblems = new List<string>();
+        var shipped = ParseMountOffers(DefaultMountOffers, mountProblems);
+        Check("the default offers are whole", shipped.Count == 4 && mountProblems.Count == 0,
+              shipped.Count + " / " + string.Join(" / ", mountProblems));
+        Check("the default sells the first level for Coins and the capybara for Deadcoins",
+              shipped.Count == 4 &&
+              OfferField(shipped[0], "Kind") == "Skill" && OfferField(shipped[0], "Rank") == "1" &&
+              OfferField(shipped[0], "Currency") == "Coins" &&
+              OfferField(shipped[3], "Kind") == "Mount" && OfferField(shipped[3], "Id") == "javali" &&
+              OfferField(shipped[3], "Currency") == "Deadcoins");
+
+        Check("a free level is refused", ParseMountOffers("skill=1;price=0", null).Count == 0);
+        Check("a negative price is refused", ParseMountOffers("mount=javali;price=-5;currency=deadcoins", null).Count == 0);
+        Check("level 0 is refused", ParseMountOffers("skill=0;price=10", null).Count == 0);
+        Check("a level and a mount in one entry is refused",
+              ParseMountOffers("skill=1;mount=javali;price=10", null).Count == 0);
+        Check("an entry with neither is refused", ParseMountOffers("price=10;currency=coins", null).Count == 0);
+        Check("an unknown currency is refused, not read as Coins",
+              ParseMountOffers("skill=1;price=10;currency=ouro", null).Count == 0);
+
+        var noCurrency = ParseMountOffers("skill=1;price=10", null);
+        Check("no currency means Coins", noCurrency.Count == 1 && OfferField(noCurrency[0], "Currency") == "Coins");
+        var anyCase = ParseMountOffers(" Mount = javali ; PRICE = 5 ; currency = DeadCoins |", null);
+        Check("spacing and case do not matter",
+              anyCase.Count == 1 && OfferField(anyCase[0], "Id") == "javali" &&
+              OfferField(anyCase[0], "Currency") == "Deadcoins" && OfferField(anyCase[0], "Price") == "5");
+        var repeated = ParseMountOffers("mount=javali;price=5;currency=deadcoins|mount=javali;price=1;currency=coins", null);
+        Check("a repeated offer keeps its first price",
+              repeated.Count == 1 && OfferField(repeated[0], "Price") == "5");
 
         System.Console.WriteLine();
         System.Console.WriteLine("== Deadcoins balance files ==");

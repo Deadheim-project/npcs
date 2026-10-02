@@ -238,12 +238,16 @@ namespace NpcValheim.Npc
         /// <summary>One line per purchase in the log the old mod kept, now with a timestamp, a
         /// line break and both balances -- enough to settle a "my Deadcoins vanished" from the
         /// file alone.</summary>
-        internal static void AppendLog(string who, DeadcoinOffer offer, int before, int after)
+        internal static void AppendLog(string who, DeadcoinOffer offer, int before, int after) =>
+            AppendLogLine($"{who} bought {offer.Amount}x {offer.Prefab} " +
+                          $"for {offer.Price} Deadcoins (balance {before} -> {after})");
+
+        /// <summary>A timestamped line in the same log, for Deadcoins spent anywhere else (the
+        /// Mestre das Montarias), so one file still answers "where did my Deadcoins go".</summary>
+        internal static void AppendLogLine(string text)
         {
             Directory.CreateDirectory(Path.GetDirectoryName(LogPath));
-            File.AppendAllText(LogPath,
-                $"{DateTime.Now:yyyy-MM-dd HH:mm:ss} {who} bought {offer.Amount}x {offer.Prefab} " +
-                $"for {offer.Price} Deadcoins (balance {before} -> {after}){Environment.NewLine}");
+            File.AppendAllText(LogPath, $"{DateTime.Now:yyyy-MM-dd HH:mm:ss} {text}{Environment.NewLine}");
         }
     }
 
@@ -323,6 +327,13 @@ namespace NpcValheim.Npc
         }
 
         internal static void EndPurchase() => _purchaseSentAt = -PurchaseTimeout;
+
+        /// <summary>A balance the server reported through another counter (the Mestre das
+        /// Montarias spends from the same ledger).</summary>
+        internal static void NoteBalance(int balance)
+        {
+            if (balance >= 0) Balance = balance;
+        }
 
         // ---- server ----
 

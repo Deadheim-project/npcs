@@ -15,7 +15,7 @@ namespace NpcValheim
     {
         public const string Guid = "com.npcvalheim.mod";
         public const string Name = "NpcValheim";
-        public const string Version = "0.1.53";
+        public const string Version = "0.1.54";
 
         internal static ManualLogSource Log;
         private Harmony _harmony;
@@ -60,6 +60,7 @@ namespace NpcValheim
         internal static ConfigEntry<float> TeleportCooldownSeconds;
         internal static ConfigEntry<int> ListingDurationHours;
         internal static ConfigEntry<string> DeadcoinShopItems;
+        internal static ConfigEntry<string> MountTrainerOffers;
         internal static ConfigEntry<UnityEngine.KeyCode> QuestJournalKey;
         internal static ConfigEntry<UnityEngine.KeyCode> VipShopKey;
         internal static ConfigEntry<bool> ShowQuestButton;
@@ -126,6 +127,16 @@ namespace NpcValheim
                 "entries separated by |. Entries with a non-positive amount or price, or an unknown item, are skipped and named in the log. " +
                 "Balances live in BepInEx/config/DonationShop/<player>-<account>.json, as they did with DonationShop.");
 
+            // What the Mestre das Montarias sells. The levels and the mounts themselves are the
+            // Montarias mod's; this only prices them. Synchronized for display, like the
+            // Deadcoins list: the server reads its own copy on every purchase.
+            MountTrainerOffers = Config.Bind("MountTrainer", "Offers", Npc.MountCatalog.DefaultOffers,
+                "What the Mestre das Montarias sells: skill=<level> (riding skill, learned in order) or mount=<Montarias mount id>, " +
+                "with price=<amount> and currency=coins|deadcoins, entries separated by |. " +
+                "Deadcoins are charged from the server's ledger. Coins live in the buyer's inventory, which the server cannot see: " +
+                "the buyer's client pays after the server grants, as at the merchant, so a modified client can skip paying. " +
+                "Sell what must not be had for free for Deadcoins. Entries Montarias does not know are skipped and named in the log.");
+
             // Server-authoritative entries. The Quests/VIP keys and HUD positions are left out
             // on purpose: they are each player's own preferences.
             ConfigSync.AddConfigEntry(TeleportCostItem).SynchronizedConfig = true;
@@ -133,6 +144,7 @@ namespace NpcValheim
             ConfigSync.AddConfigEntry(TeleportCooldownSeconds).SynchronizedConfig = true;
             ConfigSync.AddConfigEntry(ListingDurationHours).SynchronizedConfig = true;
             ConfigSync.AddConfigEntry(DeadcoinShopItems).SynchronizedConfig = true;
+            ConfigSync.AddConfigEntry(MountTrainerOffers).SynchronizedConfig = true;
 
             // Everything above is read where it is used (a new teleporter, a new listing, the
             // HUD every frame), so a reload takes effect on its own. The HUD offsets are the
