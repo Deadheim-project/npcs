@@ -75,6 +75,7 @@ namespace NpcValheim.Prefabs
             RegisterNpcType(scene, source, "NpcValheim_ArenaBattlemaster", typeof(ArenaBattlemasterNpc), "Mestre da Arena", "arena-battlemaster.png");
             RegisterNpcType(scene, source, "NpcValheim_ArenaVendor", typeof(ArenaVendorNpc), "Intendente da Arena", "arena-vendor.png");
             RegisterNpcType(scene, source, "NpcValheim_GuildRegistrar", typeof(GuildRegistrarNpc), "Registrador de Guildas", "guild-registrar.png");
+            RegisterNpcType(scene, source, "NpcValheim_MountTrainer", typeof(MountTrainerNpc), "Mestre das Montarias", "mounts.png");
         }
 
         /// <summary>

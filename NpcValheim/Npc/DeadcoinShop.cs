@@ -328,6 +328,13 @@ namespace NpcValheim.Npc
 
         internal static void EndPurchase() => _purchaseSentAt = -PurchaseTimeout;
 
+        /// <summary>A balance the server reported through another counter (the Mestre das
+        /// Montarias spends from the same ledger).</summary>
+        internal static void NoteBalance(int balance)
+        {
+            if (balance >= 0) Balance = balance;
+        }
+
         // ---- server ----
 
         /// <summary>

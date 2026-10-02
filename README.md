@@ -542,6 +542,37 @@ que copia.
   pontos e compra no Intendente. Grava capturas de tela em `D:\tmp\arenatest\shots`.
   `-ServerOnly` sobe só o servidor.
 
+## Mestre das Montarias (com o mod Montarias)
+
+NPC colocável **Mestre das Montarias** (`MountTrainerNpc`, prefab
+`NpcValheim_MountTrainer`), no estilo do WoW: um instrutor que ensina a **Habilidade de
+Montaria** e vende as **montarias**, cada coisa numa aba (*Treinamento* e *Montarias*).
+Para invocar uma montaria o jogador precisa das duas: o nível que ela exige e a própria
+montaria. O que é cada nível (nome, bônus de velocidade) e cada montaria (nome, ícone,
+nível exigido) vem do mod **Montarias**; aqui fica só o que está à venda e por quanto.
+
+- **Lista:** `[MountTrainer] Offers` no cfg do NpcValheim, por exemplo
+  `skill=1;price=500;currency=coins|mount=javali;price=300;currency=deadcoins`.
+  `skill=N` é o nível N da habilidade e `mount=<id>` é uma montaria do Montarias. A moeda é
+  escolhida **por item** (`coins` ou `deadcoins`), porque depende do que se vende. Entrada
+  com preço não positivo, moeda desconhecida, nível que não existe ou montaria que o
+  Montarias não conhece é ignorada e aparece no log.
+- **Ordem do WoW:** um nível só pode ser aprendido em cima do anterior.
+- **Quem guarda o quê:** o que o jogador sabe e possui é o registro do Montarias **no
+  servidor** (`BepInEx/config/ValheimMontarias/cavaleiros/<personagem>-<conta>.txt`).
+  O NPC não guarda nada; ele cobra e pede ao Montarias que registre.
+- **Deadcoins:** sai do mesmo saldo da Loja Deadcoins, conferido e descontado no servidor,
+  e entra no mesmo `log.txt`. Se o Montarias não conseguir registrar a compra, o saldo volta.
+- **Coins:** ficam no inventário do jogador, que o servidor não enxerga. O servidor decide e
+  registra, e o cliente tira as moedas da bolsa quando a resposta chega: um cliente honesto
+  nunca paga por uma recusa, mas um cliente modificado pode não pagar (o mesmo limite do
+  Mercador). O que não pode sair de graça deve ser vendido em **Deadcoins**.
+
+O cliente manda só o que clicou e o preço e a moeda que a tela mostrou; o servidor compara
+com a própria lista e recusa se mudou. Sem o mod Montarias o NPC continua colocável e diz que
+não tem nada à venda. A integração é por reflexão (`Integration/MontariasApi.cs`), como a do
+EpicMMO: nenhum dos dois mods precisa do outro para compilar ou carregar.
+
 ## Interface: Unity UI com os assets do próprio Valheim
 
 O painel era IMGUI (`OnGUI`) e agora é Unity UI (uGUI), construído em

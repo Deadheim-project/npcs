@@ -69,6 +69,7 @@ namespace NpcValheim
         internal static ConfigEntry<string> DeadcoinShopItems;
         internal static ConfigEntry<string> BossPassBosses;
         internal static ConfigEntry<float> BossPassKillRadius;
+        internal static ConfigEntry<string> MountTrainerOffers;
         internal static ConfigEntry<UnityEngine.KeyCode> QuestJournalKey;
         internal static ConfigEntry<UnityEngine.KeyCode> VipShopKey;
         internal static ConfigEntry<bool> ShowQuestButton;
@@ -152,6 +153,16 @@ namespace NpcValheim
             GuildCostAmount = Config.Bind("Guildas", "CostAmount", 0,
                 "How many of CostItem founding a guild costs (0 = free). Charged only once the guild exists");
 
+            // What the Mestre das Montarias sells. The levels and the mounts themselves are the
+            // Montarias mod's; this only prices them. Synchronized for display, like the
+            // Deadcoins list: the server reads its own copy on every purchase.
+            MountTrainerOffers = Config.Bind("MountTrainer", "Offers", Npc.MountCatalog.DefaultOffers,
+                "What the Mestre das Montarias sells: skill=<level> (riding skill, learned in order) or mount=<Montarias mount id>, " +
+                "with price=<amount> and currency=coins|deadcoins, entries separated by |. " +
+                "Deadcoins are charged from the server's ledger. Coins live in the buyer's inventory, which the server cannot see: " +
+                "the buyer's client pays after the server grants, as at the merchant, so a modified client can skip paying. " +
+                "Sell what must not be had for free for Deadcoins. Entries Montarias does not know are skipped and named in the log.");
+
             // Server-authoritative entries. The Quests/VIP keys and HUD positions are left out
             // on purpose: they are each player's own preferences.
             ConfigSync.AddConfigEntry(TeleportCostItem).SynchronizedConfig = true;
@@ -166,6 +177,7 @@ namespace NpcValheim
 
             // [Arena*] sections: synchronized and locked like the rest, except the panel key.
             Arena.ArenaConfig.Bind(Config, ConfigSync);
+            ConfigSync.AddConfigEntry(MountTrainerOffers).SynchronizedConfig = true;
 
             // Everything above is read where it is used (a new teleporter, a new listing, the
             // HUD every frame), so a reload takes effect on its own. The HUD offsets are the

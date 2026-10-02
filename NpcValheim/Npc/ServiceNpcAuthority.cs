@@ -47,6 +47,7 @@ namespace NpcValheim.Npc
             "NpcValheim_ArenaBattlemaster",
             "NpcValheim_ArenaVendor",
             "NpcValheim_GuildRegistrar",
+            "NpcValheim_MountTrainer",
         };
 
         private static readonly HashSet<ZDOID> ProcessedStubs = new HashSet<ZDOID>();
@@ -72,6 +73,7 @@ namespace NpcValheim.Npc
             BossPass.Register(rpc);
             BossKillWatcher.Reset();
             Arena.ArenaNet.Register(rpc);
+            MountTrainer.Register(rpc);
             Plugin.Log.LogInfo("NpcValheim: server-authoritative service NPC RPCs registered");
         }
 
