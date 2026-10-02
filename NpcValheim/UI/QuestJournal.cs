@@ -81,7 +81,7 @@ namespace NpcValheim.UI
             long playerId = GameApi.GetPlayerId(sender);
             if (playerId == 0L) return;
 
-            ZRoutedRpc.instance.InvokeRoutedRPC(sender, RpcData, new object[] { QuestGiverNpc.PackFor(playerId) });
+            ZRoutedRpc.instance.InvokeRoutedRPC(sender, RpcData, new object[] { QuestGiverNpc.PackActiveFor(playerId) });
         }
 
         private static void OnData(long sender, string packed)
