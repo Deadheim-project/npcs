@@ -148,9 +148,10 @@ namespace NpcValheim.UI
             int active = 0;
             bool ready = false;
 
-            foreach (var giver in FindObjectsByType<QuestGiverNpc>(FindObjectsSortMode.None))
+            var live = NpcBase.Live;
+            for (int i = 0; i < live.Count; i++)
             {
-                if (giver == null || !giver.HasSyncedOnce) continue;
+                if (!(live[i] is QuestGiverNpc giver) || giver == null || !giver.HasSyncedOnce) continue;
                 foreach (var quest in giver.CachedQuests)
                 {
                     if (quest.Status != QuestStatus.Active) continue;

@@ -114,8 +114,10 @@ namespace NpcValheim.UI
             position = Vector3.zero;
             if (string.IsNullOrEmpty(npcName)) return false;
 
-            foreach (var npc in FindObjectsByType<NpcBase>(FindObjectsSortMode.None))
+            var live = NpcBase.Live;
+            for (int i = 0; i < live.Count; i++)
             {
+                var npc = live[i];
                 if (npc == null) continue;
                 if (!string.Equals(npc.GetHoverName(), npcName, System.StringComparison.OrdinalIgnoreCase))
                     continue;

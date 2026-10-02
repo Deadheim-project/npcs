@@ -49,6 +49,23 @@ namespace NpcValheim.Npc
         private bool _serverTemplateIndexReceived;
         private float _nextTemplateIndexRequest;
 
+        private static readonly List<NpcBase> s_live = new List<NpcBase>();
+
+        /// <summary>
+        /// Every NPC currently active on this peer, for the UI to look through.
+        ///
+        /// The UI used to find NPCs with FindObjectsByType, and UiRoot did it every frame.
+        /// That call walks every object the game has loaded -- hundreds of thousands on a
+        /// server with built-up bases -- so it cost frame rate everywhere, NPC in sight or
+        /// not. OnEnable/OnDisable track the same set FindObjectsByType returned (NPCs on
+        /// active GameObjects) at no per-frame cost.
+        /// </summary>
+        internal static IReadOnlyList<NpcBase> Live => s_live;
+
+        private void OnEnable() => s_live.Add(this);
+
+        private void OnDisable() => s_live.Remove(this);
+
         protected virtual void Awake()
         {
             Nview = GetComponent<ZNetView>();

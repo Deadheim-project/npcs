@@ -102,10 +102,14 @@ namespace NpcValheim.UI
             }
 
             // Interact() cannot safely build UI from inside the game's input handling, so it
-            // raises a flag that we pick up here on the next frame.
-            foreach (var npc in FindObjectsByType<NpcBase>(FindObjectsSortMode.None))
+            // raises a flag that we pick up here on the next frame. From NpcBase.Live, never
+            // FindObjectsByType: that walks every loaded object, and every frame it cost the
+            // client its frame rate (see NpcBase.Live).
+            var live = NpcBase.Live;
+            for (int i = 0; i < live.Count; i++)
             {
-                if (!npc.PanelOpenRequested) continue;
+                var npc = live[i];
+                if (npc == null || !npc.PanelOpenRequested) continue;
                 npc.ConsumePanelOpenRequest();
                 Open(npc, Player.m_localPlayer);
             }
