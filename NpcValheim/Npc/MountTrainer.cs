@@ -411,7 +411,7 @@ namespace NpcValheim.Npc
                         : MontariasApi.MountName(parts[1]);
                     string done = offerKind == MountOfferKind.Skill
                         ? $"Você aprendeu {title}!"
-                        : $"{title} agora é sua! Escolha no menu de montarias (U) e monte.";
+                        : $"{title} agora é sua! O item dela está no seu inventário: use-o para montar.";
                     Tell(done);
                     Player.m_localPlayer?.Message(MessageHud.MessageType.Center, done, 0, null);
                     MontariasApi.RequestLocalState();
