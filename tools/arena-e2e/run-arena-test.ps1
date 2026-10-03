@@ -1,4 +1,4 @@
-<#
+﻿<#
     Teste de ponta a ponta da arena, sem ninguem clicar em nada.
 
     Sobe uma COPIA isolada do servidor local (D:\dh-local): mesmos mods, mesma config,
@@ -31,6 +31,7 @@ param(
     [string]$ClientProfile = (Join-Path $env:APPDATA 'DeadheimLauncher\profiles\Default\game\BepInEx'),
     [int]$TimeoutMinutes = 30,
     [switch]$ServerOnly,
+    [switch]$FullB,
     [switch]$KeepRunning
 )
 
@@ -219,14 +220,18 @@ GamesPerWeek = 1
     # --------------------------------------------------------------- clientes
     & reg export "HKCU\Software\IronGate\valheim" $prefsBackup /y | Out-Null
     foreach ($role in @('A', 'B')) {
-        Wait-Memory 4
+        # Bravo roda sem graficos por padrao: nao tira captura e cabe numa maquina com pouca
+        # memoria. -FullB abre os dois com janela.
+        $headless = ($role -eq 'B' -and -not $FullB)
+        Wait-Memory $(if ($headless) { 1.5 } else { 3 })
         $dir = "$Root\client$role"
+        $screen = if ($headless) { '-batchmode -nographics ' } else { '-screen-fullscreen 0 -screen-width 1280 -screen-height 720 ' }
         $argLine = "--doorstop-enabled true --doorstop-target-assembly `"$dir\BepInEx\core\BepInEx.Preloader.dll`" " +
                 "+connect 127.0.0.1:$Port -password $Password " +
                 "-arenatest-role $role -arenatest-sync `"$Root\sync`" -arenatest-save `"$Root\chars-$role`" " +
                 "-arenatest-shots `"$Root\shots`" -arenatest-serverlog `"$bepLog`" " +
-                "-screen-fullscreen 0 -screen-width 1280 -screen-height 720 -logFile `"$Root\client$role-unity.log`""
-        Write-Step "Cliente $role"
+                $screen + "-logFile `"$Root\client$role-unity.log`""
+        Write-Step ("Cliente $role" + $(if ($headless) { ' (sem graficos)' } else { '' }))
         $client = Start-Process -FilePath "$ClientDir\valheim.exe" -ArgumentList $argLine -WorkingDirectory $ClientDir -PassThru
         $processes += $client
         $until = (Get-Date).AddMinutes(10)

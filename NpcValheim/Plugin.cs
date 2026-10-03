@@ -184,7 +184,8 @@ namespace NpcValheim
         private void Update()
         {
             Arena.ArenaServer.Tick();
-            if (!UnityEngine.Application.isBatchMode) Arena.ArenaClient.Tick();
+            // Returns at once without a local player, so a dedicated server pays nothing.
+            Arena.ArenaClient.Tick();
         }
 
         private void OnDestroy()
