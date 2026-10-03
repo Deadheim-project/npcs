@@ -45,6 +45,7 @@ namespace NpcValheim.Npc
             "NpcValheim_ArenaOrganizer",
             "NpcValheim_ArenaBattlemaster",
             "NpcValheim_ArenaVendor",
+            "NpcValheim_GuildRegistrar",
         };
 
         private static readonly HashSet<ZDOID> ProcessedStubs = new HashSet<ZDOID>();

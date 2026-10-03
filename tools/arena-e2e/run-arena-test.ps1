@@ -16,6 +16,9 @@
     -CursorOnly: servidor e um cliente so (Alfa, com janela), so o roteiro do cursor -- o
     mouse tem que ficar livre com o painel de um NPC ou o diario aberto. Uns 5 GB de commit.
 
+    -GuildOnly: servidor e um cliente so (Alfa), so o roteiro do Registrador de Guildas --
+    longe dele o Guilds nao funda guilda; perto, o formulario abre e a guilda nasce.
+
     -ServerOnly: so o servidor -- confere que o NpcValheim sobe, a config da arena e lida,
     a arena do Deadheim e reconhecida e nada lanca excecao. Cabe numa maquina ocupada.
 
@@ -36,6 +39,7 @@ param(
     [int]$TimeoutMinutes = 30,
     [switch]$ServerOnly,
     [switch]$CursorOnly,
+    [switch]$GuildOnly,
     [switch]$FullB,
     [switch]$KeepRunning
 )
@@ -47,7 +51,8 @@ $npcIcons = Join-Path $repo 'NpcValheim\Assets\Icons'
 $driverProj = Join-Path $PSScriptRoot 'ArenaTestDriver\ArenaTestDriver.csproj'
 $driverDll = Join-Path $PSScriptRoot 'ArenaTestDriver\bin\Release\ArenaTestDriver.dll'
 $processes = @()
-$roles = if ($CursorOnly) { @('A') } else { @('A', 'B') }
+$scenario = if ($CursorOnly) { 'cursor' } elseif ($GuildOnly) { 'guild' } else { '' }
+$roles = if ($scenario) { @('A') } else { @('A', 'B') }
 
 function Write-Step($text) { Write-Host ("[{0}] {1}" -f (Get-Date -Format 'HH:mm:ss'), $text) }
 
@@ -119,6 +124,20 @@ try {
     Copy-Item -Recurse "$SourceServer\BepInEx" "$Root\server\BepInEx"
     Remove-Item -Force -ErrorAction SilentlyContinue "$Root\server\BepInEx\LogOutput.log"
     Get-ChildItem "$Root\server\BepInEx\plugins" -Recurse -Filter '*Probe*.dll' | Remove-Item -Force
+
+    # O servidor local fica atras do launcher (que segue o servidor no ar): um mod sincronizado
+    # numa versao diferente da do cliente e o cliente e recusado com ErrorVersion. A copia de
+    # teste leva a build do cliente de cada dll que os dois tem; o D:\dh-local nao e tocado.
+    $clientDlls = @{}
+    Get-ChildItem "$ClientProfile\plugins" -Recurse -Filter '*.dll' | ForEach-Object { $clientDlls[$_.Name] = $_.FullName }
+    Get-ChildItem "$Root\server\BepInEx\plugins" -Recurse -Filter '*.dll' |
+        Where-Object { $_.Name -ne 'NpcValheim.dll' -and $clientDlls.ContainsKey($_.Name) } |
+        ForEach-Object {
+            if ((Get-FileHash $_.FullName).Hash -ne (Get-FileHash $clientDlls[$_.Name]).Hash) {
+                Copy-Item -Force $clientDlls[$_.Name] $_.FullName
+                Write-Step "Servidor de teste com a build do cliente: $($_.Name)"
+            }
+        }
     $serverNpc = Get-ChildItem "$Root\server\BepInEx\plugins" -Recurse -Filter 'NpcValheim.dll' | Select-Object -First 1
     if (-not $serverNpc) { throw 'O servidor local nao tem NpcValheim.dll' }
     Copy-Item -Force $npcDll $serverNpc.FullName
@@ -236,7 +255,7 @@ GamesPerWeek = 1
                 "+connect 127.0.0.1:$Port -password $Password " +
                 "-arenatest-role $role -arenatest-sync `"$Root\sync`" -arenatest-save `"$Root\chars-$role`" " +
                 "-arenatest-shots `"$Root\shots`" -arenatest-serverlog `"$bepLog`" " +
-                $(if ($CursorOnly) { '-arenatest-scenario cursor ' } else { '' }) +
+                $(if ($scenario) { "-arenatest-scenario $scenario " } else { '' }) +
                 $screen + "-logFile `"$Root\client$role-unity.log`""
         Write-Step ("Cliente $role" + $(if ($headless) { ' (sem graficos)' } else { '' }))
         $client = Start-Process -FilePath "$ClientDir\valheim.exe" -ArgumentList $argLine -WorkingDirectory $ClientDir -PassThru
@@ -251,7 +270,7 @@ GamesPerWeek = 1
     }
 
     # A arena que o driver escolheu vira config do servidor (recarga ao vivo + ServerSync).
-    if (-not $CursorOnly) {
+    if (-not $scenario) {
         $until = (Get-Date).AddMinutes(5)
         while (-not (Test-Path "$Root\sync\arena.txt")) {
             if ((Get-Date) -gt $until) { throw 'O driver nao propos a arena.' }

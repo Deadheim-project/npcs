@@ -73,6 +73,7 @@ namespace NpcValheim.Prefabs
             RegisterNpcType(scene, source, "NpcValheim_ArenaOrganizer", typeof(ArenaOrganizerNpc), "Organizador de Arena", "arena-organizer.png");
             RegisterNpcType(scene, source, "NpcValheim_ArenaBattlemaster", typeof(ArenaBattlemasterNpc), "Mestre da Arena", "arena-battlemaster.png");
             RegisterNpcType(scene, source, "NpcValheim_ArenaVendor", typeof(ArenaVendorNpc), "Intendente da Arena", "arena-vendor.png");
+            RegisterNpcType(scene, source, "NpcValheim_GuildRegistrar", typeof(GuildRegistrarNpc), "Registrador de Guildas", "guild-registrar.png");
         }
 
         /// <summary>
