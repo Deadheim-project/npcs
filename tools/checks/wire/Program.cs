@@ -114,6 +114,16 @@ class Program
         (Dictionary<long, HashSet<string>>)PassLedger.GetMethod("Parse", AnyStatic)
             .Invoke(null, new object[] { lines, problems });
 
+    static Dictionary<long, Dictionary<string, string>> ParseLedgerSources(string[] lines) =>
+        (Dictionary<long, Dictionary<string, string>>)PassLedger.GetMethod("ParseSources", AnyStatic)
+            .Invoke(null, new object[] { lines, null });
+
+    static string KindOf(string source) =>
+        (string)PassLedger.GetMethod("KindOf", AnyStatic).Invoke(null, new object[] { source });
+
+    static string ChosenBuyPayload(string boss, string method, int price) =>
+        (string)ModType("BossPass").GetMethod("ChosenBuyPayload", AnyStatic).Invoke(null, new object[] { boss, method, price });
+
     static string LedgerLine(long playerId, string boss, string source, string name) =>
         (string)PassLedger.GetMethod("FormatLine", AnyStatic)
             .Invoke(null, new object[] { playerId, boss, source, new DateTime(2026, 10, 1, 12, 0, 0), name });
@@ -336,6 +346,8 @@ class Program
               HandlesOnServer(typeof(MarketplaceNpc), "DispatchServiceAction"));
         Check("the merchant takes its boss lock on the admin channel",
               HandlesOnServer(typeof(MarketplaceNpc), "DispatchAdminMutation"));
+        Check("the boss pass NPC sells passes on the server channel",
+              HandlesOnServer(typeof(BossPassNpc), "DispatchServiceAction"));
 
         System.Console.WriteLine();
         System.Console.WriteLine("== Deadcoins counter ==");
@@ -443,6 +455,25 @@ class Program
         Check("a hand-added two-field line is a pass", held.ContainsKey(99) && held[99].Contains("Dragon"));
         Check("lines that are not passes are skipped and named",
               held.Count == 2 && ledgerProblems.Count == 3, string.Join(" / ", ledgerProblems));
+
+        // How a pass was won, which the boss pass NPC shows next to each boss.
+        Check("a kill reads as a kill", KindOf("kill") == "kill");
+        Check("a Coins purchase reads as Coins, whatever the price", KindOf("gold:3000") == "gold");
+        Check("a Deadcoins purchase reads as Deadcoins", KindOf(" Deadcoins:500 ") == "deadcoins");
+        Check("anything an admin typed reads as the admin's", KindOf("presente do Werner") == "admin" &&
+              KindOf("") == "admin" && KindOf(null) == "admin" && KindOf("killer") == "admin");
+        var sources = ParseLedgerSources(new[]
+        {
+            "5;Dragon;kill;2026-10-01 12:00:00;Ragnar",
+            "5;Dragon;gold:5000;2026-10-02 12:00:00;Ragnar",
+            "5;Bonemass",
+        });
+        Check("a pass listed twice keeps how it was first won",
+              sources.ContainsKey(5) && sources[5]["Dragon"] == "kill");
+        Check("a two-field line has no source, so it is the admin's",
+              sources.ContainsKey(5) && sources[5]["Bonemass"] == "" && KindOf(sources[5]["Bonemass"]) == "admin");
+        Check("the NPC's request names the pass before the counter's request",
+              ChosenBuyPayload("Dragon", "deadcoins", 2500) == "Dragon\ndeadcoins\n2500");
 
         System.Console.WriteLine();
         System.Console.WriteLine("== boss deaths ==");

@@ -176,7 +176,9 @@ namespace NpcValheim.Npc
     /// Text and not LiteDB, because the two things an admin will want to do by hand are
     /// "who has this" and "take it away / give it to them", and both are a text editor away.
     /// The file is re-read whenever it changes on disk, so an edit takes effect without a
-    /// restart. Only the first two fields decide anything; the rest is for whoever reads it.
+    /// restart. The first two fields decide who holds what; the third says how it was won,
+    /// which the boss pass NPC shows (a kill, Coins, Deadcoins, or anything else an admin
+    /// typed); the rest is for whoever reads it.
     ///
     /// Passes are per character (Player.GetPlayerID), the same id the market and the mail
     /// use: the boss was killed by a character, not by an account.
@@ -190,18 +192,34 @@ namespace NpcValheim.Npc
             "# <id do personagem>;<boss>;<como>;<quando>;<nome>\n" +
             "# Apagar a linha tira o passe. O servidor relê este arquivo sempre que ele muda.\n";
 
+        // How a pass was won, as the panel tells it. The ledger keeps the full source
+        // ("gold:1000"); these are its first word, and anything else is an admin's hand.
+        internal const string KindKill = "kill";
+        internal const string KindGold = "gold";
+        internal const string KindDeadcoins = "deadcoins";
+        internal const string KindAdmin = "admin";
+
         internal static string FilePath => Path.Combine(NpcStoragePaths.DatabaseDirectory, FileName);
 
-        private static readonly Dictionary<long, HashSet<string>> Passes = new Dictionary<long, HashSet<string>>();
+        /// <summary>Character -> boss -> how it was won (the third field, as written).</summary>
+        private static readonly Dictionary<long, Dictionary<string, string>> Passes =
+            new Dictionary<long, Dictionary<string, string>>();
         private static string _loadedPath;
         private static DateTime _loadedStamp;
         private static long _loadedLength = -1;
 
         /// <summary>The passes a file grants. Lines that are not passes are skipped and named,
         /// never guessed at.</summary>
-        internal static Dictionary<long, HashSet<string>> Parse(IEnumerable<string> lines, List<string> problems)
+        internal static Dictionary<long, HashSet<string>> Parse(IEnumerable<string> lines, List<string> problems) =>
+            ParseSources(lines, problems).ToDictionary(p => p.Key,
+                p => new HashSet<string>(p.Value.Keys, StringComparer.Ordinal));
+
+        /// <summary>The same, with how each pass was won. A pass listed twice keeps its first
+        /// line: that is when it was won, and an admin's later copy does not rewrite it.</summary>
+        internal static Dictionary<long, Dictionary<string, string>> ParseSources(IEnumerable<string> lines,
+            List<string> problems)
         {
-            var result = new Dictionary<long, HashSet<string>>();
+            var result = new Dictionary<long, Dictionary<string, string>>();
             if (lines == null) return result;
 
             int number = 0;
@@ -220,11 +238,22 @@ namespace NpcValheim.Npc
                     continue;
                 }
 
-                if (!result.TryGetValue(playerId, out var set))
-                    result[playerId] = set = new HashSet<string>(StringComparer.Ordinal);
-                set.Add(fields[1].Trim());
+                if (!result.TryGetValue(playerId, out var held))
+                    result[playerId] = held = new Dictionary<string, string>(StringComparer.Ordinal);
+                string boss = fields[1].Trim();
+                if (!held.ContainsKey(boss)) held[boss] = fields.Length > 2 ? fields[2].Trim() : "";
             }
             return result;
+        }
+
+        /// <summary>The kind of a source as written in the file: "gold:1000" is gold, "kill" a
+        /// kill, and whatever else (an admin's "presente", an empty field) the admin's.</summary>
+        internal static string KindOf(string source)
+        {
+            string text = (source ?? "").Trim();
+            int colon = text.IndexOf(':');
+            string head = (colon >= 0 ? text.Substring(0, colon) : text).Trim().ToLowerInvariant();
+            return head == KindKill || head == KindGold || head == KindDeadcoins ? head : KindAdmin;
         }
 
         internal static string FormatLine(long playerId, string boss, string source, DateTime when, string name) =>
@@ -235,15 +264,19 @@ namespace NpcValheim.Npc
         {
             if (playerId == 0L || string.IsNullOrEmpty(boss)) return false;
             Refresh();
-            return Passes.TryGetValue(playerId, out var set) && set.Contains(boss);
+            return Passes.TryGetValue(playerId, out var held) && held.ContainsKey(boss);
         }
 
-        internal static List<string> PassesOf(long playerId)
+        internal static List<string> PassesOf(long playerId) => KindsOf(playerId).Keys.ToList();
+
+        /// <summary>A character's passes and how each was won (KindOf), by boss.</summary>
+        internal static SortedDictionary<string, string> KindsOf(long playerId)
         {
             Refresh();
-            return Passes.TryGetValue(playerId, out var set)
-                ? set.OrderBy(b => b, StringComparer.Ordinal).ToList()
-                : new List<string>();
+            var kinds = new SortedDictionary<string, string>(StringComparer.Ordinal);
+            if (Passes.TryGetValue(playerId, out var held))
+                foreach (var pass in held) kinds[pass.Key] = KindOf(pass.Value);
+            return kinds;
         }
 
         /// <summary>
@@ -262,9 +295,9 @@ namespace NpcValheim.Npc
             if (!File.Exists(path)) File.WriteAllText(path, Header);
             File.AppendAllText(path, FormatLine(playerId, boss, source, DateTime.Now, name) + Environment.NewLine);
 
-            if (!Passes.TryGetValue(playerId, out var set))
-                Passes[playerId] = set = new HashSet<string>(StringComparer.Ordinal);
-            set.Add(boss);
+            if (!Passes.TryGetValue(playerId, out var held))
+                Passes[playerId] = held = new Dictionary<string, string>(StringComparer.Ordinal);
+            held[boss] = Clean(source);
             Remember(path);
             return true;
         }
@@ -290,7 +323,7 @@ namespace NpcValheim.Npc
                 info.LastWriteTimeUtc == _loadedStamp && info.Length == _loadedLength) return;
 
             var problems = new List<string>();
-            var parsed = Parse(File.ReadAllLines(path), problems);
+            var parsed = ParseSources(File.ReadAllLines(path), problems);
             Passes.Clear();
             foreach (var pair in parsed) Passes[pair.Key] = pair.Value;
             Remember(path);
@@ -321,7 +354,9 @@ namespace NpcValheim.Npc
     /// ZDO, the price off the server's config, the Deadcoins off the server's balance file,
     /// and the pass is written to the server's ledger. What the client sends is "I want this
     /// counter's pass, paying this way, at the price I was shown", and that price is only
-    /// compared, never charged -- same rule as the Deadcoins counter.
+    /// compared, never charged -- same rule as the Deadcoins counter. At the boss pass NPC the
+    /// client also names which pass it wants, since that counter sells all of them; the server
+    /// looks that name up in its own list, and a name it does not have is refused.
     ///
     /// Paying in Coins needs two steps, because Coins are items in the player's own bag and no
     /// server can reach into a remote inventory. The server first validates the whole purchase
@@ -358,7 +393,8 @@ namespace NpcValheim.Npc
         internal static string LastMessage { get; private set; }
         internal static int MessageRevision { get; private set; }
 
-        private static readonly HashSet<string> OwnPasses = new HashSet<string>(StringComparer.Ordinal);
+        /// <summary>This character's passes, boss -> how it was won (BossPassLedger.Kind*).</summary>
+        private static readonly Dictionary<string, string> OwnPasses = new Dictionary<string, string>(StringComparer.Ordinal);
         private static float _purchaseSentAt = -PurchaseTimeout;
 
         // ---- server state ----
@@ -389,7 +425,18 @@ namespace NpcValheim.Npc
             rpc.Register(RpcPay, (Action<long, string>)RPC_Pay);
         }
 
-        internal static bool HasLocalPass(string boss) => !string.IsNullOrEmpty(boss) && OwnPasses.Contains(boss);
+        internal static bool HasLocalPass(string boss) => !string.IsNullOrEmpty(boss) && OwnPasses.ContainsKey(boss);
+
+        /// <summary>How this character won a pass (BossPassLedger.Kind*), or null without it.</summary>
+        internal static string LocalPassKind(string boss) =>
+            !string.IsNullOrEmpty(boss) && OwnPasses.TryGetValue(boss, out var kind) ? kind : null;
+
+        /// <summary>Changes whenever the passes the server reported do; a panel listing them
+        /// compares this instead of the whole set.</summary>
+        internal static string LocalPassSignature =>
+            Known
+                ? string.Join(",", OwnPasses.OrderBy(p => p.Key, StringComparer.Ordinal).Select(p => p.Key + "=" + p.Value))
+                : "?";
 
         /// <summary>One purchase in flight at a time, so a double click is not two passes.</summary>
         internal static bool TryBeginPurchase()
@@ -405,6 +452,40 @@ namespace NpcValheim.Npc
 
         internal static string BuyPayload(string method, int shownPrice) =>
             method + "\n" + shownPrice.ToString(CultureInfo.InvariantCulture);
+
+        /// <summary>The boss pass NPC's request, which also names the pass.</summary>
+        internal static string ChosenBuyPayload(string boss, string method, int shownPrice) =>
+            boss + "\n" + BuyPayload(method, shownPrice);
+
+        /// <summary>
+        /// The client half of a purchase, shared by the merchant's lock and the boss pass NPC:
+        /// the courtesy checks on what this player can see (the server checks again on its
+        /// own copy), one purchase in flight, and the request itself, which `send` delivers
+        /// through the counter it was made at. Returns what to tell the player.
+        /// </summary>
+        internal static string BeginPurchase(BossPassEntry entry, string method, Func<int, bool> send)
+        {
+            if (entry == null) return null;
+            int price = method == MethodGold ? entry.Gold : entry.Deadcoins;
+            if (price <= 0) return null;
+
+            if (method == MethodGold)
+            {
+                // Nothing leaves the bag yet. The server first checks the whole purchase and
+                // answers with a quote; the coins are taken when that arrives (Pay).
+                int coins = MarketplaceNpc.CoinsOf(Player.m_localPlayer);
+                if (coins < price) return $"Você tem {coins} moedas; o passe custa {price}.";
+            }
+            else if (DeadcoinBalance >= 0 && DeadcoinBalance < price)
+            {
+                return $"Você tem {DeadcoinBalance} Deadcoins; o passe custa {price}.";
+            }
+
+            if (!TryBeginPurchase()) return "Aguarde o pagamento anterior terminar.";
+            if (send(price)) return "Pedindo o passe ao servidor...";
+            EndPurchase();
+            return "O pedido não chegou ao servidor.";
+        }
 
         // ---- server: the gate ----
 
@@ -458,10 +539,10 @@ namespace NpcValheim.Npc
                 return;
             }
 
-            List<string> passes;
+            string passes;
             try
             {
-                passes = BossPassLedger.PassesOf(playerId);
+                passes = PassList(playerId);
             }
             catch (Exception e)
             {
@@ -470,8 +551,12 @@ namespace NpcValheim.Npc
                 return;
             }
 
-            Send(sender, "status", Int(ReadDeadcoins(sender)) + "\n" + string.Join(",", passes));
+            Send(sender, "status", Int(ReadDeadcoins(sender)) + "\n" + passes);
         }
+
+        /// <summary>"boss=kind,boss=kind": boss ids never hold ',' or '=' (IsCleanId).</summary>
+        private static string PassList(long playerId) =>
+            string.Join(",", BossPassLedger.KindsOf(playerId).Select(p => p.Key + "=" + p.Value));
 
         /// <summary>The sender's Deadcoins, or -1 when there is no account or file to read.
         /// Display only; the purchase reads the file again.</summary>
@@ -500,7 +585,20 @@ namespace NpcValheim.Npc
         /// and the pass is written when the token comes back (RPC_Pay). Every refusal says why,
         /// on the player's screen and in the log, and none of them has taken anything yet.
         /// </summary>
-        internal static void ServePurchase(long sender, string requiredBoss, string where, string payload)
+        internal static void ServePurchase(long sender, string requiredBoss, string where, string payload) =>
+            ServePurchase(sender, requiredBoss, where, payload, chosen: false);
+
+        /// <summary>A request at the boss pass NPC, where the buyer picks the pass:
+        /// "boss\nmethod\nshown price". Everything after the name is the counter's request.</summary>
+        internal static void ServeChosenPurchase(long sender, string where, string payload)
+        {
+            string text = payload ?? "";
+            int cut = text.IndexOf('\n');
+            ServePurchase(sender, cut < 0 ? "" : text.Substring(0, cut), where,
+                cut < 0 ? text : text.Substring(cut + 1), chosen: true);
+        }
+
+        private static void ServePurchase(long sender, string requiredBoss, string where, string payload, bool chosen)
         {
             Plugin.Log.LogInfo($"NpcValheim: 'bosspass-buy' from peer {sender} at {where}: \"{payload}\"");
 
@@ -521,10 +619,14 @@ namespace NpcValheim.Npc
             var entry = BossPassCatalog.Find(requiredBoss);
             if (entry == null)
             {
-                Refuse(sender, 0, $"the counter requires '{requiredBoss}', which is not configured",
-                    string.IsNullOrEmpty(requiredBoss)
-                        ? "Esta loja não está trancada."
-                        : "Esta loja exige um boss que o servidor não tem configurado. Fale com um admin.");
+                Refuse(sender, 0, chosen
+                        ? $"the buyer asked for '{requiredBoss}', which is not configured"
+                        : $"the counter requires '{requiredBoss}', which is not configured",
+                    chosen
+                        ? "Esse passe não está mais à venda. Feche e abra o painel de novo."
+                        : string.IsNullOrEmpty(requiredBoss)
+                            ? "Esta loja não está trancada."
+                            : "Esta loja exige um boss que o servidor não tem configurado. Fale com um admin.");
                 return;
             }
 
@@ -664,7 +766,7 @@ namespace NpcValheim.Npc
             try { DeadcoinLedger.AppendLogLine($"{who} bought the {entry.Boss} pass for {entry.Deadcoins} Deadcoins (balance {balance} -> {after})"); }
             catch (Exception e) { Plugin.Log.LogWarning($"NpcValheim: Deadcoins purchase log not written: {e.Message}"); }
 
-            Send(sender, "granted", entry.Boss + "\n" + Int(after) + "\n0\n" +
+            Send(sender, "granted", entry.Boss + "\n" + Int(after) + "\n0\n" + BossPassLedger.KindDeadcoins + "\n" +
                                     $"{BossPassCatalog.ShopName(entry)} liberada! Passe de {entry.Name} pago com {entry.Deadcoins} Deadcoins.");
         }
 
@@ -727,7 +829,7 @@ namespace NpcValheim.Npc
             }
 
             Plugin.Log.LogInfo($"NpcValheim: {quote.Name} ({playerId}) bought the {quote.Boss} pass for {quote.Price} Coins at {quote.Where}");
-            Send(sender, "granted", quote.Boss + "\n-1\n0\n" +
+            Send(sender, "granted", quote.Boss + "\n-1\n0\n" + BossPassLedger.KindGold + "\n" +
                                     $"{shop} liberada! Passe de {name} pago com {quote.Price} moedas.");
         }
 
@@ -776,7 +878,7 @@ namespace NpcValheim.Npc
         {
             try
             {
-                Send(sender, "status", Int(ReadDeadcoins(sender)) + "\n" + string.Join(",", BossPassLedger.PassesOf(playerId)));
+                Send(sender, "status", Int(ReadDeadcoins(sender)) + "\n" + PassList(playerId));
             }
             catch
             {
@@ -801,8 +903,12 @@ namespace NpcValheim.Npc
                 case "status" when parts.Length == 2 && TryInt(parts[0], out int balance):
                     DeadcoinBalance = balance;
                     OwnPasses.Clear();
-                    foreach (var boss in parts[1].Split(','))
-                        if (boss.Length > 0) OwnPasses.Add(boss);
+                    foreach (var pass in parts[1].Split(','))
+                    {
+                        int eq = pass.IndexOf('=');
+                        string boss = eq < 0 ? pass : pass.Substring(0, eq);
+                        if (boss.Length > 0) OwnPasses[boss] = eq < 0 ? BossPassLedger.KindAdmin : pass.Substring(eq + 1);
+                    }
                     Known = true;
                     break;
 
@@ -814,17 +920,17 @@ namespace NpcValheim.Npc
                     Pay(parts[0], parts[1], price);
                     break;
 
-                case "granted" when parts.Length == 4 && TryInt(parts[1], out int balance) &&
+                case "granted" when parts.Length == 5 && TryInt(parts[1], out int balance) &&
                                     TryInt(parts[2], out int change):
-                    OwnPasses.Add(parts[0]);
+                    OwnPasses[parts[0]] = parts[3];
                     if (balance >= 0) DeadcoinBalance = balance;
                     EndPurchase();
                     GiveBack(change);
-                    Announce(parts[3]);
+                    Announce(parts[4]);
                     break;
 
                 case "unlocked" when parts.Length == 2:
-                    OwnPasses.Add(parts[0]);
+                    OwnPasses[parts[0]] = BossPassLedger.KindKill;
                     Announce(parts[1]);
                     break;
 

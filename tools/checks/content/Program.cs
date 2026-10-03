@@ -45,6 +45,12 @@ class Program
         bool Has(long id, string boss) => (bool)ledger.GetMethod("Has", anyStatic).Invoke(null, new object[] { id, boss });
         bool Grant(long id, string name, string boss, string how) =>
             (bool)ledger.GetMethod("Grant", anyStatic).Invoke(null, new object[] { id, name, boss, how });
+        string Kind(long id, string boss)
+        {
+            var kinds = (System.Collections.Generic.IDictionary<string, string>)ledger.GetMethod("KindsOf", anyStatic)
+                .Invoke(null, new object[] { id });
+            return kinds.TryGetValue(boss, out var kind) ? kind : null;
+        }
 
         if (File.Exists(path)) File.Delete(path);
         Check("nobody holds a pass before the file exists", !Has(5001, "gd_king"));
@@ -66,6 +72,15 @@ class Program
         Check("a hand-written line gives a pass", Has(5002, "Bonemass"));
         Check("the character can win it again after losing it", Grant(5001, "Ragnar", "gd_king", "kill") &&
               Has(5001, "gd_king") && Has(5002, "Bonemass"));
+
+        // What the boss pass NPC shows next to each boss.
+        Check("a pass won in a fight says so", Kind(5001, "gd_king") == "kill");
+        Check("a hand-written pass is the admin's", Kind(5002, "Bonemass") == "admin");
+        Check("a bought pass says what paid for it", Grant(5001, "Ragnar", "Dragon", "gold:5000") &&
+              Kind(5001, "Dragon") == "gold");
+        File.AppendAllText(path, "5002;SeekerQueen;deadcoins:10000;2026-10-03 09:00:00;Bravo" + Environment.NewLine);
+        Check("and so does one an admin copied in", Kind(5002, "SeekerQueen") == "deadcoins");
+        Check("a pass nobody holds has no kind", Kind(5002, "Dragon") == null);
     }
 
     /// <summary>

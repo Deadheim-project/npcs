@@ -370,6 +370,23 @@ pagamento que a config oferece:
   sempre deixa com ele: a bolsa. Um cliente modificado pode mandar o token sem ter
   tirado as moedas e ganhar o passe sem pagar, mas não consegue criar moedas.
 
+### Mestre dos Passes (`NpcValheim_BossPass`)
+
+NPC só do passe, colocado por admin pelo martelo como a Loja Deadcoins. A aba
+**Passes** lista todos os bosses da config, com a loja que cada um abre e, para o
+personagem de quem abriu:
+
+- se ele já tem o passe e como ganhou: **em combate**, **com moedas**, **com
+  Deadcoins** ou **por um admin** (qualquer outra coisa escrita à mão no
+  `bosspass.txt`);
+- os dois botões de pagamento, nos bosses que ele ainda não tem.
+
+A compra é a mesma do cadeado do Mercador, pelos mesmos dois caminhos (Deadcoins no
+servidor; moedas com token de uso único). A única diferença é que aqui o cliente diz
+qual passe quer, e o servidor procura esse nome na própria lista: boss fora da
+config é recusado. O painel pergunta o estado ao servidor a cada 5 s, então um boss
+morto em outro lugar ou um passe dado à mão no arquivo aparecem com ele aberto.
+
 ### Config (`[BossPass]`, sincronizada e travada, recarrega ao vivo)
 
 - `Bosses`: mesmo formato da `[DeadcoinShop] Items`:
@@ -396,7 +413,10 @@ na tela). Quem destranca é a aba Admin, de propósito.
 `bosspass.txt`, na pasta do mod ao lado do `market.db` (`BepInEx/plugins/npcs/` na instalação do launcher), uma linha por passe:
 `<id do personagem>;<boss>;<como>;<quando>;<nome>`. O servidor relê o arquivo quando
 ele muda, então dá para tirar um passe apagando a linha ou dar um à mão escrevendo
-`<id>;<boss>`, sem reiniciar.
+`<id>;<boss>`, sem reiniciar. O terceiro campo é o que o Mestre dos Passes mostra:
+`kill`, `gold:<preço>` e `deadcoins:<preço>` são os que o servidor escreve; qualquer
+outra coisa (ou nada) aparece como "concedido por um admin". Se o mesmo passe
+aparecer duas vezes, vale a primeira linha.
 
 O requisito também entra no YAML do NPC (`marketplace.requiredBoss`). Um modelo que
 não fala do requisito deixa o NPC como está; `requiredBoss: ''` destranca.

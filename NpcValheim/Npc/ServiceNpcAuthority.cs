@@ -42,6 +42,7 @@ namespace NpcValheim.Npc
             "NpcValheim_Mailbox",
             "NpcValheim_QuestGiver",
             "NpcValheim_DeadcoinShop",
+            "NpcValheim_BossPass",
         };
 
         private static readonly HashSet<ZDOID> ProcessedStubs = new HashSet<ZDOID>();

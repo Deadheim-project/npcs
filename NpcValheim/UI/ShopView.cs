@@ -348,50 +348,16 @@ namespace NpcValheim.UI
             if (label != null) label.text = text;
         }
 
-        private void PayGold()
+        private void PayGold() => RequestPass(BossPass.MethodGold);
+
+        private void PayDeadcoins() => RequestPass(BossPass.MethodDeadcoins);
+
+        private void RequestPass(string method)
         {
-            var entry = BossPassCatalog.Find(Market?.RequiredBoss);
-            if (entry == null || entry.Gold <= 0) return;
-
-            // Nothing leaves the bag yet. The server first checks the whole purchase and
-            // answers with a quote; the coins are taken when that arrives (BossPass.Pay).
-            int coins = MarketplaceNpc.CoinsOf(Player);
-            if (coins < entry.Gold)
-            {
-                Say($"Você tem {coins} moedas; o passe custa {entry.Gold}.");
-                return;
-            }
-            RequestPass(BossPass.MethodGold, entry.Gold);
-        }
-
-        private void PayDeadcoins()
-        {
-            var entry = BossPassCatalog.Find(Market?.RequiredBoss);
-            if (entry == null || entry.Deadcoins <= 0) return;
-
-            // A courtesy only -- the server charges the balance it holds, not this copy.
-            if (BossPass.DeadcoinBalance >= 0 && BossPass.DeadcoinBalance < entry.Deadcoins)
-            {
-                Say($"Você tem {BossPass.DeadcoinBalance} Deadcoins; o passe custa {entry.Deadcoins}.");
-                return;
-            }
-            RequestPass(BossPass.MethodDeadcoins, entry.Deadcoins);
-        }
-
-        private void RequestPass(string method, int price)
-        {
-            if (!BossPass.TryBeginPurchase())
-            {
-                Say("Aguarde o pagamento anterior terminar.");
-                return;
-            }
-            if (Market != null && Market.RequestBossPass(method, price))
-            {
-                Say("Pedindo o passe ao servidor...");
-                return;
-            }
-            BossPass.EndPurchase();
-            Say("O pedido não chegou ao servidor.");
+            var market = Market;
+            string said = BossPass.BeginPurchase(BossPassCatalog.Find(market?.RequiredBoss), method,
+                price => market != null && market.RequestBossPass(method, price));
+            if (said != null) Say(said);
         }
 
         private void Nudge(int delta)
