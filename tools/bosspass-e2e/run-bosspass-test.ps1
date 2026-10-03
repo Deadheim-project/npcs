@@ -109,19 +109,23 @@ if ($WaitIdle -gt 0) {
     # Livre por 5 minutos seguidos, nao so num instante: o Deadheim Launcher fecha todo
     # valheim.exe aberto quando o jogador abre o jogo, e foi assim que um cliente de teste
     # morreu um minuto depois de a maquina "ficar livre" (o jogador so tinha saido e voltado).
+    # Servidor aberto tambem conta: o teste de outra sessao (arena, guildas...) sobe o servidor
+    # um minuto antes dos clientes, e o dh-local aberto e alguem testando nele.
     $until = (Get-Date).AddMinutes($WaitIdle)
     $idleSince = $null
     while ($true) {
         $clients = @(Get-Process valheim -ErrorAction SilentlyContinue)
+        $servers = @(Get-Process valheim_server -ErrorAction SilentlyContinue)
         $free = Free-Commit
         # Servidor ~2 GB de commit e cada cliente sem graficos ~2.
-        if ($clients.Count -eq 0 -and $free -ge 5.5) {
+        if ($clients.Count -eq 0 -and $servers.Count -eq 0 -and $free -ge 5.5) {
             if (-not $idleSince) { $idleSince = Get-Date }
             if (((Get-Date) - $idleSince).TotalMinutes -ge 5) { break }
         }
         else { $idleSince = $null }
-        if ((Get-Date) -gt $until) { throw ("A maquina nao ficou livre em $WaitIdle min ({0} cliente(s) do Valheim, {1:N1} GB livres)." -f $clients.Count, $free) }
-        Write-Step ("Esperando a maquina: {0} cliente(s) do Valheim abertos, {1:N1} GB livres" -f $clients.Count, $free)
+        $busy = "{0} cliente(s) e {1} servidor(es) do Valheim abertos, {2:N1} GB livres" -f $clients.Count, $servers.Count, $free
+        if ((Get-Date) -gt $until) { throw "A maquina nao ficou livre em $WaitIdle min ($busy)." }
+        Write-Step "Esperando a maquina: $busy"
         Start-Sleep -Seconds 60
     }
     Write-Step 'Maquina livre'
