@@ -153,15 +153,24 @@ namespace NpcValheim.UI
 
         private void Close()
         {
+            // O Update chama Close() a cada frame enquanto nao ha jogador local, ou seja,
+            // o tempo todo no menu principal. Sem esta guarda, cada chamada escondia e
+            // travava o cursor, e como fora do mundo o jogo nao o reafirma, o jogador
+            // ficava sem conseguir clicar em nada: nem criar nem escolher personagem.
+            // So devolvemos o cursor ao jogo quando havia de fato um painel nosso aberto.
+            bool wasOpen = _canvas != null;
             foreach (var row in _rows) if (row != null) Destroy(row);
             _rows.Clear();
             if (_canvas != null) Destroy(_canvas);
             _canvas = null;
             _list = null;
             _empty = null;
+            if (!wasOpen) return;
             UiInputBlocker.IsOpen = UiRoot.IsOpen;
             if (!UiRoot.IsOpen && !Menu.IsVisible())
             {
+                // DIAG TEMPORARIO: remover
+                if (Player.m_localPlayer == null) Plugin.Log.LogWarning("[DIAG] cursor travado por VipNpcDirectory.Close sem jogador | " + System.Environment.StackTrace.Substring(0, 600));
                 Cursor.lockState = CursorLockMode.Locked;
                 Cursor.visible = false;
             }

@@ -93,6 +93,13 @@ namespace NpcValheim.UI
         {
             if (Player.m_localPlayer == null)
             {
+                // DIAG TEMPORARIO: remover
+                if (_diagCount < 12 && Time.realtimeSinceStartup >= _diagNext)
+                {
+                    _diagNext = Time.realtimeSinceStartup + 5f;
+                    _diagCount++;
+                    Plugin.Log.LogWarning($"[DIAG] menu: cursor visible={Cursor.visible} lock={Cursor.lockState} blockerOpen={UiInputBlocker.IsOpen}");
+                }
                 if (_window != null) Close();
                 return;
             }
@@ -137,6 +144,8 @@ namespace NpcValheim.UI
         }
 
         private bool _loggedCursorState;
+        private float _diagNext; // DIAG TEMPORARIO: remover
+        private int _diagCount;  // DIAG TEMPORARIO: remover
 
         private void OnDestroy()
         {
@@ -150,6 +159,8 @@ namespace NpcValheim.UI
         {
             _loggedCursorState = false;
             if (Menu.IsVisible() || (InventoryGui.instance != null && InventoryGui.IsVisible())) return;
+            // DIAG TEMPORARIO: remover
+            if (Player.m_localPlayer == null) Plugin.Log.LogWarning("[DIAG] cursor travado por UiRoot.ReleaseCursor sem jogador | " + System.Environment.StackTrace.Substring(0, 600));
             Cursor.lockState = CursorLockMode.Locked;
             Cursor.visible = false;
         }

@@ -207,6 +207,8 @@ namespace NpcValheim.UI
             UiInputBlocker.IsOpen = false;
 
             if (Menu.IsVisible() || (InventoryGui.instance != null && InventoryGui.IsVisible())) return;
+            // DIAG TEMPORARIO: remover
+            if (Player.m_localPlayer == null) Plugin.Log.LogWarning("[DIAG] cursor travado por QuestJournal.Close sem jogador | " + System.Environment.StackTrace.Substring(0, 600));
             Cursor.lockState = CursorLockMode.Locked;
             Cursor.visible = false;
         }
