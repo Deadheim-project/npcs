@@ -34,7 +34,7 @@ namespace NpcValheim.UI
             if (Player.m_localPlayer == null || !Input.GetKeyDown(Plugin.VipShopKey.Value)) return;
 
             // The same key closes it again, as it did the old directory.
-            if (UiRoot.IsStandaloneOpen)
+            if (UiRoot.StandaloneTitle == "Loja Deadcoins")
             {
                 UiRoot.RequestClose();
                 return;

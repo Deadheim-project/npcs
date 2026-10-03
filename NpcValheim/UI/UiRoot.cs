@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 using NpcValheim.Npc;
 
@@ -20,6 +21,7 @@ namespace NpcValheim.UI
         private Player _player;
         private NpcWindow _window;
         private bool _standalone;
+        private string _title;
 
         public static void EnsureCreated()
         {
@@ -32,6 +34,7 @@ namespace NpcValheim.UI
         public static void Open(NpcBase npc, Player player)
         {
             if (_instance == null || npc == null || player == null) return;
+            _instance._title = null;
             _instance.Show(npc, player, false, () => new NpcWindow(npc, player, _instance.Close));
         }
 
@@ -41,11 +44,24 @@ namespace NpcValheim.UI
         internal static void OpenStandalone(string title, string tabLabel, NpcViewBase view, Player player)
         {
             if (_instance == null || view == null || player == null) return;
+            _instance._title = title;
             _instance.Show(null, player, true,
                 () => new NpcWindow(title, tabLabel, view, player, _instance.Close));
         }
 
+        /// <summary>Several standalone pages in one window (the arena panel).</summary>
+        internal static void OpenStandalone(string title, IList<(string label, NpcViewBase view)> pages, Player player)
+        {
+            if (_instance == null || pages == null || pages.Count == 0 || player == null) return;
+            _instance._title = title;
+            _instance.Show(null, player, true, () => new NpcWindow(title, pages, player, _instance.Close));
+        }
+
         internal static bool IsStandaloneOpen => IsOpen && _instance._standalone;
+
+        /// <summary>The title of the standalone window that is open, or null -- each shortcut
+        /// closes only its own window.</summary>
+        internal static string StandaloneTitle => IsStandaloneOpen ? _instance._title : null;
 
         public static void RequestClose() => _instance?.Close();
 

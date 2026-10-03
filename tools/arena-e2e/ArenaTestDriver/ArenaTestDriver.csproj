@@ -1,0 +1,37 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Driver do teste de ponta a ponta da arena. NUNCA vai para jogador: so roda nos dois
+       clientes de teste montados por tools/arena-e2e/run-arena-test.ps1. Fora da solucao
+       do mod de proposito. AllowUnsafeBlocks emite SkipVerification, que e o que deixa o
+       driver tocar membros privados do jogo em runtime (o Deadheim e o driver de PvP fazem
+       o mesmo). -->
+  <PropertyGroup>
+    <TargetFramework>net48</TargetFramework>
+    <AssemblyName>ArenaTestDriver</AssemblyName>
+    <RootNamespace>ArenaTestDriver</RootNamespace>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="NpcValheim"><HintPath>..\..\..\NpcValheim\bin\Release\NpcValheim.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="BepInEx"><HintPath>$(BepInExCore)\BepInEx.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="0Harmony"><HintPath>$(BepInExCore)\0Harmony.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="assembly_valheim"><HintPath>$(ValheimPublicized)\assembly_valheim_publicized.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="assembly_utils"><HintPath>$(ValheimPublicized)\assembly_utils_publicized.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="assembly_guiutils"><HintPath>$(ValheimManaged)\assembly_guiutils.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="gui_framework"><HintPath>$(ValheimPublicized)\gui_framework_publicized.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Splatform"><HintPath>$(ValheimManaged)\Splatform.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine"><HintPath>$(ValheimManaged)\UnityEngine.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.CoreModule"><HintPath>$(ValheimManaged)\UnityEngine.CoreModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.PhysicsModule"><HintPath>$(ValheimManaged)\UnityEngine.PhysicsModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.ScreenCaptureModule"><HintPath>$(ValheimManaged)\UnityEngine.ScreenCaptureModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.UI"><HintPath>$(ValheimManaged)\UnityEngine.UI.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Unity.TextMeshPro"><HintPath>$(ValheimManaged)\Unity.TextMeshPro.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="netstandard"><HintPath>$(ValheimManaged)\netstandard.dll</HintPath><Private>false</Private></Reference>
+  </ItemGroup>
+
+</Project>
