@@ -27,7 +27,8 @@
     enquanto outro teste ou um jogo ocupa a maquina.
 
     Codigo de saida: 0 passou, 1 alguma checagem falhou, 2 erro sem resultado, 3 interrompido
-    de fora (o jogador abriu o Valheim, e o launcher fecha os outros, ou faltou memoria):
+    de fora (o jogador abriu o Valheim, e o launcher fecha os outros; o teste de outra sessao
+    comecou; a Steam nao estava pronta; ou faltou memoria):
     vale rodar de novo quando a maquina ficar livre.
 
     Uso:
@@ -88,13 +89,25 @@ function Wait-Memory([double]$needGb) {
     }
 }
 
-# Um processo do teste caiu. Se apareceu um valheim.exe que nao e do teste, foi o jogador
-# abrindo o jogo (o Deadheim Launcher fecha os outros): interrupcao, nao defeito.
+# Um Valheim (cliente ou servidor) que nao e deste teste: o jogador abrindo o jogo (o Deadheim
+# Launcher fecha os outros) ou o teste de outra sessao. Interrupcao, nao defeito.
 function Test-Foreign {
     $ours = @($script:processes | ForEach-Object { $_.Id })
-    $foreign = @(Get-Process valheim -ErrorAction SilentlyContinue | Where-Object { $ours -notcontains $_.Id })
+    $foreign = @(Get-Process valheim, valheim_server -ErrorAction SilentlyContinue | Where-Object { $ours -notcontains $_.Id })
     if ($foreign.Count -gt 0) { $script:interrupted = $true }
     return $foreign.Count -gt 0
+}
+
+# Antes de subir cada processo: duas esperas podem ver a maquina livre no mesmo instante.
+function Assert-Alone([string]$what) {
+    if (Test-Foreign) { throw "Outro Valheim abriu antes de $what; espero a maquina de novo." }
+}
+
+# Sem a Steam pronta o cliente nao inicia (SteamAPI_Init falha e o jogo fecha sozinho).
+function Get-SteamAgeMinutes {
+    $steam = Get-Process steam -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $steam) { return -1 }
+    return ((Get-Date) - $steam.StartTime).TotalMinutes
 }
 
 function Stop-All {
@@ -117,13 +130,17 @@ if ($WaitIdle -gt 0) {
         $clients = @(Get-Process valheim -ErrorAction SilentlyContinue)
         $servers = @(Get-Process valheim_server -ErrorAction SilentlyContinue)
         $free = Free-Commit
+        # A Steam reiniciada ha pouco ainda nao atende (aconteceu: aberta 4 min antes, o
+        # cliente caiu com SteamAPI_Init falhando).
+        $steamAge = Get-SteamAgeMinutes
         # Servidor ~2 GB de commit e cada cliente sem graficos ~2.
-        if ($clients.Count -eq 0 -and $servers.Count -eq 0 -and $free -ge 5.5) {
+        if ($clients.Count -eq 0 -and $servers.Count -eq 0 -and $free -ge 5.5 -and $steamAge -ge 10) {
             if (-not $idleSince) { $idleSince = Get-Date }
             if (((Get-Date) - $idleSince).TotalMinutes -ge 5) { break }
         }
         else { $idleSince = $null }
-        $busy = "{0} cliente(s) e {1} servidor(es) do Valheim abertos, {2:N1} GB livres" -f $clients.Count, $servers.Count, $free
+        $steamText = if ($steamAge -lt 0) { 'Steam fechada' } else { "Steam aberta ha {0:N0} min" -f $steamAge }
+        $busy = "{0} cliente(s) e {1} servidor(es) do Valheim abertos, {2:N1} GB livres, {3}" -f $clients.Count, $servers.Count, $free, $steamText
         if ((Get-Date) -gt $until) { throw "A maquina nao ficou livre em $WaitIdle min ($busy)." }
         Write-Step "Esperando a maquina: $busy"
         Start-Sleep -Seconds 60
@@ -221,6 +238,7 @@ try {
             "-nographics -batchmode -name BossPassTest -port $Port -world $World -password $Password -public 0 " +
             "-savedir `"$Root\saves`" -logFile `"$serverLog`""
     Write-Step "Servidor de teste na porta $Port"
+    Assert-Alone 'o servidor de teste'
     $server = Start-Process -FilePath "$SourceServer\valheim_server.exe" -ArgumentList $argLine -WorkingDirectory $SourceServer -WindowStyle Hidden -PassThru
     $processes += $server
     if (-not (Wait-Log $bepLog 'NpcValheim 0\.\d+\.\d+ loaded' 300)) { throw "O NpcValheim nao subiu. Veja $bepLog" }
@@ -247,6 +265,7 @@ try {
                 "-bptest-serverdata `"$serverData`" -bptest-donations `"$donations`" " +
                 $screen + "-logFile `"$Root\client$role-unity.log`""
         Write-Step ("Cliente $role" + $(if ($headless) { ' (sem graficos)' } else { '' }))
+        Assert-Alone "o cliente $role"
         $client = Start-Process -FilePath "$ClientDir\valheim.exe" -ArgumentList $argLine -WorkingDirectory $ClientDir -PassThru
         $processes += $client
         $until = (Get-Date).AddMinutes(10)
@@ -254,7 +273,12 @@ try {
             $dead = $processes | Where-Object { $_.HasExited } | Select-Object -First 1
             if ($dead) {
                 $who = if ($dead.Id -eq $client.Id) { "O cliente $role" } elseif ($dead.Id -eq $server.Id) { 'O servidor' } else { 'O cliente A' }
-                $why = if (Test-Foreign) { ' -- o jogador abriu o Valheim' } else { '' }
+                $why = ''
+                if (Test-Foreign) { $why = ' -- abriram outro Valheim' }
+                elseif (Select-String -Path "$Root\client*-unity.log" -Pattern 'SteamAPI_Init\(\) failed' -Quiet -ErrorAction SilentlyContinue) {
+                    $script:interrupted = $true
+                    $why = ' -- a Steam nao estava pronta (SteamAPI_Init falhou)'
+                }
                 throw "$who caiu antes de o cliente $role entrar no mundo (codigo $($dead.ExitCode))$why."
             }
             if ((Get-Date) -gt $until) { throw "Cliente $role nao entrou no mundo em 10 min." }
@@ -269,7 +293,7 @@ try {
         if ((Test-Path "$Root\sync\result-A.txt") -and (Test-Path "$Root\sync\result-B.txt")) { break }
         $dead = $processes | Where-Object { $_.HasExited } | Select-Object -First 1
         if ($dead) {
-            $why = if (Test-Foreign) { ' -- o jogador abriu o Valheim' } else { '' }
+            $why = if (Test-Foreign) { ' -- abriram outro Valheim' } else { '' }
             Write-Step "Processo $($dead.Id) caiu (codigo $($dead.ExitCode))$why; encerrando"
             break
         }
