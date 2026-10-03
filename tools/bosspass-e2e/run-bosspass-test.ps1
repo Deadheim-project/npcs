@@ -201,8 +201,11 @@ try {
 
     # Sem AzuAntiCheat em nenhum dos tres (o porque esta no topo). Nenhum outro mod depende dele.
     foreach ($tree in @("$Root\server", "$Root\clientA", "$Root\clientB")) {
-        Get-ChildItem "$tree\BepInEx\plugins" -Recurse -Filter 'AzuAnticheat.dll' |
-            ForEach-Object { Remove-Item -Recurse -Force $_.DirectoryName }
+        # Lista inteira antes de apagar: apagando no meio da varredura, o Get-ChildItem
+        # tenta descer na pasta que acabou de sumir e o teste para ali.
+        $azu = @(Get-ChildItem "$tree\BepInEx\plugins" -Recurse -Filter 'AzuAnticheat.dll' |
+            Select-Object -ExpandProperty DirectoryName -Unique)
+        foreach ($dir in $azu) { if (Test-Path $dir) { Remove-Item -Recurse -Force $dir } }
     }
 
     # --------------------------------------------------------------- servidor
