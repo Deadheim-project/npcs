@@ -13,12 +13,16 @@
     volta para casa), desercao, escaramuca, pontos da semana e o Intendente. O resultado
     sai como linhas [ARENATEST] no log de cada cliente e as capturas de tela em shots\.
 
+    -CursorOnly: servidor e um cliente so (Alfa, com janela), so o roteiro do cursor -- o
+    mouse tem que ficar livre com o painel de um NPC ou o diario aberto. Uns 5 GB de commit.
+
     -ServerOnly: so o servidor -- confere que o NpcValheim sobe, a config da arena e lida,
     a arena do Deadheim e reconhecida e nada lanca excecao. Cabe numa maquina ocupada.
 
     Uso:
       powershell -ExecutionPolicy Bypass -File tools\arena-e2e\run-arena-test.ps1
       powershell -ExecutionPolicy Bypass -File tools\arena-e2e\run-arena-test.ps1 -ServerOnly
+      powershell -ExecutionPolicy Bypass -File tools\arena-e2e\run-arena-test.ps1 -CursorOnly
 #>
 param(
     [string]$Root = 'D:\tmp\arenatest',
@@ -31,6 +35,7 @@ param(
     [string]$ClientProfile = (Join-Path $env:APPDATA 'DeadheimLauncher\profiles\Default\game\BepInEx'),
     [int]$TimeoutMinutes = 30,
     [switch]$ServerOnly,
+    [switch]$CursorOnly,
     [switch]$FullB,
     [switch]$KeepRunning
 )
@@ -42,6 +47,7 @@ $npcIcons = Join-Path $repo 'NpcValheim\Assets\Icons'
 $driverProj = Join-Path $PSScriptRoot 'ArenaTestDriver\ArenaTestDriver.csproj'
 $driverDll = Join-Path $PSScriptRoot 'ArenaTestDriver\bin\Release\ArenaTestDriver.dll'
 $processes = @()
+$roles = if ($CursorOnly) { @('A') } else { @('A', 'B') }
 
 function Write-Step($text) { Write-Host ("[{0}] {1}" -f (Get-Date -Format 'HH:mm:ss'), $text) }
 
@@ -152,7 +158,7 @@ GamesPerWeek = 1
 
     # Clientes: o perfil do launcher, com o NpcValheim desta arvore e o driver.
     if (-not $ServerOnly) {
-        foreach ($role in @('A', 'B')) {
+        foreach ($role in $roles) {
             $dir = "$Root\client$role\BepInEx"
             New-Item -ItemType Directory -Force $dir | Out-Null
             foreach ($sub in @('core', 'plugins', 'config')) {
@@ -219,7 +225,7 @@ GamesPerWeek = 1
 
     # --------------------------------------------------------------- clientes
     & reg export "HKCU\Software\IronGate\valheim" $prefsBackup /y | Out-Null
-    foreach ($role in @('A', 'B')) {
+    foreach ($role in $roles) {
         # Bravo roda sem graficos por padrao: nao tira captura e cabe numa maquina com pouca
         # memoria. -FullB abre os dois com janela.
         $headless = ($role -eq 'B' -and -not $FullB)
@@ -230,6 +236,7 @@ GamesPerWeek = 1
                 "+connect 127.0.0.1:$Port -password $Password " +
                 "-arenatest-role $role -arenatest-sync `"$Root\sync`" -arenatest-save `"$Root\chars-$role`" " +
                 "-arenatest-shots `"$Root\shots`" -arenatest-serverlog `"$bepLog`" " +
+                $(if ($CursorOnly) { '-arenatest-scenario cursor ' } else { '' }) +
                 $screen + "-logFile `"$Root\client$role-unity.log`""
         Write-Step ("Cliente $role" + $(if ($headless) { ' (sem graficos)' } else { '' }))
         $client = Start-Process -FilePath "$ClientDir\valheim.exe" -ArgumentList $argLine -WorkingDirectory $ClientDir -PassThru
@@ -244,29 +251,31 @@ GamesPerWeek = 1
     }
 
     # A arena que o driver escolheu vira config do servidor (recarga ao vivo + ServerSync).
-    $until = (Get-Date).AddMinutes(5)
-    while (-not (Test-Path "$Root\sync\arena.txt")) {
-        if ((Get-Date) -gt $until) { throw 'O driver nao propos a arena.' }
-        Start-Sleep -Seconds 2
+    if (-not $CursorOnly) {
+        $until = (Get-Date).AddMinutes(5)
+        while (-not (Test-Path "$Root\sync\arena.txt")) {
+            if ((Get-Date) -gt $until) { throw 'O driver nao propos a arena.' }
+            Start-Sleep -Seconds 2
+        }
+        $arena = @{}
+        foreach ($line in Get-Content "$Root\sync\arena.txt") { if ($line -match '^(\w+)=(.*)$') { $arena[$Matches[1]] = $Matches[2] } }
+        Set-CfgValue "$Root\server\BepInEx\config\Detalhes.Deadheim.cfg" 'PvP - Zonas' 'ArenaZones' $arena['zone']
+        Start-Sleep -Seconds 3
+        Set-CfgValue $npcCfg 'Arena - Partida' 'Maps' $arena['maps']
+        Write-Step "Arena gravada: $($arena['maps'])"
+        Set-Content -Path "$Root\sync\config-ready" -Value (Get-Date -Format 'HH:mm:ss')
     }
-    $arena = @{}
-    foreach ($line in Get-Content "$Root\sync\arena.txt") { if ($line -match '^(\w+)=(.*)$') { $arena[$Matches[1]] = $Matches[2] } }
-    Set-CfgValue "$Root\server\BepInEx\config\Detalhes.Deadheim.cfg" 'PvP - Zonas' 'ArenaZones' $arena['zone']
-    Start-Sleep -Seconds 3
-    Set-CfgValue $npcCfg 'Arena - Partida' 'Maps' $arena['maps']
-    Write-Step "Arena gravada: $($arena['maps'])"
-    Set-Content -Path "$Root\sync\config-ready" -Value (Get-Date -Format 'HH:mm:ss')
 
     Write-Step "Esperando o roteiro (ate $TimeoutMinutes min)"
     $until = (Get-Date).AddMinutes($TimeoutMinutes)
     while ((Get-Date) -lt $until) {
-        if ((Test-Path "$Root\sync\result-A.txt") -and (Test-Path "$Root\sync\result-B.txt")) { break }
+        if (-not ($roles | Where-Object { -not (Test-Path "$Root\sync\result-$_.txt") })) { break }
         $dead = $processes | Where-Object { $_.HasExited } | Select-Object -First 1
         if ($dead) { Write-Step "Processo $($dead.Id) caiu; encerrando"; break }
         Start-Sleep -Seconds 5
     }
 
-    foreach ($role in @('A', 'B')) {
+    foreach ($role in $roles) {
         Write-Host ""
         Write-Host "===== Cliente $role ====="
         $log = "$Root\client$role\BepInEx\LogOutput.log"
@@ -288,6 +297,6 @@ finally {
 }
 
 if ($ServerOnly) { exit 0 }
-$results = @('A', 'B' | ForEach-Object { Get-Content "$Root\sync\result-$_.txt" -ErrorAction SilentlyContinue })
-if ($results.Count -eq 2 -and -not ($results | Where-Object { $_ -notmatch 'fail=0$' })) { exit 0 }
+$results = @($roles | ForEach-Object { Get-Content "$Root\sync\result-$_.txt" -ErrorAction SilentlyContinue })
+if ($results.Count -eq $roles.Count -and -not ($results | Where-Object { $_ -notmatch 'fail=0$' })) { exit 0 }
 exit 1

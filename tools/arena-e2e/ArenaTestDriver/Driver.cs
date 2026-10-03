@@ -11,6 +11,7 @@
 //   -arenatest-save <dir>    pasta dos personagens de teste
 //   -arenatest-shots <dir>   onde salvar as capturas de tela
 //   -arenatest-serverlog <f> LogOutput.log do servidor (mesma maquina), para conferir o que o cliente nao ve
+//   -arenatest-scenario cursor  so o roteiro do cursor, num cliente so (run-arena-test.ps1 -CursorOnly)
 using BepInEx;
 using BepInEx.Logging;
 using HarmonyLib;
@@ -38,6 +39,7 @@ namespace ArenaTestDriver
         private string _sync;
         private string _shots;
         private string _serverLog;
+        private string _scenario;
         private string _myName;
         private string _otherName;
         private bool _creatingCharacter;
@@ -67,6 +69,7 @@ namespace ArenaTestDriver
             _sync = Arg(args, "-arenatest-sync");
             _shots = Arg(args, "-arenatest-shots") ?? _sync;
             _serverLog = Arg(args, "-arenatest-serverlog");
+            _scenario = Arg(args, "-arenatest-scenario");
             string save = Arg(args, "-arenatest-save");
             if (!string.IsNullOrEmpty(save))
             {
@@ -135,6 +138,15 @@ namespace ArenaTestDriver
             Log("spawn ok");
             yield return new WaitForSeconds(5f);
             File.WriteAllText(Path.Combine(_sync, "spawned-" + _role), DateTime.Now.ToString("HH:mm:ss"));
+
+            if (_scenario == "cursor")
+            {
+                Log("=== cursor");
+                yield return RunSafely(CursorChecks(), "cursor");
+                Done();
+                yield break;
+            }
+
             yield return Barrier("spawn", 900f);
 
             var script = new List<KeyValuePair<string, Func<IEnumerator>>>
@@ -159,6 +171,11 @@ namespace ArenaTestDriver
                 yield return Barrier(step.Key + "-fim", 240f);
             }
 
+            Done();
+        }
+
+        private void Done()
+        {
             Log($"DONE pass={_pass} fail={_fail}");
             File.WriteAllText(Path.Combine(_sync, "result-" + _role + ".txt"), $"pass={_pass} fail={_fail}");
         }
@@ -224,6 +241,71 @@ namespace ArenaTestDriver
         private IEnumerator WaitFile(string name, float timeout)
         {
             yield return WaitFor(() => File.Exists(Path.Combine(_sync, name)), timeout);
+        }
+
+        // ---------------------------------------------------------------------- cursor
+
+        /// <summary>The mouse with one of our panels open. The camera locks the cursor every
+        /// frame unless the game thinks a menu is up, and each lock snaps it to the middle of
+        /// the screen -- so a panel that loses that argument even once a frame has a cursor
+        /// that cannot be moved. One client, no arena: the arena panel stands for every
+        /// UiRoot window (NPCs included, same code), and the journal is the other owner.</summary>
+        private IEnumerator CursorChecks()
+        {
+            var camera = GameCamera.instance;
+            yield return new WaitForSeconds(2f);
+            camera.UpdateMouseCapture();
+            Check("cursor/sem-painel-camera-prende", Cursor.lockState == CursorLockMode.Locked, $"lockState={Cursor.lockState}");
+
+            ArenaHud.TogglePanel();
+            yield return FreeCursor("painel", () => UiRoot.IsOpen);
+            yield return Shot("cursor-painel");
+            ArenaHud.TogglePanel();
+            yield return LockedAgain("painel");
+
+            QuestJournal.Toggle();
+            yield return FreeCursor("diario", () => QuestJournal.IsOpen);
+            QuestJournal.Toggle();
+            yield return LockedAgain("diario");
+
+            // Contraprova: sem o patch de Menu.IsActive a camera volta a prender o cursor com o
+            // painel aberto. Se isto der FAIL, as checagens acima deixaram de enxergar o defeito.
+            ArenaHud.TogglePanel();
+            yield return new WaitForSeconds(0.5f);
+            new Harmony(NpcValheim.Plugin.Guid).Unpatch(AccessTools.Method(typeof(Menu), nameof(Menu.IsActive)),
+                HarmonyPatchType.Postfix, NpcValheim.Plugin.Guid);
+            camera.UpdateMouseCapture();
+            Check("cursor/contraprova-sem-patch-prende", UiRoot.IsOpen && Cursor.lockState == CursorLockMode.Locked,
+                $"lockState={Cursor.lockState}");
+            ArenaHud.TogglePanel();
+        }
+
+        private IEnumerator FreeCursor(string name, Func<bool> open)
+        {
+            yield return new WaitForSeconds(1f);
+            Check($"cursor/{name}-aberto", open() && UiInputBlocker.IsOpen);
+            Check($"cursor/{name}-menu-ativo", Menu.IsActive() && Menu.IsVisible());
+            GameCamera.instance.UpdateMouseCapture();
+            Check($"cursor/{name}-camera-nao-prende", Cursor.lockState == CursorLockMode.None, $"lockState={Cursor.lockState}");
+
+            const int frames = 90;
+            int locked = 0, hidden = 0;
+            for (int i = 0; i < frames; i++)
+            {
+                yield return new WaitForEndOfFrame();
+                if (Cursor.lockState != CursorLockMode.None) locked++;
+                if (!Cursor.visible) hidden++;
+            }
+            Check($"cursor/{name}-livre-{frames}-quadros", locked == 0 && hidden == 0 && open(),
+                $"preso={locked} oculto={hidden}");
+        }
+
+        private IEnumerator LockedAgain(string name)
+        {
+            yield return new WaitForSeconds(0.5f);
+            GameCamera.instance.UpdateMouseCapture();
+            Check($"cursor/{name}-fechado-camera-prende", !UiInputBlocker.IsOpen && Cursor.lockState == CursorLockMode.Locked,
+                $"lockState={Cursor.lockState}");
         }
 
         // ------------------------------------------------------------------- auxiliares

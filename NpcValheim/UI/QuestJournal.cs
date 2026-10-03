@@ -39,6 +39,8 @@ namespace NpcValheim.UI
         private bool _open;
         private long _syncedPlayerId;
 
+        internal static bool IsOpen => _instance != null && _instance._open;
+
         internal static void EnsureCreated()
         {
             if (_instance != null) return;
@@ -150,8 +152,7 @@ namespace NpcValheim.UI
         private void LateUpdate()
         {
             if (!_open) return;
-            if (Cursor.lockState != CursorLockMode.None) Cursor.lockState = CursorLockMode.None;
-            if (!Cursor.visible) Cursor.visible = true;
+            UiInputBlocker.HoldCursor();
         }
 
         private void Open()
@@ -195,7 +196,6 @@ namespace NpcValheim.UI
             _quests = new List<QuestEntry>(_cachedQuests);
             _signature = null;
             _nextRefresh = 0f;
-            UiInputBlocker.IsOpen = true;
         }
 
         private void Close()
@@ -204,11 +204,7 @@ namespace NpcValheim.UI
             _rows.Clear();
             if (_canvas != null) Destroy(_canvas);
             _canvas = null;
-            UiInputBlocker.IsOpen = false;
-
-            if (Menu.IsVisible() || (InventoryGui.instance != null && InventoryGui.IsVisible())) return;
-            Cursor.lockState = CursorLockMode.Locked;
-            Cursor.visible = false;
+            UiInputBlocker.ReleaseCursor();
         }
 
         private void Refresh()

@@ -95,7 +95,6 @@ namespace NpcValheim.UI
                 return;
             }
 
-            UiInputBlocker.IsOpen = true;
             _loggedCursorState = false;
         }
 
@@ -105,8 +104,8 @@ namespace NpcValheim.UI
             _window = null;
             _npc = null;
             _standalone = false;
-            UiInputBlocker.IsOpen = false;
-            ReleaseCursor();
+            _loggedCursorState = false;
+            UiInputBlocker.ReleaseCursor();
         }
 
         private void Update()
@@ -136,22 +135,20 @@ namespace NpcValheim.UI
             if (_window != null && Input.GetKeyDown(KeyCode.Escape)) Close();
 
             _window?.Refresh(_npc);
-            UiInputBlocker.IsOpen = _window != null;
         }
 
-        /// <summary>Forces the mouse cursor visible while the panel is open.
+        /// <summary>Forces the mouse cursor free while the panel is open.
         ///
-        /// Patching Menu.IsVisible (see Patches/UiInputPatches.cs) is what tells the game to
-        /// stop treating input as gameplay, but it is not enough on its own to get a cursor:
-        /// the game re-asserts lockState every frame from its own update, so whatever we set
+        /// Patching Menu.IsActive/IsVisible (see Patches/UiInputPatches.cs) is what tells the
+        /// game to stop treating input as gameplay, but it is not enough on its own to get a
+        /// cursor: the game re-asserts it every frame from its own update, so whatever we set
         /// earlier in the frame is overwritten. LateUpdate runs after those, so this is the
         /// last word on it.</summary>
         private void LateUpdate()
         {
             if (_window == null) return;
 
-            if (Cursor.lockState != CursorLockMode.None) Cursor.lockState = CursorLockMode.None;
-            if (!Cursor.visible) Cursor.visible = true;
+            UiInputBlocker.HoldCursor();
 
             if (!_loggedCursorState)
             {
@@ -164,18 +161,8 @@ namespace NpcValheim.UI
 
         private void OnDestroy()
         {
-            UiInputBlocker.IsOpen = false;
-            ReleaseCursor();
-        }
-
-        /// <summary>Hands the cursor back to the game so closing our panel doesn't leave the
-        /// player unable to turn the camera.</summary>
-        private void ReleaseCursor()
-        {
-            _loggedCursorState = false;
-            if (Menu.IsVisible() || (InventoryGui.instance != null && InventoryGui.IsVisible())) return;
-            Cursor.lockState = CursorLockMode.Locked;
-            Cursor.visible = false;
+            _window = null;
+            UiInputBlocker.ReleaseCursor();
         }
     }
 }
