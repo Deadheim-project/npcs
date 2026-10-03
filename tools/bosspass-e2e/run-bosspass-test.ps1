@@ -101,6 +101,27 @@ function Test-Foreign {
 # Antes de subir cada processo: duas esperas podem ver a maquina livre no mesmo instante.
 function Assert-Alone([string]$what) {
     if (Test-Foreign) { throw "Outro Valheim abriu antes de $what; espero a maquina de novo." }
+    if (Test-Launcher) {
+        $script:interrupted = $true
+        throw "O Deadheim Launcher abriu antes de $what (o jogador quer jogar); espero a maquina de novo."
+    }
+}
+
+# O Deadheim Launcher aberto e o jogador querendo jogar. Com qualquer valheim.exe rodando, o
+# botao principal dele vira "Fechar jogo" e fecha a janela de quem estiver aberto -- o Alfa
+# de teste saiu assim (codigo 0, OnApplicationQuit) quando o jogador foi abrir o jogo.
+function Test-Launcher { [bool](Get-Process DeadheimLauncher -ErrorAction SilentlyContinue) }
+
+# Por que um processo do teste caiu, quando a causa e de fora; marca a interrupcao (codigo 3,
+# tentar de novo depois). Vazio quando nao ha causa de fora: entao e defeito do teste.
+function Get-OutsideCause {
+    if (Test-Foreign) { return ' -- abriram outro Valheim' }
+    if (Test-Launcher) { $script:interrupted = $true; return ' -- o Deadheim Launcher esta aberto (o jogador quer jogar)' }
+    if (Select-String -Path "$Root\client*-unity.log" -Pattern 'SteamAPI_Init\(\) failed' -Quiet -ErrorAction SilentlyContinue) {
+        $script:interrupted = $true
+        return ' -- a Steam nao estava pronta (SteamAPI_Init falhou)'
+    }
+    return ''
 }
 
 # Sem a Steam pronta o cliente nao inicia (SteamAPI_Init falha e o jogo fecha sozinho).
@@ -134,13 +155,15 @@ if ($WaitIdle -gt 0) {
         # cliente caiu com SteamAPI_Init falhando).
         $steamAge = Get-SteamAgeMinutes
         # Servidor ~2 GB de commit e cada cliente sem graficos ~2.
-        if ($clients.Count -eq 0 -and $servers.Count -eq 0 -and $free -ge 5.5 -and $steamAge -ge 10) {
+        $launcher = Test-Launcher
+        if ($clients.Count -eq 0 -and $servers.Count -eq 0 -and -not $launcher -and $free -ge 5.5 -and $steamAge -ge 10) {
             if (-not $idleSince) { $idleSince = Get-Date }
             if (((Get-Date) - $idleSince).TotalMinutes -ge 5) { break }
         }
         else { $idleSince = $null }
         $steamText = if ($steamAge -lt 0) { 'Steam fechada' } else { "Steam aberta ha {0:N0} min" -f $steamAge }
-        $busy = "{0} cliente(s) e {1} servidor(es) do Valheim abertos, {2:N1} GB livres, {3}" -f $clients.Count, $servers.Count, $free, $steamText
+        $busy = "{0} cliente(s) e {1} servidor(es) do Valheim abertos, launcher {2}, {3:N1} GB livres, {4}" -f
+            $clients.Count, $servers.Count, $(if ($launcher) { 'aberto' } else { 'fechado' }), $free, $steamText
         if ((Get-Date) -gt $until) { throw "A maquina nao ficou livre em $WaitIdle min ($busy)." }
         Write-Step "Esperando a maquina: $busy"
         Start-Sleep -Seconds 60
@@ -273,13 +296,7 @@ try {
             $dead = $processes | Where-Object { $_.HasExited } | Select-Object -First 1
             if ($dead) {
                 $who = if ($dead.Id -eq $client.Id) { "O cliente $role" } elseif ($dead.Id -eq $server.Id) { 'O servidor' } else { 'O cliente A' }
-                $why = ''
-                if (Test-Foreign) { $why = ' -- abriram outro Valheim' }
-                elseif (Select-String -Path "$Root\client*-unity.log" -Pattern 'SteamAPI_Init\(\) failed' -Quiet -ErrorAction SilentlyContinue) {
-                    $script:interrupted = $true
-                    $why = ' -- a Steam nao estava pronta (SteamAPI_Init falhou)'
-                }
-                throw "$who caiu antes de o cliente $role entrar no mundo (codigo $($dead.ExitCode))$why."
+                throw "$who caiu antes de o cliente $role entrar no mundo (codigo $($dead.ExitCode))$(Get-OutsideCause)."
             }
             if ((Get-Date) -gt $until) { throw "Cliente $role nao entrou no mundo em 10 min." }
             Start-Sleep -Seconds 3
@@ -293,8 +310,7 @@ try {
         if ((Test-Path "$Root\sync\result-A.txt") -and (Test-Path "$Root\sync\result-B.txt")) { break }
         $dead = $processes | Where-Object { $_.HasExited } | Select-Object -First 1
         if ($dead) {
-            $why = if (Test-Foreign) { ' -- abriram outro Valheim' } else { '' }
-            Write-Step "Processo $($dead.Id) caiu (codigo $($dead.ExitCode))$why; encerrando"
+            Write-Step "Processo $($dead.Id) caiu (codigo $($dead.ExitCode))$(Get-OutsideCause); encerrando"
             break
         }
         Start-Sleep -Seconds 5
