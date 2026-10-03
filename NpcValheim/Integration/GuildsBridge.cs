@@ -73,6 +73,35 @@ namespace NpcValheim.Integration
             }
         }
 
+        /// <summary>The founding price, from the server's [Guildas] section (ServerSync). An
+        /// item the game does not know is treated as free and logged, rather than a price no
+        /// one could ever pay.</summary>
+        internal static bool TryGetPrice(out string item, out int amount)
+        {
+            item = Plugin.GuildCostItem?.Value?.Trim() ?? "";
+            amount = Plugin.GuildCostAmount?.Value ?? 0;
+            if (amount <= 0 || item.Length == 0) return false;
+            if (ObjectDB.instance != null && ObjectDB.instance.GetItemPrefab(item) == null)
+            {
+                if (_warnedItem != item)
+                {
+                    _warnedItem = item;
+                    Plugin.Log.LogWarning($"NpcValheim: [Guildas] CostItem '{item}' is not an item; founding a guild is free.");
+                }
+                return false;
+            }
+            return true;
+        }
+
+        private static string _warnedItem;
+
+        internal static string PriceText() =>
+            TryGetPrice(out var item, out var amount) ? $"{amount}x {ItemNames.Display(item)}" : null;
+
+        internal static bool CanPay(Player player) =>
+            !TryGetPrice(out var item, out var amount)
+            || (player != null && ItemNames.Count(player.GetInventory(), item, -1) >= amount);
+
         internal static bool NearRegistrar(Player player) =>
             player != null && NpcBase.Live.Any(n => n is GuildRegistrarNpc && n != null
                 && Vector3.Distance(n.transform.position, player.transform.position) <= RegistrarRange);
@@ -144,7 +173,9 @@ namespace NpcValheim.Integration
         }
 
         /// <summary>The form's own submit button. Guards against the form being reached some
-        /// other way, or the player walking off with it open.</summary>
+        /// other way, or the player walking off with it open, and charges the founding price.
+        /// The price is checked before Guilds runs and taken only after, if a guild now
+        /// exists: a name that is taken or too short costs nothing.</summary>
         [HarmonyPatch]
         private static class CreateGuildSubmitPatch
         {
@@ -153,18 +184,47 @@ namespace NpcValheim.Integration
 
             private static bool Prepare() => TargetMethod() != null;
 
-            private static bool Prefix()
+            private static bool Prefix(out bool __state)
             {
+                __state = false;
                 try
                 {
-                    if (NearRegistrar(Player.m_localPlayer)) return true;
-                    ShowGoToRegistrar();
-                    return false;
+                    var player = Player.m_localPlayer;
+                    if (!NearRegistrar(player))
+                    {
+                        ShowGoToRegistrar();
+                        return false;
+                    }
+                    if (!CanPay(player))
+                    {
+                        UnifiedPopup.Push(new WarningPopup("Fundar guilda",
+                            $"Fundar uma guilda custa {PriceText()}.", UnifiedPopup.Pop, false));
+                        return false;
+                    }
+                    __state = OwnGuildName() == null;
+                    return true;
                 }
                 catch (Exception ex)
                 {
                     Plugin.Log.LogWarning("NpcValheim: guild submit gate failed: " + ex.Message);
                     return false;
+                }
+            }
+
+            private static void Postfix(bool __state)
+            {
+                if (!__state) return;
+                try
+                {
+                    var player = Player.m_localPlayer;
+                    if (player == null || OwnGuildName() == null) return;
+                    if (!TryGetPrice(out var item, out var amount)) return;
+                    ItemNames.Remove(player.GetInventory(), item, amount, -1);
+                    player.Message(MessageHud.MessageType.Center, $"Guilda fundada: {amount}x {ItemNames.Display(item)} pagos.", 0, null);
+                }
+                catch (Exception ex)
+                {
+                    Plugin.Log.LogWarning("NpcValheim: could not charge the guild founding price: " + ex.Message);
                 }
             }
         }

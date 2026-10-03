@@ -39,7 +39,9 @@ namespace NpcValheim.UI
         {
             bool available = GuildsBridge.IsAvailable;
             string guild = available ? GuildsBridge.OwnGuildName() : null;
-            string signature = available + ":" + guild;
+            string price = available ? GuildsBridge.PriceText() : null;
+            bool canPay = GuildsBridge.CanPay(Player);
+            string signature = available + ":" + guild + ":" + price + ":" + canPay;
             if (signature == _signature) return;
             _signature = signature;
 
@@ -51,14 +53,19 @@ namespace NpcValheim.UI
             else
                 _text.text = "Toda guilda de Deadheim é fundada aqui.\n\n" +
                              "Escolha o nome, a descrição, o brasão e a cor. Você será o líder, e " +
-                             "os outros jogadores poderão pedir para entrar pela tecla G.";
+                             "os outros jogadores poderão pedir para entrar pela tecla G.\n\n" +
+                             (price == null ? "<color=#73db6b>Sem custo.</color>"
+                                 : $"Custo: <color={(canPay ? "#ffe300" : "#ee6b57")}>{price}</color>" +
+                                   (canPay ? "" : "\n<color=#ee6b57>Você não tem o suficiente.</color>"));
 
             _found.gameObject.SetActive(available && guild == null);
+            _found.interactable = canPay;
         }
 
         private void Found()
         {
             if (GuildsBridge.OwnGuildName() != null) { Say("Você já pertence a uma guilda."); return; }
+            if (!GuildsBridge.CanPay(Player)) { Say($"Fundar uma guilda custa {GuildsBridge.PriceText()}."); return; }
             UiRoot.RequestClose();
             if (!GuildsBridge.OpenCreateForm())
                 Player.m_localPlayer?.Message(MessageHud.MessageType.Center, "Não foi possível abrir o registro de guildas.", 0, null);

@@ -64,6 +64,8 @@ namespace NpcValheim
         internal static ConfigEntry<int> TeleportCostAmount;
         internal static ConfigEntry<float> TeleportCooldownSeconds;
         internal static ConfigEntry<int> ListingDurationHours;
+        internal static ConfigEntry<string> GuildCostItem;
+        internal static ConfigEntry<int> GuildCostAmount;
         internal static ConfigEntry<string> DeadcoinShopItems;
         internal static ConfigEntry<UnityEngine.KeyCode> QuestJournalKey;
         internal static ConfigEntry<UnityEngine.KeyCode> VipShopKey;
@@ -131,6 +133,11 @@ namespace NpcValheim
                 "entries separated by |. Entries with a non-positive amount or price, or an unknown item, are skipped and named in the log. " +
                 "Balances live in BepInEx/config/DonationShop/<player>-<account>.json, as they did with DonationShop.");
 
+            GuildCostItem = Config.Bind("Guildas", "CostItem", "Coins",
+                "Prefab name of the item charged to found a guild at the Guild Registrar");
+            GuildCostAmount = Config.Bind("Guildas", "CostAmount", 0,
+                "How many of CostItem founding a guild costs (0 = free). Charged only once the guild exists");
+
             // Server-authoritative entries. The Quests/VIP keys and HUD positions are left out
             // on purpose: they are each player's own preferences.
             ConfigSync.AddConfigEntry(TeleportCostItem).SynchronizedConfig = true;
@@ -138,6 +145,8 @@ namespace NpcValheim
             ConfigSync.AddConfigEntry(TeleportCooldownSeconds).SynchronizedConfig = true;
             ConfigSync.AddConfigEntry(ListingDurationHours).SynchronizedConfig = true;
             ConfigSync.AddConfigEntry(DeadcoinShopItems).SynchronizedConfig = true;
+            ConfigSync.AddConfigEntry(GuildCostItem).SynchronizedConfig = true;
+            ConfigSync.AddConfigEntry(GuildCostAmount).SynchronizedConfig = true;
 
             // [Arena*] sections: synchronized and locked like the rest, except the panel key.
             Arena.ArenaConfig.Bind(Config, ConfigSync);

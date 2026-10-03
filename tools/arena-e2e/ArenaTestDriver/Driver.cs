@@ -311,6 +311,32 @@ namespace ArenaTestDriver
             Check("guilda/registrador-nome", _waitOk, registrar.GetHoverName());
             Check("guilda/registrador-por-perto", GuildsBridge.NearRegistrar(Me));
 
+            // The price comes from the server's [Guildas] (100 Coins in the test config).
+            yield return WaitFor(() => NpcValheim.Plugin.GuildCostAmount.Value == 100, 30f);
+            Check("guilda/preco-chegou-pelo-serversync", _waitOk && GuildsBridge.PriceText() != null, GuildsBridge.PriceText());
+            ItemNames.Remove(Me.GetInventory(), "Coins", MarketplaceNpc.CoinsOf(Me), -1);
+            yield return new WaitForSeconds(0.5f);
+
+            UiRoot.Open(registrar, Me);
+            yield return new WaitForSeconds(1.5f);
+            var broke = FoundButton();
+            Check("guilda/sem-moedas-botao-desligado", broke != null && !broke.interactable);
+            yield return Shot("guilda-2a-sem-moedas");
+            UiRoot.RequestClose();
+
+            GuildsBridge.OpenCreateForm();
+            yield return new WaitForSeconds(0.5f);
+            FillGuildForm(form, "Pobre" + Letters());
+            ClickGuilds(form, "Guilds.CreateGuildUI");
+            yield return new WaitForSeconds(3f);
+            Check("guilda/sem-moedas-nao-funda", GuildsBridge.OwnGuildName() == null && UnifiedPopup.IsVisible(), GuildsBridge.OwnGuildName());
+            if (UnifiedPopup.IsVisible()) UnifiedPopup.Pop();
+            form.SetActive(false);
+
+            ItemSpawner.GiveToInventory(Me, "Coins", 105, 1);
+            yield return new WaitForSeconds(0.5f);
+            Check("guilda/recebeu-moedas", MarketplaceNpc.CoinsOf(Me) == 105, "moedas=" + MarketplaceNpc.CoinsOf(Me));
+
             // Through the Registrar's own panel and its button, as a player would.
             UiRoot.Open(registrar, Me);
             yield return new WaitForSeconds(1.5f);
@@ -328,6 +354,7 @@ namespace ArenaTestDriver
             ClickGuilds(form, "Guilds.CreateGuildUI");
             yield return WaitFor(() => GuildsBridge.OwnGuildName() == name, 20f);
             Check("guilda/perto-fundou", _waitOk, GuildsBridge.OwnGuildName());
+            Check("guilda/cobrou-o-preco", MarketplaceNpc.CoinsOf(Me) == 5, "moedas=" + MarketplaceNpc.CoinsOf(Me));
             yield return Shot("guilda-4-fundada");
 
             // Already in a guild: the panel says so and offers nothing.
