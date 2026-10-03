@@ -14,6 +14,8 @@ namespace NpcValheim
     // Soft: the arena reads Deadheim's arena zones and patches its ally rule by name, and both
     // only work if Deadheim is loaded first. Without Deadheim the arena still runs.
     [BepInDependency("Detalhes.Deadheim", BepInDependency.DependencyFlags.SoftDependency)]
+    // Soft: guild founding is gated to the Guild Registrar by patching Guilds' buttons by name.
+    [BepInDependency("org.bepinex.plugins.guilds", BepInDependency.DependencyFlags.SoftDependency)]
     public class Plugin : BaseUnityPlugin
     {
         public const string Guid = "com.npcvalheim.mod";

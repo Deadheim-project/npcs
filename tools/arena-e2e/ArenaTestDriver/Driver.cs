@@ -12,10 +12,12 @@
 //   -arenatest-shots <dir>   onde salvar as capturas de tela
 //   -arenatest-serverlog <f> LogOutput.log do servidor (mesma maquina), para conferir o que o cliente nao ve
 //   -arenatest-scenario cursor  so o roteiro do cursor, num cliente so (run-arena-test.ps1 -CursorOnly)
+//   -arenatest-scenario guild   so o Registrador de Guildas, num cliente so (run-arena-test.ps1 -GuildOnly)
 using BepInEx;
 using BepInEx.Logging;
 using HarmonyLib;
 using NpcValheim.Arena;
+using NpcValheim.Integration;
 using NpcValheim.Npc;
 using NpcValheim.UI;
 using System;
@@ -24,6 +26,8 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Reflection;
+using TMPro;
 using UnityEngine;
 
 namespace ArenaTestDriver
@@ -147,6 +151,14 @@ namespace ArenaTestDriver
                 yield break;
             }
 
+            if (_scenario == "guild")
+            {
+                Log("=== guilda");
+                yield return RunSafely(GuildChecks(), "guilda");
+                Done();
+                yield break;
+            }
+
             yield return Barrier("spawn", 900f);
 
             var script = new List<KeyValuePair<string, Func<IEnumerator>>>
@@ -242,6 +254,136 @@ namespace ArenaTestDriver
         {
             yield return WaitFor(() => File.Exists(Path.Combine(_sync, name)), timeout);
         }
+
+        // ---------------------------------------------------------------------- guilda
+
+        /// <summary>Guilds are founded at the Guild Registrar only. Away from one, Guilds' own
+        /// Create button points at the NPC and its form refuses to submit; next to one, the
+        /// Registrar's panel opens the form and the guild is founded.</summary>
+        private IEnumerator GuildChecks()
+        {
+            yield return new WaitForSeconds(3f);
+            Check("guilda/guilds-ligado", GuildsBridge.IsAvailable);
+            if (!GuildsBridge.IsAvailable) yield break;
+
+            // A run that died halfway leaves the character in its test guild.
+            if (GuildsBridge.OwnGuildName() != null) DeleteOwnGuild();
+            yield return WaitFor(() => GuildsBridge.OwnGuildName() == null, 10f);
+            Check("guilda/comeca-sem-guilda", _waitOk, GuildsBridge.OwnGuildName());
+            Check("guilda/sem-registrador-por-perto", !GuildsBridge.NearRegistrar(Me));
+
+            var noGuild = GuildsUi("NoGuildUI");
+            var form = GuildsUi("CreateGuildUI");
+            Check("guilda/janelas-do-guilds", noGuild != null && form != null);
+            if (noGuild == null || form == null) yield break;
+
+            noGuild.SetActive(true);
+            yield return new WaitForSeconds(0.5f);
+            ClickGuilds(noGuild, "Guilds.NoGuildUI");
+            yield return new WaitForSeconds(0.5f);
+            Check("guilda/longe-criar-nao-abre-o-formulario", !form.activeSelf);
+            Check("guilda/longe-aviso-do-registrador", UnifiedPopup.IsVisible());
+            yield return Shot("guilda-1-longe");
+            if (UnifiedPopup.IsVisible()) UnifiedPopup.Pop();
+            noGuild.SetActive(false);
+
+            // The form reached some other way still refuses to found away from the NPC.
+            Check("guilda/formulario-abre-pela-ponte", GuildsBridge.OpenCreateForm() && form.activeSelf);
+            yield return new WaitForSeconds(0.5f);
+            FillGuildForm(form, "Longe" + Letters());
+            ClickGuilds(form, "Guilds.CreateGuildUI");
+            yield return new WaitForSeconds(3f);
+            Check("guilda/longe-formulario-nao-funda", GuildsBridge.OwnGuildName() == null, GuildsBridge.OwnGuildName());
+            if (UnifiedPopup.IsVisible()) UnifiedPopup.Pop();
+            form.SetActive(false);
+
+            var me = Me;
+            var placer = ZNetScene.instance.GetPrefab("NpcValheim_GuildRegistrar_Placer");
+            Check("guilda/prefab-do-registrador", placer != null);
+            if (placer == null) yield break;
+            var go = UnityEngine.Object.Instantiate(placer, Ground(me.transform.position + new Vector3(0f, 0f, -4f)), Quaternion.Euler(0f, 180f, 0f));
+            go.GetComponent<Piece>()?.SetCreator(me.GetPlayerID(), Splatform.PlatformUserID.None);
+            yield return WaitFor(() => Nearest<GuildRegistrarNpc>() != null, 60f);
+            Check("guilda/registrador-no-mundo", _waitOk);
+            var registrar = Nearest<GuildRegistrarNpc>();
+            if (registrar == null) yield break;
+            yield return WaitFor(() => registrar.GetHoverName() == "Registrador de Guildas", 15f);
+            Check("guilda/registrador-nome", _waitOk, registrar.GetHoverName());
+            Check("guilda/registrador-por-perto", GuildsBridge.NearRegistrar(Me));
+
+            // Through the Registrar's own panel and its button, as a player would.
+            UiRoot.Open(registrar, Me);
+            yield return new WaitForSeconds(1.5f);
+            yield return Shot("guilda-2-registrador");
+            var found = FoundButton();
+            Check("guilda/botao-fundar-no-painel", found != null);
+            if (found == null) { UiRoot.RequestClose(); yield break; }
+            found.onClick.Invoke();
+            yield return new WaitForSeconds(1f);
+            Check("guilda/painel-fecha-e-formulario-abre", !UiRoot.IsOpen && form.activeSelf);
+            yield return Shot("guilda-3-formulario");
+
+            string name = "Registro" + Letters();
+            FillGuildForm(form, name);
+            ClickGuilds(form, "Guilds.CreateGuildUI");
+            yield return WaitFor(() => GuildsBridge.OwnGuildName() == name, 20f);
+            Check("guilda/perto-fundou", _waitOk, GuildsBridge.OwnGuildName());
+            yield return Shot("guilda-4-fundada");
+
+            // Already in a guild: the panel says so and offers nothing.
+            HideGuildsUi();
+            UiRoot.Open(registrar, Me);
+            yield return new WaitForSeconds(1.5f);
+            Check("guilda/com-guilda-sem-botao", FoundButton() == null);
+            yield return Shot("guilda-5-ja-tem");
+            UiRoot.RequestClose();
+
+            DeleteOwnGuild();
+            yield return WaitFor(() => GuildsBridge.OwnGuildName() == null, 10f);
+            Check("guilda/limpeza-guilda", _waitOk);
+            ServiceNpcAuthority.RequestRemoval(registrar);
+            yield return WaitFor(() => Nearest<GuildRegistrarNpc>() == null, 20f);
+            Check("guilda/limpeza-registrador", _waitOk);
+        }
+
+        private static UnityEngine.UI.Button FoundButton() =>
+            UnityEngine.Object.FindObjectsByType<UnityEngine.UI.Button>(FindObjectsSortMode.None)
+                .FirstOrDefault(b => b.isActiveAndEnabled && b.GetComponentInChildren<TextMeshProUGUI>()?.text == "Fundar guilda");
+
+        private static Type GuildsType(string name) =>
+            AppDomain.CurrentDomain.GetAssemblies().FirstOrDefault(a => a.GetName().Name == "Guilds")?.GetType(name, false);
+
+        private static GameObject GuildsUi(string field) =>
+            GuildsType("Guilds.Interface")?.GetField(field, BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Static)?.GetValue(null) as GameObject;
+
+        private static void HideGuildsUi() =>
+            GuildsType("Guilds.Interface")?.GetMethod("HideUI", BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Static)?.Invoke(null, null);
+
+        private static void ClickGuilds(GameObject ui, string typeName)
+        {
+            var component = ui.GetComponent(GuildsType(typeName));
+            component.GetType().GetMethod("OnButtonCreate_Clicked").Invoke(component, null);
+        }
+
+        private static void FillGuildForm(GameObject form, string name)
+        {
+            var component = form.GetComponent(GuildsType("Guilds.CreateGuildUI"));
+            var t = component.GetType();
+            ((TMP_InputField)t.GetField("Col2InputFieldGuildName").GetValue(component)).text = name;
+            ((TMP_InputField)t.GetField("Col2InputFieldGuildDescription").GetValue(component)).text = "Teste do Registrador";
+            t.GetField("guildIconId", BindingFlags.NonPublic | BindingFlags.Instance).SetValue(component, 1);
+        }
+
+        private static void DeleteOwnGuild()
+        {
+            var api = GuildsType("Guilds.API");
+            object guild = api?.GetMethod("GetOwnGuild", Type.EmptyTypes)?.Invoke(null, null);
+            if (guild != null) api.GetMethod("DeleteGuild").Invoke(null, new[] { guild });
+        }
+
+        /// <summary>A unique, letters-only suffix: the Guilds name validator takes no digits.</summary>
+        private static string Letters() =>
+            new string(DateTime.Now.ToString("HHmmss").Select(c => (char)('a' + (c - '0'))).ToArray());
 
         // ---------------------------------------------------------------------- cursor
 
