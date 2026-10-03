@@ -173,6 +173,10 @@ LeaveSeconds = 15
 
 [Arena - Pontos]
 GamesPerWeek = 1
+
+[Guildas]
+CostItem = Coins
+CostAmount = 100
 "@
 
     # Clientes: o perfil do launcher, com o NpcValheim desta arvore e o driver.

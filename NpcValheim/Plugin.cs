@@ -64,6 +64,8 @@ namespace NpcValheim
         internal static ConfigEntry<int> TeleportCostAmount;
         internal static ConfigEntry<float> TeleportCooldownSeconds;
         internal static ConfigEntry<int> ListingDurationHours;
+        internal static ConfigEntry<string> GuildCostItem;
+        internal static ConfigEntry<int> GuildCostAmount;
         internal static ConfigEntry<string> DeadcoinShopItems;
         internal static ConfigEntry<string> BossPassBosses;
         internal static ConfigEntry<float> BossPassKillRadius;
@@ -145,6 +147,11 @@ namespace NpcValheim
                 "Metres from the boss, measured on the ground, within which a player counts as present at its death. " +
                 "Players who hit the boss count regardless of distance.");
 
+            GuildCostItem = Config.Bind("Guildas", "CostItem", "Coins",
+                "Prefab name of the item charged to found a guild at the Guild Registrar");
+            GuildCostAmount = Config.Bind("Guildas", "CostAmount", 0,
+                "How many of CostItem founding a guild costs (0 = free). Charged only once the guild exists");
+
             // Server-authoritative entries. The Quests/VIP keys and HUD positions are left out
             // on purpose: they are each player's own preferences.
             ConfigSync.AddConfigEntry(TeleportCostItem).SynchronizedConfig = true;
@@ -154,6 +161,8 @@ namespace NpcValheim
             ConfigSync.AddConfigEntry(DeadcoinShopItems).SynchronizedConfig = true;
             ConfigSync.AddConfigEntry(BossPassBosses).SynchronizedConfig = true;
             ConfigSync.AddConfigEntry(BossPassKillRadius).SynchronizedConfig = true;
+            ConfigSync.AddConfigEntry(GuildCostItem).SynchronizedConfig = true;
+            ConfigSync.AddConfigEntry(GuildCostAmount).SynchronizedConfig = true;
 
             // [Arena*] sections: synchronized and locked like the rest, except the panel key.
             Arena.ArenaConfig.Bind(Config, ConfigSync);
