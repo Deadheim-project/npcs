@@ -43,10 +43,16 @@ namespace NpcValheim.UI
         /// with the VIP key. Same frame, same status line, no Admin or Appearance tabs, because
         /// there is no NPC for them to act on.</summary>
         internal NpcWindow(string title, string tabLabel, NpcViewBase view, Player player, System.Action onClose)
+            : this(title, new[] { (tabLabel, view) }, player, onClose)
+        {
+        }
+
+        /// <summary>Several pages that belong to no NPC -- the arena panel behind its key.</summary>
+        internal NpcWindow(string title, IList<(string label, NpcViewBase view)> pages, Player player, System.Action onClose)
             : this(title, onClose)
         {
             if (_canvas == null) return;
-            AddTab(tabLabel, view, null, player);
+            foreach (var (label, view) in pages) AddTab(label, view, null, player);
             SetActive(0);
         }
 
@@ -121,6 +127,17 @@ namespace NpcValheim.UI
                 case BossPassNpc _:
                     AddTab("Passes", new BossPassView(), npc, player);
                     break;
+                case ArenaOrganizerNpc _:
+                    AddTab("Carta", new ArenaCharterView(), npc, player);
+                    AddTab("Times", new ArenaTeamsView(), npc, player);
+                    break;
+                case ArenaBattlemasterNpc _:
+                    AddTab("Arena", new ArenaQueueView(), npc, player);
+                    AddTab("Ranking", new ArenaLadderView(), npc, player);
+                    break;
+                case ArenaVendorNpc _:
+                    AddTab("Intendente", new ArenaVendorView(), npc, player);
+                    break;
                 // A marketplace NPC decides for itself which side of the economy it runs. The
                 // auction house and the merchant are different NPCs now, so nobody has to work
                 // out who they are trading with from which tab happens to be open.
@@ -145,6 +162,8 @@ namespace NpcValheim.UI
                 if (npc.ShowsAppearanceTab)
                     AddTab("Aparência", new AppearanceView(), npc, player);
                 AddTab("Admin", new AdminView(), npc, player);
+                if (npc is ArenaBattlemasterNpc)
+                    AddTab("Arena (admin)", new ArenaAdminView(), npc, player);
             }
         }
 

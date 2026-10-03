@@ -11,11 +11,14 @@ namespace NpcValheim
 {
     [BepInPlugin(Guid, Name, Version)]
     [BepInDependency(VipList.VipListPlugin.PluginGuid)]
+    // Soft: the arena reads Deadheim's arena zones and patches its ally rule by name, and both
+    // only work if Deadheim is loaded first. Without Deadheim the arena still runs.
+    [BepInDependency("Detalhes.Deadheim", BepInDependency.DependencyFlags.SoftDependency)]
     public class Plugin : BaseUnityPlugin
     {
         public const string Guid = "com.npcvalheim.mod";
         public const string Name = "NpcValheim";
-        public const string Version = "0.1.51";
+        public const string Version = "0.1.56";
 
         internal static ManualLogSource Log;
         private Harmony _harmony;
@@ -150,6 +153,9 @@ namespace NpcValheim
             ConfigSync.AddConfigEntry(BossPassBosses).SynchronizedConfig = true;
             ConfigSync.AddConfigEntry(BossPassKillRadius).SynchronizedConfig = true;
 
+            // [Arena*] sections: synchronized and locked like the rest, except the panel key.
+            Arena.ArenaConfig.Bind(Config, ConfigSync);
+
             // Everything above is read where it is used (a new teleporter, a new listing, the
             // HUD every frame), so a reload takes effect on its own. The HUD offsets are the
             // exception and QuestTracker/QuestHudButton rebuild themselves when they change.
@@ -181,11 +187,21 @@ namespace NpcValheim
                 UI.QuestHudButton.EnsureCreated();
                 UI.QuestTracker.EnsureCreated();
                 UI.VipShopShortcut.EnsureCreated();
+                UI.ArenaHud.EnsureCreated();
             }
 
             _harmony = new Harmony(Guid);
             _harmony.PatchAll();
             Log.LogInfo($"{Name} {Version} loaded");
+        }
+
+        /// <summary>The arena is the only part of the mod that runs on a clock rather than on
+        /// requests: the queue matches, the gates open, invitations lapse, the week turns.</summary>
+        private void Update()
+        {
+            Arena.ArenaServer.Tick();
+            // Returns at once without a local player, so a dedicated server pays nothing.
+            Arena.ArenaClient.Tick();
         }
 
         private void OnDestroy()

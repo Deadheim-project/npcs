@@ -113,6 +113,10 @@ namespace NpcValheim.Npc
         private string _authoritativeBuys;
         private string _authoritativeSells;
         private string _authoritativeBoss;
+
+        /// <summary>When an admin last changed the lock here (Time.unscaledTime), for the
+        /// purchase that was already on its way (RPC_BuyFromNpc).</summary>
+        private float _lockedAt = float.NegativeInfinity;
         private float _nextCounterCheck;
 
         /// <summary>Restores one side of the counter if the ZDO has drifted away from what the
@@ -131,6 +135,10 @@ namespace NpcValheim.Npc
 
             var current = Nview.GetZDO().GetString(key, "");
             if (string.Equals(current, authoritative, StringComparison.Ordinal)) return false;
+
+            // Whatever the ZDO drifted to was on clients' screens until now, and someone may
+            // already have paid one of its prices.
+            if (key == KeySellPrices) RememberShownSells(current);
 
             Plugin.Log.LogWarning(
                 $"NpcValheim: '{GetHoverName()}' [{Nview.GetZDO().m_uid}] lost what it {side} " +
@@ -203,10 +211,13 @@ namespace NpcValheim.Npc
 
         private Dictionary<string, int> GetPriceTable(string key)
         {
-            var result = new Dictionary<string, int>();
-            if (Nview == null || !Nview.IsValid()) return result;
+            if (Nview == null || !Nview.IsValid()) return new Dictionary<string, int>();
+            return ParsePriceTable(Nview.GetZDO().GetString(key, ""));
+        }
 
-            var packed = Nview.GetZDO().GetString(key, "");
+        private static Dictionary<string, int> ParsePriceTable(string packed)
+        {
+            var result = new Dictionary<string, int>();
             if (string.IsNullOrEmpty(packed)) return result;
 
             foreach (var line in packed.Split('\n'))
@@ -306,6 +317,7 @@ namespace NpcValheim.Npc
 
         private void SetRequiredBoss(string boss)
         {
+            if (!string.Equals(RequiredBoss, boss ?? "", StringComparison.Ordinal)) _lockedAt = Time.unscaledTime;
             Nview.GetZDO().Set(KeyRequiredBoss, boss ?? "");
             if (ZNet.instance != null && ZNet.instance.IsServer()) _authoritativeBoss = boss ?? "";
             PersistProfileSnapshot();
@@ -415,6 +427,9 @@ namespace NpcValheim.Npc
                 sb.Append(kv.Key).Append(';').Append(kv.Value.ToString(CultureInfo.InvariantCulture));
             }
             string packed = sb.ToString();
+            // The prices being replaced were on display until this instant; a buyer who read
+            // one of them is still owed it (see RPC_BuyFromNpc).
+            if (key == KeySellPrices) RememberShownSells(Nview.GetZDO().GetString(key, ""));
             Nview.GetZDO().Set(key, packed);
 
             // The write is only authoritative once the server remembers it; otherwise the
@@ -430,13 +445,32 @@ namespace NpcValheim.Npc
 
         /// <summary>Buy from the merchant. The caller has already taken `paid` out of the
         /// player's inventory -- a dedicated server cannot reach into a remote inventory, so
-        /// the client moves the coins and the server decides whether that was enough.</summary>
+        /// the client moves the coins and the server decides whether they add up to a price
+        /// the counter showed.</summary>
         public void RequestBuyFromNpc(string itemName, int amount, int paid)
         {
             if (Nview == null || !Nview.IsValid()) return;
             Nview.InvokeRPC("RPC_BuyFromNpc", itemName, amount + ";" + paid);
         }
 
+        /// <summary>
+        /// The counter's side of a purchase. It never pays coins back.
+        ///
+        /// It used to: anything short or not for sale got `paid` refunded, and anything over the
+        /// price got the difference back as change. But `paid` is only what the client says it
+        /// took out of its own bag -- the server cannot look -- so a modified client could say
+        /// two billion for a one-coin item, or for an item that was never on the counter, and
+        /// be handed two billion real coins. Capping the refund at the price would not have
+        /// closed it: claiming one coin short of an expensive stack is a refusal too, and it
+        /// paid out almost the full price on every click.
+        ///
+        /// So the sale closes at the price the player saw instead of being refunded: the one
+        /// the counter shows now, or one it showed in the last ShownPriceSeconds -- an admin
+        /// can change or remove a price between the client reading it and this running, and
+        /// that buyer gets the goods at the price they paid (ClosingPrice). A payment that
+        /// adds up to no price the counter showed is not one an honest client can send, and
+        /// gets nothing back; the server cannot know that any coins actually left.
+        /// </summary>
         private void RPC_BuyFromNpc(long sender, string itemName, string packed)
         {
             if (!NpcRequestGuard.AllowNearby(Nview, transform, sender, "shop-buy", 6f, 8, 2f)) return;
@@ -448,28 +482,41 @@ namespace NpcValheim.Npc
             if (!int.TryParse(parts[0], out int amount) || !int.TryParse(parts[1], out int paid)) return;
             if (amount <= 0 || amount > 10000 || paid < 0) return;
 
-            int cost = PayoutFor(GetSellPrice(itemName), amount);
-
-            // Every path out of here either delivers the goods or returns the money. The one
-            // outcome that must not exist is coins leaving the player and nothing coming back:
-            // the client has already paid by the time this runs.
-            if (cost <= 0 || paid < cost)
+            int price = GetSellPrice(itemName);
+            int unitPrice = ClosingPrice(paid, amount, price, ShownSellPrices(itemName));
+            if (unitPrice <= 0)
             {
-                Refund(sender, playerId, paid, cost <= 0 ? "Item indisponível" : "Pagamento insuficiente");
+                Plugin.Log.LogWarning(
+                    $"NpcValheim: refused {amount}x {itemName} to {playerId}: the client claims {paid} " +
+                    $"and the counter never showed a price that adds up to it (asks {PayoutFor(price, amount)} now)");
+                ServiceNpcAuthority.SendStatus(sender, price > 0
+                    ? "O pagamento não confere com o preço do balcão."
+                    : $"{ItemNames.Display(itemName)} não está à venda.");
                 BroadcastMarketDataTo(sender);
                 return;
             }
 
             // The counter's boss lock. Here and not only in the panel: the panel hides the
             // lists from a player without the pass, and a hidden list is not a boundary.
+            //
+            // Nothing is paid back, for the reason above: `paid` is the client's word. An
+            // honest client does not get here, its panel shows the lock instead of the lists --
+            // except when an admin locks the counter between the player reading it and this
+            // running. That buyer gets the goods, as with a price changed in the same gap.
             if (!CounterOpenFor(playerId, out string locked))
             {
-                Plugin.Log.LogInfo($"NpcValheim: '{GetHoverName()}' refused a sale to {playerId}: no '{RequiredBoss}' pass");
-                // Capped at the price: `paid` is the client's own claim, and refunding it
-                // whole would pay out whatever a modified client chose to write there.
-                Refund(sender, playerId, Math.Min(paid, cost), "Loja trancada");
-                ServiceNpcAuthority.SendStatus(sender, locked);
-                return;
+                if (Time.unscaledTime - _lockedAt > ShownPriceSeconds)
+                {
+                    Plugin.Log.LogWarning(
+                        $"NpcValheim: '{GetHoverName()}' refused a sale to {playerId}: no '{RequiredBoss}' pass " +
+                        $"(the client claims {paid}; nothing paid back)");
+                    ServiceNpcAuthority.SendStatus(sender, locked);
+                    BroadcastMarketDataTo(sender);
+                    return;
+                }
+                Plugin.Log.LogInfo(
+                    $"NpcValheim: '{GetHoverName()}' sells to {playerId} without the '{RequiredBoss}' pass: " +
+                    "the counter was locked moments ago");
             }
 
             // Handed to the buyer rather than dropped at the merchant's feet. Goods on the
@@ -477,12 +524,52 @@ namespace NpcValheim.Npc
             // without noticing.
             Nview.InvokeRPC(sender, "RPC_DeliverItem", itemName, amount);
 
-            // Overpayment happens honestly: an admin can change the price between the client
-            // reading it and this running.
-            if (paid > cost) Refund(sender, playerId, paid - cost, "Troco");
-
-            Plugin.Log.LogInfo($"NpcValheim: merchant sold {amount}x {itemName} to {playerId} for {cost}");
+            Plugin.Log.LogInfo(
+                $"NpcValheim: merchant sold {amount}x {itemName} to {playerId} for {PayoutFor(unitPrice, amount)}" +
+                (unitPrice != price ? $" at {unitPrice}/un, a price it showed moments ago (now {price})" : "") +
+                (paid > PayoutFor(unitPrice, amount) ? $"; the client claims {paid}" : ""));
             BroadcastMarketDataTo(sender);
+        }
+
+        /// <summary>How long a price stays honoured after the counter stops showing it. The
+        /// panel re-reads the price table every frame, so the honest gap is the time a ZDO
+        /// update and a click take to cross the network -- seconds, not this.</summary>
+        private const float ShownPriceSeconds = 60f;
+
+        private readonly ShownPrices _shownSells = new ShownPrices();
+
+        private void RememberShownSells(string packed) =>
+            _shownSells.Remember(ParsePriceTable(packed), Time.unscaledTime + ShownPriceSeconds);
+
+        /// <summary>Every price for this item a client could be paying right now, besides
+        /// the one on the ZDO: the server's last own write (the ZDO can drift away from it,
+        /// see RestoreIfDrifted) and whatever the counter showed in the last minute.</summary>
+        private List<int> ShownSellPrices(string itemName)
+        {
+            var shown = _shownSells.For(itemName, Time.unscaledTime);
+            if (_authoritativeSells != null &&
+                ParsePriceTable(_authoritativeSells).TryGetValue(itemName ?? "", out int kept))
+                shown.Add(kept);
+            return shown;
+        }
+
+        /// <summary>
+        /// The unit price a purchase from the counter closes at, or 0 when it does not close.
+        ///
+        /// `paid` is the client's own claim. It is enough at the current price, or it is
+        /// exactly what `amount` costs at a price the counter showed recently -- the only two
+        /// things an honest client sends. Either way it buys the goods and nothing more: there
+        /// is no change, because the server cannot tell an overpayment from a lie about one.
+        /// Extracted so the checks can prove that without a connected peer.
+        /// </summary>
+        internal static int ClosingPrice(int paid, int amount, int currentPrice, IEnumerable<int> shownPrices)
+        {
+            int cost = PayoutFor(currentPrice, amount);
+            if (cost > 0 && paid >= cost) return currentPrice;
+            if (paid <= 0 || shownPrices == null) return 0;
+            foreach (int shown in shownPrices)
+                if (shown > 0 && PayoutFor(shown, amount) == paid) return shown;
+            return 0;
         }
 
         /// <summary>Gives money back to a player who paid for something that did not happen.
@@ -775,15 +862,17 @@ namespace NpcValheim.Npc
             if (!MarketDatabase.Buy(listingId, NpcId, buyerId, amount, taxPercent, paid,
                     out var listing, out int refund, out var error))
             {
-                // The buyer paid before asking, so a refusal has to hand the money back --
-                // otherwise "listing expired" quietly costs the player the full price.
-                Plugin.Log.LogInfo($"NpcValheim: buy failed for {sender}: {error}");
+                // The buyer paid before asking, so a listing that left the board under them
+                // has to hand the money back -- otherwise "listing expired" quietly costs the
+                // player the full price. What comes back is the listing's price as the server
+                // recorded it, never the client's `paid` (see MarketDatabase.Buy).
+                Plugin.Log.LogInfo($"NpcValheim: buy failed for {sender}: {error} (claims {paid}, refunding {refund})");
                 Refund(sender, buyerId, refund, error ?? "Compra recusada");
                 BroadcastMarketDataTo(sender);
                 return;
             }
 
-            if (refund > 0) Refund(sender, buyerId, refund, "Troco");
+            // No change: a listing's price never moves, so the honest client paid it exactly.
 
             // Nothing is handed over here: MarketDatabase.Buy posts the goods to the buyer
             // and the proceeds to the seller as mail, so the trade completes even if the
@@ -853,7 +942,12 @@ namespace NpcValheim.Npc
         private string PackMarketData(long forSenderId)
         {
             var sb = new StringBuilder();
-            foreach (var l in MarketDatabase.GetListings(NpcId).Take(MarketDatabase.MaxListingsPerBoard))
+            // An expired listing waits up to a minute for the sweep, and buying it is refused;
+            // offering it meanwhile only invites a purchase that cannot happen.
+            var now = DateTime.UtcNow;
+            foreach (var l in MarketDatabase.GetListings(NpcId)
+                         .Where(listing => listing.ExpiresUtc >= now)
+                         .Take(MarketDatabase.MaxListingsPerBoard))
             {
                 if (sb.Length > 0) sb.Append('\n');
                 sb.Append(l.Id).Append(';')
@@ -961,6 +1055,39 @@ namespace NpcValheim.Npc
                 if (entry != null && !string.IsNullOrEmpty(entry.ItemName) && entry.Price > 0)
                     prices[entry.ItemName] = entry.Price;
             SavePriceTable(key, prices);
+        }
+    }
+
+    /// <summary>Prices a counter stopped showing, and until when a buyer who read one of them
+    /// is still sold at it. Time is passed in rather than read, so the checks can drive it.</summary>
+    internal sealed class ShownPrices
+    {
+        private readonly Dictionary<string, Dictionary<int, float>> _until =
+            new Dictionary<string, Dictionary<int, float>>(StringComparer.Ordinal);
+
+        public void Remember(Dictionary<string, int> table, float until)
+        {
+            if (table == null) return;
+            foreach (var kv in table)
+            {
+                if (string.IsNullOrEmpty(kv.Key) || kv.Value <= 0) continue;
+                if (!_until.TryGetValue(kv.Key, out var prices))
+                    _until[kv.Key] = prices = new Dictionary<int, float>();
+                prices[kv.Value] = until;
+            }
+        }
+
+        public List<int> For(string itemName, float now)
+        {
+            var result = new List<int>();
+            if (string.IsNullOrEmpty(itemName) || !_until.TryGetValue(itemName, out var prices)) return result;
+
+            foreach (var stale in prices.Where(p => p.Value < now).Select(p => p.Key).ToList())
+                prices.Remove(stale);
+            if (prices.Count == 0) _until.Remove(itemName);
+
+            result.AddRange(prices.Keys);
+            return result;
         }
     }
 

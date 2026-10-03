@@ -115,8 +115,10 @@ class Program
                 listing.Id, boardId, buyerId, amount: 4, taxPercent: 10, paid: 25,
                 out var boughtFrom, out var refund, out var buyError);
             Check("a purchase commits", bought, buyError ?? "");
-            Check("a purchase returns only the overpayment",
-                  bought && refund == 5, "refund=" + refund);
+            // paid 25 for 20: a listing's price never changes, so only a client that says it
+            // paid more than it did ever gets here -- and change is what it was after.
+            Check("a purchase gives no change on a claimed overpayment",
+                  bought && refund == 0, "refund=" + refund);
             Check("a partial purchase leaves the remaining stock",
                   boughtFrom != null && boughtFrom.Amount == 6 &&
                   MarketDatabase.GetListings(boardId).Single().Amount == 6);
@@ -187,6 +189,8 @@ class Program
                   cancellationMail[0].Quality == 3 && cancellationMail[0].Amount == 6,
                   cancellationMail.Count == 0 ? "missing" : cancellationMail[0].Amount.ToString());
 
+            CheckAuctionRefunds(boardId, marketPath);
+
             System.Console.WriteLine();
             System.Console.WriteLine("== durable mail claims ==");
 
@@ -236,6 +240,116 @@ class Program
             MarketDatabase.Shutdown();
             MailDatabase.Shutdown();
         }
+    }
+
+    /// <summary>
+    /// The buyer's `paid` is the client's own word: it pays before asking, and the server
+    /// cannot look inside a remote bag. These prove a refund is worked out from the listing
+    /// the server recorded and never from that word -- a modified client used to claim two
+    /// billion and receive two billion.
+    /// </summary>
+    static void CheckAuctionRefunds(string boardId, string marketPath)
+    {
+        System.Console.WriteLine();
+        System.Console.WriteLine("== auction refunds come from the listing, not the claim ==");
+
+        const long sellerId = 43001;
+        const long racerA = 43002, racerB = 43003, racerC = 43004;
+        const string otherBoard = "integration-other-board";
+        const int claim = 2000000000;
+
+        var cheap = MarketDatabase.AddListing(boardId, sellerId, "Seller", "Wood", 1,
+            amount: 3, pricePerUnit: 5, duration: TimeSpan.FromHours(1));
+
+        Check("a 2e9 claim on a 5-coin unit buys it and gets no change",
+              MarketDatabase.Buy(cheap.Id, boardId, racerA, 1, 0, claim, out _, out int change, out _) &&
+              change == 0, "refund=" + change);
+
+        // Refusals an honest client cannot produce: its UI only offers listings on this board
+        // that are not its own, one unit at a time, at the price the listing carries.
+        Check("a listing the server never had refunds nothing",
+              !MarketDatabase.Buy("never-existed", boardId, racerA, 1, 0, claim, out _, out int ghost, out _) &&
+              ghost == 0, "refund=" + ghost);
+        Check("one coin short on a listing still there refunds nothing",
+              !MarketDatabase.Buy(cheap.Id, boardId, racerA, 1, 0, 4, out _, out int shortPaid, out _) &&
+              shortPaid == 0, "refund=" + shortPaid);
+        Check("asking for more than the stock refunds nothing",
+              !MarketDatabase.Buy(cheap.Id, boardId, racerA, 100, 0, claim, out _, out int tooMany, out _) &&
+              tooMany == 0, "refund=" + tooMany);
+        Check("the seller buying their own listing gets nothing back",
+              !MarketDatabase.Buy(cheap.Id, boardId, sellerId, 1, 0, claim, out _, out int own, out _) &&
+              own == 0, "refund=" + own);
+        Check("a listing bought through another board refunds nothing",
+              !MarketDatabase.Buy(cheap.Id, otherBoard, racerA, 1, 0, claim, out _, out int foreign, out _) &&
+              foreign == 0, "refund=" + foreign);
+
+        // The honest race: the listing leaves the board between the buyer's screen and the
+        // request landing, after the coins already left the bag.
+        Check("the last two units sell",
+              MarketDatabase.Buy(cheap.Id, boardId, racerB, 2, 0, 10, out _, out _, out _));
+        MarketDatabase.Buy(cheap.Id, boardId, racerA, 1, 0, claim, out _, out int raced, out var racedError);
+        Check("a buyer who raced a sold-out listing gets its price back, not the claim",
+              raced == 5, "refund=" + raced + " (" + racedError + ")");
+        // "Comprar 1" pressed again and again on a board that went stale: each press paid.
+        MarketDatabase.Buy(cheap.Id, boardId, racerA, 1, 0, 5, out _, out int secondPress, out _);
+        MarketDatabase.Buy(cheap.Id, boardId, racerA, 1, 0, 5, out _, out int thirdPress, out _);
+        MarketDatabase.Buy(cheap.Id, boardId, racerA, 1, 0, 5, out _, out int fourthPress, out _);
+        Check("repeated presses come back up to the stock it was listed with (3), then stop",
+              secondPress == 5 && thirdPress == 5 && fourthPress == 0,
+              secondPress + "/" + thirdPress + "/" + fourthPress);
+        MarketDatabase.Buy(cheap.Id, boardId, racerC, 50, 0, claim, out _, out int wide, out _);
+        Check("one huge claim gets no more than the listing's whole stock (3 x 5)", wide == 15, "refund=" + wide);
+        MarketDatabase.Buy(cheap.Id, boardId, racerC, 1, 0, claim, out _, out int wideAgain, out _);
+        Check("and nothing once that is spent", wideAgain == 0, "refund=" + wideAgain);
+        MarketDatabase.Buy(cheap.Id, boardId, sellerId, 1, 0, 5, out _, out int ownGone, out _);
+        Check("the seller gets nothing back from their own closed listing", ownGone == 0, "refund=" + ownGone);
+        MarketDatabase.Buy(cheap.Id, otherBoard, racerB, 1, 0, 5, out _, out int foreignGone, out _);
+        Check("a closed listing refunds nothing through another board", foreignGone == 0, "refund=" + foreignGone);
+
+        var cancelled = MarketDatabase.AddListing(boardId, sellerId, "Seller", "Stone", 1,
+            amount: 4, pricePerUnit: 9, duration: TimeSpan.FromHours(1));
+        MarketDatabase.CancelListing(cancelled.Id, boardId, sellerId);
+        MarketDatabase.Buy(cancelled.Id, boardId, racerA, 1, 0, claim, out _, out int cancelRace, out _);
+        Check("a buyer who raced a cancellation gets the price back", cancelRace == 9, "refund=" + cancelRace);
+        MarketDatabase.Buy(cancelled.Id, boardId, racerB, 1, 0, 3, out _, out int underClaim, out _);
+        Check("a claim below the price lowers the refund, never raises it", underClaim == 3, "refund=" + underClaim);
+
+        var lapsed = MarketDatabase.AddListing(boardId, sellerId, "Seller", "Resin", 1,
+            amount: 2, pricePerUnit: 7, duration: TimeSpan.FromHours(-1));
+        MarketDatabase.Buy(lapsed.Id, boardId, racerA, 1, 0, claim, out _, out int lapsedRace, out var lapsedError);
+        Check("an expired listing refunds its price, not the claim",
+              lapsedRace == 7 && lapsedError == "Anúncio expirado", "refund=" + lapsedRace + " (" + lapsedError + ")");
+        MarketDatabase.Buy(lapsed.Id, boardId, racerA, 1, 0, claim, out _, out int lapsedSecond, out _);
+        Check("a second press before the sweep gets the second unit back", lapsedSecond == 7, "refund=" + lapsedSecond);
+        MarketDatabase.ReturnExpiredListings();
+        MarketDatabase.Buy(lapsed.Id, boardId, racerA, 1, 0, 7, out _, out int afterSweep, out _);
+        Check("the sweep does not start the count over", afterSweep == 0, "refund=" + afterSweep);
+
+        // A row from before OriginalAmount existed reads it as 0: the stock it had when it
+        // went is the best record left, and the refund must not fall back to the claim.
+        using (var raw = new LiteDatabase(marketPath))
+        {
+            raw.GetCollection("listings").Insert(new BsonDocument
+            {
+                ["_id"] = "legacy-listing",
+                ["NpcId"] = boardId,
+                ["OwnerId"] = sellerId,
+                ["OwnerName"] = "Seller",
+                ["ItemName"] = "Flint",
+                ["Quality"] = 1,
+                ["Amount"] = 4,
+                ["PricePerUnit"] = 6,
+                ["ExpiresUtcTicks"] = DateTime.UtcNow.AddHours(1).Ticks,
+            });
+        }
+        Check("a listing written before OriginalAmount still sells",
+              MarketDatabase.Buy("legacy-listing", boardId, racerB, 1, 0, 6, out _, out _, out _));
+        MarketDatabase.CancelListing("legacy-listing", boardId, sellerId);
+        MarketDatabase.Buy("legacy-listing", boardId, racerA, 10, 0, claim, out _, out int legacyRace, out _);
+        Check("and refunds no more than the stock it had when it went (3 x 6)", legacyRace == 18, "refund=" + legacyRace);
+
+        int sellerCoins = MailDatabase.GetMail(sellerId).Where(m => m.Coins > 0).Sum(m => m.Coins);
+        Check("only the three real sales credited the seller (5 + 10 + 6)", sellerCoins == 21, "coins=" + sellerCoins);
     }
 
     static int Main(string[] args)

@@ -43,6 +43,9 @@ namespace NpcValheim.Npc
             "NpcValheim_QuestGiver",
             "NpcValheim_DeadcoinShop",
             "NpcValheim_BossPass",
+            "NpcValheim_ArenaOrganizer",
+            "NpcValheim_ArenaBattlemaster",
+            "NpcValheim_ArenaVendor",
         };
 
         private static readonly HashSet<ZDOID> ProcessedStubs = new HashSet<ZDOID>();
@@ -67,6 +70,7 @@ namespace NpcValheim.Npc
             DeadcoinShop.Register(rpc);
             BossPass.Register(rpc);
             BossKillWatcher.Reset();
+            Arena.ArenaNet.Register(rpc);
             Plugin.Log.LogInfo("NpcValheim: server-authoritative service NPC RPCs registered");
         }
 

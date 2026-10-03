@@ -879,9 +879,30 @@ namespace NpcValheim.Npc
         // not collide with the field/line separators; Clean() strips those from free text, and
         // an objective's target keeps its commas because Explore stores a place as "x,z".
         private const int FieldCount = 20;
-        /// <summary>Same snapshot the panel gets, for the global quest journal -- which has
-        /// no NPC to ask and so cannot go through this one's ZNetView.</summary>
-        public static string PackFor(long playerId) => Pack(playerId);
+        /// <summary>
+        /// Same snapshot the panel gets, for the global quest journal -- which has no NPC to
+        /// ask and so cannot go through this one's ZNetView. Only the quests this player has
+        /// in progress: all the journal, tracker, map pins and explore watcher ever show.
+        ///
+        /// It used to pack the whole catalogue, with several database reads per quest, and
+        /// every read opens the LiteDB file: about a thousand opens for 248 quests. Each client asks
+        /// for its journal every 3 s, panel open or not, so the dedicated server was doing
+        /// that walk once per player every 3 s, and a host lost frames to it. One read of the
+        /// player's own records picks the few quests that matter; catalogue order is kept so
+        /// the tracker's top entries stay the same.
+        /// </summary>
+        public static string PackActiveFor(long playerId)
+        {
+            var active = new HashSet<string>();
+            foreach (var entry in QuestDatabase.GetAll(playerId))
+                if (entry.Status == QuestStatus.Active && entry.QuestId != null) active.Add(entry.QuestId);
+
+            var quests = new List<QuestDefinition>();
+            if (active.Count > 0)
+                foreach (var quest in QuestStore.All)
+                    if (active.Contains(quest.Id)) quests.Add(quest);
+            return Pack(playerId, quests);
+        }
 
         public static List<QuestView> UnpackPublic(string packed) => Unpack(packed);
 

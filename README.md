@@ -269,6 +269,53 @@ calculado em `long`, checado contra a faixa e recusado fora dela
 fazia isso certo; a compra pelo NPC, que escrevi depois, não. Travado por 4
 verificações na suíte.
 
+### Reembolso pago com a palavra do cliente
+
+Comprar no balcão ou no leilão funciona assim: o cliente tira as moedas da
+própria bolsa e manda `quantidade;pago`. O servidor não enxerga o inventário de
+quem está conectado, então `pago` é só a palavra do cliente — e o servidor
+devolvia essa palavra em moedas de verdade: tudo, se o item não estava à venda;
+a diferença como "Troco", se passava do preço. Um cliente modificado mandava
+`pago = 2.000.000.000` por um item de 1 moeda e recebia ~2 bilhões.
+
+Limitar o reembolso ao preço não fecharia o buraco: "pagamento insuficiente"
+também reembolsava, e alegar uma moeda a menos do que custam 2.000 unidades a
+1.000.000 devolvia quase 2 bilhões a cada clique. A regra agora é **nunca devolver mais
+do que um cliente honesto pagou**, contado com os números do servidor:
+
+- **Balcão do Mercador** (`RPC_BuyFromNpc`): não devolve moeda nenhuma. A compra
+  fecha pelo preço que o jogador viu — o atual, ou um que o balcão mostrou no
+  último minuto, para o caso de o admin trocar ou tirar o preço entre o clique e
+  o pedido chegar (`MarketplaceNpc.ClosingPrice`). Pagou o preço atual ou mais:
+  leva o item, sem troco. Pagou exatamente o que a quantidade custava num preço
+  recente: leva pelo preço que viu. Qualquer outro valor não é algo que o
+  cliente do mod mande; não entrega nem devolve nada, e fica um aviso no log do
+  servidor.
+- **Leilão** (`MarketDatabase.Buy`): o preço de um anúncio nunca muda, então o
+  comprador honesto paga exatamente o preço e não existe troco. A única recusa
+  que ele pode encontrar é o anúncio sair do quadro antes do pedido chegar
+  (vendido, cancelado ou expirado) — o quadro só atualiza quando o painel abre
+  ou depois de uma ação, então isso pode acontecer minutos depois. Aí o servidor
+  devolve o **preço do anúncio**, nunca o valor alegado, por no máximo tantas
+  unidades quantas o anúncio foi publicado, somando todos os cliques daquele
+  comprador: quem apertou "Comprar 1" três vezes num quadro velho recebe as três
+  de volta, e repetir a alegação não passa do valor do anúncio. Nada volta para o
+  próprio vendedor. As outras recusas (anúncio de outro mercado, o próprio
+  anúncio, quantidade além do estoque, pagamento menor que o preço) não devolvem
+  nada. Anúncio expirado sai do quadro já no vencimento, sem esperar a
+  varredura.
+
+O formato de rede não mudou (`quantidade;pago` continua igual), e o cliente
+honesto não percebe diferença fora dessas corridas com o admin ou com outro
+comprador. O servidor continua sem poder confirmar que as moedas saíram da
+bolsa; isso só fecha com o saldo guardado no servidor, como faz a Loja
+Deadcoins.
+
+Travado em `tools/checks`: no `wire`, os preços pelos quais uma compra fecha e
+uma leitura do IL de `RPC_BuyFromNpc` provando que não sobrou nenhum pagamento
+de moedas nele; no `content`, os reembolsos do leilão contra o LiteDB de
+verdade, incluindo a alegação de 2 bilhões.
+
 ## Loja Deadcoins (substitui o mod DonationShop)
 
 NPC colocável **Loja Deadcoins** (`DeadcoinShopNpc`, prefab
@@ -420,6 +467,80 @@ aparecer duas vezes, vale a primeira linha.
 
 O requisito também entra no YAML do NPC (`marketplace.requiredBoss`). Um modelo que
 não fala do requisito deixa o NPC como está; `requiredBoss: ''` destranca.
+
+## Arena (cópia da arena do WoW 3.3.5)
+
+Três NPCs colocáveis pelo martelo (só admin): **Organizador de Arena** (carta do
+time), **Mestre da Arena** (fila e ranking) e **Intendente da Arena** (Pontos de
+Arena). A tecla **H** (`Arena.PanelKey`) abre o painel da arena de qualquer lugar:
+convites, fila, partida, placar, times e ranking. É onde se responde o que no WoW
+era popup (Entrar, Assinar, Aceitar). Uma faixa no topo da tela mostra a fila, o
+convite, a contagem dos portões e o placar.
+
+Toda decisão é do servidor (`Arena/ArenaEngine.cs`). O cliente pede e desenha o que
+recebe. As regras foram transcritas função por função do TrinityCore 3.3.5
+(`ArenaTeam.cpp`, `Arena.cpp`, `BattlegroundQueue.cpp`), e cada uma cita a função
+que copia.
+
+### O que é igual ao WoW (padrões do cfg)
+
+| | WoW 3.3.5 | Config |
+|---|---|---|
+| Times | 2v2, 3v3, 5v5; um time de cada tamanho por jogador; até 2× o tamanho em membros | `Brackets` (1 liga o 1v1, que o WoW não tinha) |
+| Carta | 80/120/200 de ouro; tamanho−1 assinaturas; quem assina vira fundador | `CharterCost` (em Coins), `SignaturesRequired` |
+| Capitão | convida, remove, passa a capitania, desfaz; só sai depois de passar a capitania | — |
+| Rating | time começa em 0; Elo com divisor 650; vencedor ganha até 48 abaixo de 1300 (cai para 24 entre 1000 e 1300), até 24 acima; perdedor perde até 24 | `StartRating`, `WinRatingModifier1/2`, `LoseRatingModifier` |
+| Rating pessoal | mesma fórmula, contra o MMR do adversário; quem entra num time 1000+ começa em 1000 | `StartPersonalRating` |
+| MMR | escondido, por jogador e tamanho, começa em 1500, K = 24; sobrevive a sair do time | `StartMatchmakerRating`, `MatchmakerRatingModifier` |
+| Fila ranqueada | grupo de exatamente N jogadores do mesmo time; MMR a até 150 de distância, qualquer um depois de 10 min; não repete o último adversário antes de 2 min | `MaxRatingDifference`, `RatingDiscardSeconds`, `PreviousOpponentsDiscardSeconds` |
+| Escaramuça | sozinho ou em grupo, sem rating | `Skirmish` |
+| Convite | 60 s para Entrar; não dá para sair da fila depois de chamado; deixar expirar na ranqueada é derrota | `InviteAcceptSeconds` |
+| Preparação | 60 s a partir do primeiro que entra, avisos de 1 min/30 s/15 s, vida e estamina cheias quando os portões abrem | `PreparationSeconds`, `GateRadius` |
+| Fim | último time de pé vence; 47 min sem vencedor = empate, os dois times perdem 16 | `TimeLimitMinutes`, `DrawPenalty` |
+| Deserção | abandonar a ranqueada depois do início é derrota na hora (no WoW o debuff Deserter era só de battleground) | — |
+| Desconectado | conta como derrota no fim mesmo se o time ganhou (`OfflineMemberLost`) | — |
+| Pontos | semanal: time com 10+ jogos paga quem jogou 30%+ deles; 344 até 1500, curva acima; ×0,76 no 2v2, ×0,88 no 3v3; melhor time, não a soma; teto 10.000 | `GamesPerWeek`, `ParticipationPercent`, `PointsRate`, `MaxPoints`, `ResetDay`, `ResetHourUtc` (terça 15h UTC = 12h de Brasília) |
+| Vendedor | Pontos de Arena; requisito = menor entre pessoal e do time, no melhor time do tamanho exigido ou maior | `[Arena - Intendente] Items` |
+
+### O que muda porque é Valheim
+
+- **Arenas são lugares do mundo**, não instâncias: uma partida por arena de cada vez.
+  O admin constrói a arena e escreve `[Arena - Partida] Maps`
+  (`Nome;ouro x,y,z,giro;verde x,y,z,giro[;espectador x,y,z]`). A aba **Arena (admin)**
+  do Mestre da Arena mostra a posição para copiar e diz se a arena foi recusada e por quê.
+- **A arena do Deadheim é reaproveitada**: os dois inícios precisam estar numa
+  `ArenaZones` do `Detalhes.Deadheim.cfg`. Lá o PvP já é obrigatório e não há perda de
+  skill, PK nem imunidade. Uma arena fora da zona é recusada.
+- **Ninguém morre na partida.** No lugar da morte há um **nocaute**: o jogador volta à
+  vida cheia, sai da luta e vai para o ponto de espectador (ou para o próprio início).
+  Morrer ali largaria o inventário inteiro numa lápide no meio da arena, e o Deadheim
+  registraria a morte.
+- **Quem pode ferir quem** é lido das chaves que cada jogador publica no próprio ZDO
+  (`npcv_arenaMatch/Side/Phase`), como o PvP do Deadheim faz com as bandeiras: só
+  adversários na mesma partida em andamento. Ninguém de fora entra, companheiro não fere
+  companheiro e ninguém bate antes dos portões. Guilda e grupo não protegem adversários na
+  arena (patch por nome em `PvpRules.AreAllies`).
+- **O time da fila ranqueada é o grupo do mod Groups.** O Groups só existe no cliente,
+  então o cliente do líder diz quem está no grupo e o cliente de cada membro confirma.
+- **Teleporte**: a ida passa por `Player.TeleportTo`, então em combate ou caçado o
+  Deadheim recusa, como recusa portal. A volta e a ida para o espectador passam por
+  `RPC_TeleportTo`, o caminho de admin, porque quem acabou de lutar está em combate.
+  Quem desloga numa arena volta para onde estava ao reconectar.
+- **Carta paga em Coins da bolsa**, como no Mercador: o cliente paga e o servidor devolve
+  tudo se recusar, ou o troco.
+- **Prêmios pelo correio**: o Intendente manda o item para a Caixa Postal, e a
+  distribuição semanal manda uma carta com os pontos.
+
+### Testes
+
+- `tools/checks/arena`: o motor fora do jogo, com as fórmulas contra valores calculados
+  à parte (float32, como o TrinityCore) e os fluxos inteiros contra um servidor de
+  mentira. Roda no `tools/checks/run.ps1`.
+- `tools/arena-e2e/run-arena-test.ps1`: cópia isolada do servidor local (`D:\dh-local`,
+  mesmo mundo e mods, outra porta) e dois clientes reais com o `ArenaTestDriver`, que
+  coloca os NPCs, cria times, joga a ranqueada, a deserção e a escaramuça, distribui os
+  pontos e compra no Intendente. Grava capturas de tela em `D:\tmp\arenatest\shots`.
+  `-ServerOnly` sobe só o servidor.
 
 ## Interface: Unity UI com os assets do próprio Valheim
 

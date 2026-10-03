@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 using NpcValheim.Npc;
 
@@ -20,6 +21,7 @@ namespace NpcValheim.UI
         private Player _player;
         private NpcWindow _window;
         private bool _standalone;
+        private string _title;
 
         public static void EnsureCreated()
         {
@@ -32,6 +34,7 @@ namespace NpcValheim.UI
         public static void Open(NpcBase npc, Player player)
         {
             if (_instance == null || npc == null || player == null) return;
+            _instance._title = null;
             _instance.Show(npc, player, false, () => new NpcWindow(npc, player, _instance.Close));
         }
 
@@ -41,11 +44,24 @@ namespace NpcValheim.UI
         internal static void OpenStandalone(string title, string tabLabel, NpcViewBase view, Player player)
         {
             if (_instance == null || view == null || player == null) return;
+            _instance._title = title;
             _instance.Show(null, player, true,
                 () => new NpcWindow(title, tabLabel, view, player, _instance.Close));
         }
 
+        /// <summary>Several standalone pages in one window (the arena panel).</summary>
+        internal static void OpenStandalone(string title, IList<(string label, NpcViewBase view)> pages, Player player)
+        {
+            if (_instance == null || pages == null || pages.Count == 0 || player == null) return;
+            _instance._title = title;
+            _instance.Show(null, player, true, () => new NpcWindow(title, pages, player, _instance.Close));
+        }
+
         internal static bool IsStandaloneOpen => IsOpen && _instance._standalone;
+
+        /// <summary>The title of the standalone window that is open, or null -- each shortcut
+        /// closes only its own window.</summary>
+        internal static string StandaloneTitle => IsStandaloneOpen ? _instance._title : null;
 
         public static void RequestClose() => _instance?.Close();
 
@@ -79,7 +95,6 @@ namespace NpcValheim.UI
                 return;
             }
 
-            UiInputBlocker.IsOpen = true;
             _loggedCursorState = false;
         }
 
@@ -89,8 +104,8 @@ namespace NpcValheim.UI
             _window = null;
             _npc = null;
             _standalone = false;
-            UiInputBlocker.IsOpen = false;
-            ReleaseCursor();
+            _loggedCursorState = false;
+            UiInputBlocker.ReleaseCursor();
         }
 
         private void Update()
@@ -102,10 +117,14 @@ namespace NpcValheim.UI
             }
 
             // Interact() cannot safely build UI from inside the game's input handling, so it
-            // raises a flag that we pick up here on the next frame.
-            foreach (var npc in FindObjectsByType<NpcBase>(FindObjectsSortMode.None))
+            // raises a flag that we pick up here on the next frame. From NpcBase.Live, never
+            // FindObjectsByType: that walks every loaded object, and every frame it cost the
+            // client its frame rate (see NpcBase.Live).
+            var live = NpcBase.Live;
+            for (int i = 0; i < live.Count; i++)
             {
-                if (!npc.PanelOpenRequested) continue;
+                var npc = live[i];
+                if (npc == null || !npc.PanelOpenRequested) continue;
                 npc.ConsumePanelOpenRequest();
                 Open(npc, Player.m_localPlayer);
             }
@@ -116,22 +135,20 @@ namespace NpcValheim.UI
             if (_window != null && Input.GetKeyDown(KeyCode.Escape)) Close();
 
             _window?.Refresh(_npc);
-            UiInputBlocker.IsOpen = _window != null;
         }
 
-        /// <summary>Forces the mouse cursor visible while the panel is open.
+        /// <summary>Forces the mouse cursor free while the panel is open.
         ///
-        /// Patching Menu.IsVisible (see Patches/UiInputPatches.cs) is what tells the game to
-        /// stop treating input as gameplay, but it is not enough on its own to get a cursor:
-        /// the game re-asserts lockState every frame from its own update, so whatever we set
+        /// Patching Menu.IsActive/IsVisible (see Patches/UiInputPatches.cs) is what tells the
+        /// game to stop treating input as gameplay, but it is not enough on its own to get a
+        /// cursor: the game re-asserts it every frame from its own update, so whatever we set
         /// earlier in the frame is overwritten. LateUpdate runs after those, so this is the
         /// last word on it.</summary>
         private void LateUpdate()
         {
             if (_window == null) return;
 
-            if (Cursor.lockState != CursorLockMode.None) Cursor.lockState = CursorLockMode.None;
-            if (!Cursor.visible) Cursor.visible = true;
+            UiInputBlocker.HoldCursor();
 
             if (!_loggedCursorState)
             {
@@ -144,18 +161,8 @@ namespace NpcValheim.UI
 
         private void OnDestroy()
         {
-            UiInputBlocker.IsOpen = false;
-            ReleaseCursor();
-        }
-
-        /// <summary>Hands the cursor back to the game so closing our panel doesn't leave the
-        /// player unable to turn the camera.</summary>
-        private void ReleaseCursor()
-        {
-            _loggedCursorState = false;
-            if (Menu.IsVisible() || (InventoryGui.instance != null && InventoryGui.IsVisible())) return;
-            Cursor.lockState = CursorLockMode.Locked;
-            Cursor.visible = false;
+            _window = null;
+            UiInputBlocker.ReleaseCursor();
         }
     }
 }

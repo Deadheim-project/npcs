@@ -50,6 +50,7 @@ namespace BossPassTestDriver
         private int _fail;
         private bool _waitOk;
         private Vector3 _home;
+        private float _lockSeenAt;
 
         private bool IsA => _role == "A";
         private static Player Me => Player.m_localPlayer;
@@ -374,6 +375,7 @@ namespace BossPassTestDriver
             }
             yield return WaitFor(() => Market != null && Market.RequiredBoss == "gd_king", 60f);
             Check("balcao/trava-do-anciao-chegou-no-cliente", _waitOk, "requisito=" + Market?.RequiredBoss);
+            _lockSeenAt = Time.time;
         }
 
         /// <summary>Without the pass the server refuses both halves of the counter and gives
@@ -393,15 +395,27 @@ namespace BossPassTestDriver
 
             if (IsA)
             {
+                // Paid in the minute after the admin locked the counter: the purchase was
+                // already on its way, and it goes through, as with a price changed in that gap.
                 int coins = Coins, wood = Count("Wood");
                 Check("trancada/pagou-da-bolsa", MarketplaceNpc.TryPay(me, 2));
                 market.RequestBuyFromNpc("Wood", 1, 2);
-                yield return WaitFor(() => Coins == coins, 15f);
-                Check("trancada/compra-recusada-devolve-moedas", _waitOk, $"{coins} -> {Coins}");
-                Check("trancada/compra-recusada-sem-item", Count("Wood") == wood);
-                yield return new WaitForSeconds(1f);
-                Check("trancada/servidor-registrou-a-recusa-da-compra",
-                    ServerLog().Contains("refused a sale to") && ServerLog().Contains("no 'gd_king' pass"));
+                yield return WaitFor(() => Count("Wood") == wood + 1, 15f);
+                Check("trancada/compra-logo-depois-de-trancar-entrega", _waitOk, $"madeira {wood} -> {Count("Wood")}");
+
+                // Past that minute the counter refuses, and pays nothing back: what the client
+                // says it paid is only its word.
+                float wait = 62f - (Time.time - _lockSeenAt);
+                if (wait > 0f) yield return new WaitForSeconds(wait);
+                coins = Coins;
+                wood = Count("Wood");
+                Check("trancada/pagou-da-bolsa-de-novo", MarketplaceNpc.TryPay(me, 2));
+                market.RequestBuyFromNpc("Wood", 1, 2);
+                yield return WaitFor(() => ServerLog().Contains("refused a sale to") && ServerLog().Contains("nothing paid back"), 15f);
+                Check("trancada/servidor-registrou-a-recusa-da-compra", _waitOk);
+                yield return new WaitForSeconds(2f);
+                Check("trancada/compra-recusada-sem-item", Count("Wood") == wood, $"madeira {wood} -> {Count("Wood")}");
+                Check("trancada/compra-recusada-nao-devolve-moedas", Coins == coins - 2, $"{coins} -> {Coins}");
 
                 UiRoot.Open(market, me);
                 yield return new WaitForSeconds(3f);

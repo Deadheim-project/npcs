@@ -242,8 +242,9 @@ namespace NpcValheim.UI
                     int cost = MarketplaceNpc.PayoutFor(price, amount);
                     if (cost <= 0) { Say("Quantidade inválida."); return; }
 
-                    // The coins leave the pocket here, and the server hands them back if it
-                    // refuses the sale -- see RPC_BuyFromNpc.
+                    // The coins leave the pocket here. The server closes the sale at the price
+                    // this row showed even if an admin changes it meanwhile, and never pays
+                    // coins back on the strength of this number -- see RPC_BuyFromNpc.
                     if (!MarketplaceNpc.TryPay(Player, cost))
                     {
                         Say($"Você tem {MarketplaceNpc.CoinsOf(Player)} moedas; custa {cost}.");

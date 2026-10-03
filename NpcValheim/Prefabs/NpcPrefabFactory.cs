@@ -71,6 +71,9 @@ namespace NpcValheim.Prefabs
             RegisterNpcType(scene, source, "NpcValheim_QuestGiver", typeof(QuestGiverNpc), "Missões", "quests.png");
             RegisterNpcType(scene, source, "NpcValheim_DeadcoinShop", typeof(DeadcoinShopNpc), "Loja Deadcoins", "deadcoins.png");
             RegisterNpcType(scene, source, "NpcValheim_BossPass", typeof(BossPassNpc), BossPassNpc.DisplayName, "bosspass.png");
+            RegisterNpcType(scene, source, "NpcValheim_ArenaOrganizer", typeof(ArenaOrganizerNpc), "Organizador de Arena", "arena-organizer.png");
+            RegisterNpcType(scene, source, "NpcValheim_ArenaBattlemaster", typeof(ArenaBattlemasterNpc), "Mestre da Arena", "arena-battlemaster.png");
+            RegisterNpcType(scene, source, "NpcValheim_ArenaVendor", typeof(ArenaVendorNpc), "Intendente da Arena", "arena-vendor.png");
         }
 
         /// <summary>

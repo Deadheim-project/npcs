@@ -180,8 +180,9 @@ namespace NpcValheim.UI
                     var buy = ValheimUi.CreateButton(row, "Comprar 1", 110f, 36f, 14);
                     buy.onClick.AddListener(() =>
                     {
-                        // Paid up front, exactly like the shop. If the listing has since gone
-                        // or the price moved, the server posts the money straight back.
+                        // Paid up front, exactly like the shop. If the listing has since left
+                        // the board, the server hands its price back once, from its own record
+                        // of the listing -- see MarketDatabase.Buy.
                         if (!MarketplaceNpc.TryPay(Player, unitPrice))
                         {
                             Say($"Você tem {MarketplaceNpc.CoinsOf(Player)} moedas; custa {unitPrice}.");
