@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Linq;
 using UnityEngine;
 
 namespace NpcValheim.Arena
@@ -24,8 +25,37 @@ namespace NpcValheim.Arena
         /// standing on a pillar.</summary>
         public float Radius => Mathf.Max(40f, Vector3.Distance(Gold, Green) * 0.5f + 30f);
 
+        /// <summary>The area marked at the Battlemaster (a Deadheim ArenaZone) holding both
+        /// starts, or null. With one, the arena ends where the PvP rules of the arena end.</summary>
+        public ArenaZone Area;
+
+        /// <summary>Whether a participant standing at <paramref name="position"/> is still in
+        /// the arena: inside its area (plus <see cref="ArenaZone.Slack"/>), or without one,
+        /// within <see cref="Radius"/> of the centre.</summary>
+        public bool Contains(Vector3 position) =>
+            Area != null ? Area.Contains(position, ArenaZone.Slack) : Vector3.Distance(position, Center) <= Radius;
+
         public Vector3 SpawnOf(int side) => side == ArenaSide.Gold ? Gold : Green;
         public float YawOf(int side) => side == ArenaSide.Gold ? GoldYaw : GreenYaw;
+    }
+
+    /// <summary>One entry of Deadheim's ArenaZones: a circle on the ground, any height.</summary>
+    internal sealed class ArenaZone
+    {
+        /// <summary>Metres past the edge before a participant counts as gone: a knockback or a
+        /// dodge across the line is not running away.</summary>
+        public const float Slack = 5f;
+
+        public string Name;
+        public float X;
+        public float Z;
+        public float Radius;
+
+        public bool Contains(Vector3 point, float slack = 0f)
+        {
+            float dx = point.x - X, dz = point.z - Z, r = Radius + slack;
+            return dx * dx + dz * dz <= r * r;
+        }
     }
 
     /// <summary>The two sides of a match, named as the arena named them.</summary>
@@ -253,6 +283,67 @@ namespace NpcValheim.Arena
 
         internal static string FormatPoint(Vector3 p, float yaw) =>
             string.Format(CultureInfo.InvariantCulture, "{0:0.##},{1:0.##},{2:0.##},{3:0}", p.x, p.y, p.z, yaw);
+
+        internal const float MinZoneRadius = 10f;
+        internal const float MaxZoneRadius = 300f;
+
+        /// <summary>
+        /// Deadheim's ArenaZones, "Nome,x,z,raio|...", read the way PvpConfig.ParseZones reads
+        /// it. Broken entries stay out of the list but not out of the text: SetZone and
+        /// RemoveZone only ever touch the entry they name.
+        /// </summary>
+        internal static List<ArenaZone> ParseZones(string raw)
+        {
+            var result = new List<ArenaZone>();
+            foreach (var entry in (raw ?? "").Split('|'))
+            {
+                var p = entry.Split(',');
+                if (p.Length < 4 || p[0].Trim().Length == 0) continue;
+                if (!float.TryParse(p[1].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out float x) ||
+                    !float.TryParse(p[2].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out float z) ||
+                    !float.TryParse(p[3].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out float r))
+                    continue;
+                result.Add(new ArenaZone { Name = p[0].Trim(), X = x, Z = z, Radius = r });
+            }
+            return result;
+        }
+
+        /// <summary>The first zone holding every point, or null.</summary>
+        internal static ArenaZone ZoneHolding(List<ArenaZone> zones, params Vector3[] points) =>
+            zones?.FirstOrDefault(z => points.All(p => z.Contains(p)));
+
+        /// <summary>A zone name the format can hold: no separators, no control characters, short.</summary>
+        internal static string CleanZoneName(string name)
+        {
+            var clean = new string((name ?? "").Where(c => c != ',' && c != '|' && !char.IsControl(c)).ToArray()).Trim();
+            return clean.Length > 32 ? clean.Substring(0, 32).Trim() : clean;
+        }
+
+        /// <summary>The text with zone <paramref name="name"/> centred on x,z: replaced in place
+        /// when it exists (same name, any case), appended otherwise.</summary>
+        internal static string SetZone(string raw, string name, float x, float z, float radius)
+        {
+            string line = string.Format(CultureInfo.InvariantCulture, "{0},{1:0.#},{2:0.#},{3:0.#}", name, x, z, radius);
+            var entries = ZoneEntries(raw);
+            int at = entries.FindIndex(e => IsZone(e, name));
+            if (at >= 0) entries[at] = line;
+            else entries.Add(line);
+            return string.Join("|", entries);
+        }
+
+        /// <summary>The text without zone <paramref name="name"/>; <paramref name="removed"/> says whether it was there.</summary>
+        internal static string RemoveZone(string raw, string name, out bool removed)
+        {
+            var entries = ZoneEntries(raw);
+            removed = entries.RemoveAll(e => IsZone(e, name)) > 0;
+            return string.Join("|", entries);
+        }
+
+        private static List<string> ZoneEntries(string raw) =>
+            (raw ?? "").Split('|').Select(e => e.Trim()).Where(e => e.Length > 0).ToList();
+
+        private static bool IsZone(string entry, string name) =>
+            string.Equals(entry.Split(',')[0].Trim(), (name ?? "").Trim(), StringComparison.OrdinalIgnoreCase);
 
         /// <summary>Same shape as the Deadcoins list, with points instead of a price.</summary>
         internal static List<ArenaOffer> ParseOffers(string raw, List<string> problems)

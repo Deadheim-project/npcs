@@ -105,9 +105,10 @@ namespace NpcValheim.Arena
             const string match = "Arena - Partida";
             Maps = S(config, match, "Maps", "",
                 "Arenas: Nome;x,y,z,giro;x,y,z,giro[;x,y,z]|... = inicio do time Ouro, inicio do time Verde e, opcional, " +
-                "onde fica quem foi derrotado. Os inicios precisam estar dentro de uma ArenaZones do Deadheim " +
-                "(PvP sempre, sem perda de skill). Uma partida por arena de cada vez. " +
-                "Use o botao 'Copiar posicao' na aba Admin do Mestre da Arena para pegar as coordenadas.");
+                "onde fica quem foi derrotado. Os inicios precisam estar dentro de uma area de arena (ArenaZones do " +
+                "Deadheim: PvP sempre, sem perda de skill), que se marca na aba Admin do Mestre da Arena; quem sai da " +
+                "area durante a partida fugiu. Uma partida por arena de cada vez. " +
+                "Use o botao 'Copiar posicao' na mesma aba para pegar as coordenadas.");
             PreparationSeconds = S(config, match, "PreparationSeconds", 60f,
                 "Preparacao antes dos portoes abrirem, contando da entrada do primeiro jogador.");
             TimeLimitMinutes = S(config, match, "TimeLimitMinutes", 47f,
@@ -171,6 +172,9 @@ namespace NpcValheim.Arena
             }
         }
 
+        /// <summary>Rebuild on the next read: the arena area changed at the Battlemaster.</summary>
+        internal static void Invalidate() => _dirty = true;
+
         internal static List<string> Problems()
         {
             var problems = new List<string>();
@@ -218,6 +222,7 @@ namespace NpcValheim.Arena
             if (ArenaSettingsParser.TryParseDay(ResetDay.Value, out var day)) t.ResetDay = day;
             else problems.Add($"ResetDay '{ResetDay.Value}' nao e um dia da semana: usando terca");
 
+            var zones = checkWorld ? ArenaDeadheim.Zones() : null;
             foreach (var map in ArenaSettingsParser.ParseMaps(Maps.Value, problems))
             {
                 if (checkWorld && !ArenaDeadheim.CoversMap(map, out string why))
@@ -225,6 +230,7 @@ namespace NpcValheim.Arena
                     problems.Add($"Maps: {map.Name}: {why}");
                     continue;
                 }
+                map.Area = ArenaSettingsParser.ZoneHolding(zones, map.Gold, map.Green);
                 t.Maps.Add(map);
             }
 
