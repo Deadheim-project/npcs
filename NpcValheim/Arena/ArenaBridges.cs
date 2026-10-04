@@ -21,6 +21,7 @@ namespace NpcValheim.Arena
         private static bool _resolved;
         private static MethodInfo _isArena;
         private static MethodInfo _arenaName;
+        private static BepInEx.Configuration.ConfigEntryBase _zonesEntry;
 
         internal static bool Installed
         {
@@ -48,7 +49,9 @@ namespace NpcValheim.Arena
                 const BindingFlags any = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static;
                 _isArena = zones.GetMethod("IsArena", any, null, new[] { typeof(Vector3) }, null);
                 _arenaName = zones.GetMethod("ArenaName", any, null, new[] { typeof(Vector3) }, null);
-                Plugin.Log.LogInfo($"NpcValheim Arena: Deadheim PvP integrado (IsArena={_isArena != null}).");
+                _zonesEntry = zones.Assembly.GetType("Deadheim.Pvp.PvpConfig", false)?
+                    .GetField("ArenaZones", any)?.GetValue(null) as BepInEx.Configuration.ConfigEntryBase;
+                Plugin.Log.LogInfo($"NpcValheim Arena: Deadheim PvP integrado (IsArena={_isArena != null}, ArenaZones={_zonesEntry != null}).");
             }
             catch (Exception e)
             {
@@ -72,6 +75,42 @@ namespace NpcValheim.Arena
             catch { return null; }
         }
 
+        /// <summary>The ArenaZones text as this side has it (the server's, synced), or "" without Deadheim.</summary>
+        internal static string ZonesText
+        {
+            get
+            {
+                Resolve();
+                try { return _zonesEntry?.BoxedValue as string ?? ""; }
+                catch { return ""; }
+            }
+        }
+
+        internal static List<ArenaZone> Zones() => ArenaSettingsParser.ParseZones(ZonesText);
+
+        /// <summary>Writes ArenaZones on the server. Deadheim saves its cfg, drops its zone cache
+        /// and ServerSync sends the new value to every client, all from the setting changing.</summary>
+        internal static bool TryWriteZones(string text, out string why)
+        {
+            why = null;
+            Resolve();
+            if (_zonesEntry == null)
+            {
+                why = Installed ? "esta versao do Deadheim nao expoe ArenaZones" : "Deadheim nao instalado";
+                return false;
+            }
+            try
+            {
+                _zonesEntry.BoxedValue = text ?? "";
+                return true;
+            }
+            catch (Exception e)
+            {
+                why = e.Message;
+                return false;
+            }
+        }
+
         /// <summary>Both starting points inside a Deadheim arena zone. Without Deadheim there
         /// is nothing to check against, and the arena stands on its own.</summary>
         internal static bool CoversMap(ArenaMapDef map, out string why)
@@ -81,7 +120,7 @@ namespace NpcValheim.Arena
             bool gold = IsArena(map.Gold), green = IsArena(map.Green);
             if (gold && green) return true;
             why = "o inicio " + (!gold ? "Ouro" : "Verde") + " esta fora de todas as ArenaZones do Deadheim " +
-                  "(acrescente a zona em [PvP - Zonas] ArenaZones do Detalhes.Deadheim.cfg)";
+                  "(marque a area na aba Admin do Mestre da Arena)";
             return false;
         }
     }

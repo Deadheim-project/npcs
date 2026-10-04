@@ -42,18 +42,26 @@ namespace NpcValheim.UI
             ValheimUi.Stretch(area, 4f, 4f);
             List = ValheimUi.CreateScrollList(area, spacing: 4f);
             _seenMessage = ArenaClient.MessageRevision;
-            if (Size == 0) Size = Brackets().FirstOrDefault();
+            if (Size == 0) Size = Sizes().FirstOrDefault();
             ArenaClient.RequestData();
         }
+
+        protected static bool SoloOn => ArenaConfig.Solo?.Value ?? true;
+
+        protected static bool IsSolo(int size) => SoloOn && size == 1;
 
         protected static List<int> Brackets()
         {
             var list = ArenaSettingsParser.ParseBrackets(ArenaConfig.Brackets?.Value ?? "2,3,5", null);
-            return list.Count > 0 ? list : new List<int> { 2, 3, 5 };
+            if (list.Count == 0 && !SoloOn) list = new List<int> { 2, 3, 5 };
+            return ArenaSettingsParser.WithSolo(list, SoloOn);
         }
 
+        /// <summary>The brackets this page offers; the Organizer leaves out the solo 1v1.</summary>
+        protected virtual List<int> Sizes() => Brackets();
+
         protected virtual string Signature() =>
-            $"{ArenaClient.Revision}:{ArenaClient.ResultRevision}:{Size}:{ArenaConfig.Brackets?.Value}";
+            $"{ArenaClient.Revision}:{ArenaClient.ResultRevision}:{Size}:{ArenaConfig.Brackets?.Value}:{SoloOn}";
 
         protected abstract void Rebuild();
 
@@ -158,7 +166,7 @@ namespace NpcValheim.UI
         {
             var row = ButtonRow();
             if (!string.IsNullOrEmpty(prefix)) Cell(row, prefix, 15, ValheimUi.Muted, 140f);
-            foreach (int size in Brackets())
+            foreach (int size in Sizes())
             {
                 int chosen = size;
                 var button = Btn(row, ArenaRules.BracketName(size), 90f, () =>
@@ -358,6 +366,8 @@ namespace NpcValheim.UI
             {
                 Line("Nada pendente.", 15, ValheimUi.Muted);
                 Line("Para jogar: compre a carta do time com o Organizador de Arena, junte o grupo (Groups) e entre na fila com o Mestre da Arena.", 14, ValheimUi.Muted, 44f);
+                if (SoloOn)
+                    Line("No 1v1 não precisa de time: fale com o Mestre da Arena e entre na fila sozinho.", 14, ValheimUi.Muted, 22f);
             }
         }
     }
@@ -400,14 +410,21 @@ namespace NpcValheim.UI
             BracketSelector("Time:");
             var s = ArenaClient.Snapshot;
             var team = s.TeamOf(Size);
+            bool solo = IsSolo(Size);
             if (team == null)
             {
+                if (solo)
+                {
+                    Line("Você ainda não jogou a 1v1 ranqueada.", 16, ValheimUi.Muted, 28f);
+                    Line("No 1v1 não tem time para montar: entre na fila sozinho com o Mestre da Arena e o seu rating começa ali.", 14, ValheimUi.Muted, 40f);
+                    return;
+                }
                 Line($"Você não tem time {ArenaRules.BracketName(Size)}.", 16, ValheimUi.Muted, 28f);
                 Line("Compre a carta do time com o Organizador de Arena e colete as assinaturas.", 14, ValheimUi.Muted);
                 return;
             }
 
-            bool captain = team.CaptainId == s.PlayerId;
+            bool captain = team.CaptainId == s.PlayerId && !solo;
             Heading($"{team.Name} · {ArenaRules.BracketName(team.Size)}");
             Line($"Rating {team.Rating}   ·   Posição #{team.Rank}   ·   MMR {team.Mmr}", 16, ValheimUi.Yellow, 26f);
             Line($"Semana: {team.WeekGames} jogos, {team.WeekWins} vitórias   ·   Temporada: {team.SeasonGames} jogos, {team.SeasonWins} vitórias", 14, ValheimUi.Beige);
@@ -448,6 +465,7 @@ namespace NpcValheim.UI
             Line($"Para receber Pontos de Arena: o time joga {ArenaConfig.GamesPerWeek?.Value ?? 10}+ partidas na semana e você joga " +
                  $"{ArenaConfig.ParticipationPercent?.Value ?? 30}% delas.", 13, ValheimUi.Muted, 22f);
 
+            if (solo) return;
             var actions = ButtonRow();
             if (captain)
             {
@@ -496,6 +514,12 @@ namespace NpcValheim.UI
             CreateList(Vector2.zero, new Vector2(0f, -90f));
         }
 
+        protected override List<int> Sizes()
+        {
+            var sizes = Brackets().Where(size => !IsSolo(size)).ToList();
+            return sizes.Count > 0 ? sizes : Brackets();
+        }
+
         private TMP_InputField FormRow(string caption, float top, string button, UnityAction onClick)
         {
             var form = ValheimUi.CreateRect("Form", Root);
@@ -517,6 +541,7 @@ namespace NpcValheim.UI
         protected override void Rebuild()
         {
             BracketSelector("Carta:");
+            if (SoloOn) Line("O 1v1 não precisa de carta: entre na fila sozinho com o Mestre da Arena.", 13, ValheimUi.Muted, 22f);
             var s = ArenaClient.Snapshot;
             int cost = ArenaConfig.CostOf(Size);
             int required = ArenaRules.RequiredSignatures(Size, ArenaConfig.SignaturesRequired?.Value ?? -1);
@@ -590,10 +615,13 @@ namespace NpcValheim.UI
             var group = ArenaGroups.Members();
             bool grouped = group.Count > 1;
 
+            bool solo = IsSolo(Size);
             Heading($"Arena {ArenaRules.BracketName(Size)}");
-            Line(team != null
-                ? $"Seu time: \"{team.Name}\"  ·  rating {team.Rating}  ·  seu pessoal {PersonalIn(team)}"
-                : $"Você não tem time {ArenaRules.BracketName(Size)} (Organizador de Arena).", 15, ValheimUi.Beige);
+            Line(solo
+                    ? team != null ? $"Seu rating 1v1: {team.Rating}  ·  posição #{team.Rank}" : "1v1: você entra sozinho, sem time. O rating começa na primeira ranqueada."
+                    : team != null
+                        ? $"Seu time: \"{team.Name}\"  ·  rating {team.Rating}  ·  seu pessoal {PersonalIn(team)}"
+                        : $"Você não tem time {ArenaRules.BracketName(Size)} (Organizador de Arena).", 15, ValheimUi.Beige);
             Line(!ArenaGroups.Installed
                     ? "Sem o mod Groups: só dá para entrar sozinho."
                     : grouped
@@ -604,10 +632,13 @@ namespace NpcValheim.UI
             bool busy = s.Queue != null || s.Match != null;
             var row = ButtonRow(40f);
             var rated = Btn(row, "Entrar: Ranqueada", 210f, () => Join(true), 15);
-            rated.interactable = !busy && team != null;
+            rated.interactable = !busy && (team != null || solo) && !(solo && grouped);
             var skirmish = Btn(row, "Entrar: Escaramuça", 210f, () => Join(false), 15);
             skirmish.interactable = !busy && (ArenaConfig.Skirmish?.Value ?? true);
-            Line($"Ranqueada: grupo de exatamente {Size} do mesmo time, rating em jogo. Escaramuça: sozinho ou em grupo, sem rating.", 13, ValheimUi.Muted, 22f);
+            Line(solo
+                    ? "1v1: entre sem grupo. Ranqueada vale rating; escaramuça, não."
+                    : $"Ranqueada: grupo de exatamente {Size} do mesmo time, rating em jogo. Escaramuça: sozinho ou em grupo, sem rating.",
+                13, ValheimUi.Muted, 22f);
             Gap();
             StatusBlocks(withResult: true);
         }
@@ -652,12 +683,12 @@ namespace NpcValheim.UI
             }
             if (rows.Count == 0)
             {
-                Line($"Nenhum time {ArenaRules.BracketName(Size)} ainda.", 15, ValheimUi.Muted);
+                Line(IsSolo(Size) ? "Ninguém jogou a 1v1 ranqueada ainda." : $"Nenhum time {ArenaRules.BracketName(Size)} ainda.", 15, ValheimUi.Muted);
                 return;
             }
             var header = ButtonRow(24f);
             Cell(header, "#", 13, ValheimUi.Muted, 50f);
-            Cell(header, "Time", 13, ValheimUi.Muted);
+            Cell(header, IsSolo(Size) ? "Jogador" : "Time", 13, ValheimUi.Muted);
             Cell(header, "Rating", 13, ValheimUi.Muted, 90f);
             Cell(header, "Jogos", 13, ValheimUi.Muted, 80f);
             Cell(header, "Vitórias", 13, ValheimUi.Muted, 90f);
@@ -741,13 +772,16 @@ namespace NpcValheim.UI
 
     /// <summary>
     /// Admin page on the Battlemaster. Arenas are written in the cfg (live reload); this page
-    /// gives the coordinates to paste there, shows which arenas the server would refuse and
-    /// why, and runs the weekly payout on demand.
+    /// gives the coordinates to paste there, marks the arena area (Deadheim's ArenaZones) where
+    /// the admin stands, shows which arenas the server would refuse and why, and runs the
+    /// weekly payout on demand.
     /// </summary>
     internal sealed class ArenaAdminView : ArenaViewBase
     {
         private TMP_InputField _grantName;
         private TMP_InputField _grantPoints;
+        private TMP_InputField _zoneName;
+        private TMP_InputField _zoneRadius;
 
         protected override void OnBuild()
         {
@@ -773,10 +807,41 @@ namespace NpcValheim.UI
                 }
                 Ask(ArenaWire.ActAdminGrant, $"{_grantName.text.Trim()}\n{points}");
             });
-            CreateList(Vector2.zero, new Vector2(0f, -46f));
+
+            var area = ValheimUi.CreateRect("Area", Root);
+            ValheimUi.Anchor(area, new Vector2(0f, 1f), new Vector2(1f, 1f), new Vector2(0f, -84f), new Vector2(0f, -44f));
+            var areaLayout = area.gameObject.AddComponent<HorizontalLayoutGroup>();
+            areaLayout.spacing = 8f;
+            areaLayout.childControlWidth = true;
+            areaLayout.childControlHeight = true;
+            areaLayout.childForceExpandWidth = false;
+            var areaHint = ValheimUi.CreateLabel(area, "Área (nome, raio):", 15, ValheimUi.Muted, TextAlignmentOptions.Left);
+            ValheimUi.SetWidth(areaHint.gameObject, 120f);
+            _zoneName = ValheimUi.CreateInputField(area, "", 0f, 34f);
+            Flexible(_zoneName.gameObject);
+            _zoneRadius = ValheimUi.CreateInputField(area, "40", 90f, 34f);
+            var mark = ValheimUi.CreateButton(area, "Marcar aqui", 130f, 34f, 14);
+            mark.onClick.AddListener(MarkZone);
+            CreateList(Vector2.zero, new Vector2(0f, -90f));
         }
 
-        protected override string Signature() => base.Signature() + ":" + ArenaConfig.Maps?.Value;
+        /// <summary>Centres the named area on where the admin stands; the server takes the
+        /// position from its own view of the player.</summary>
+        private void MarkZone()
+        {
+            string name = ArenaSettingsParser.CleanZoneName(_zoneName.text);
+            if (name.Length == 0) { Say("Dê um nome à área."); return; }
+            if (!float.TryParse(_zoneRadius.text, NumberStyles.Float, CultureInfo.InvariantCulture, out float radius) ||
+                radius < ArenaSettingsParser.MinZoneRadius || radius > ArenaSettingsParser.MaxZoneRadius)
+            {
+                Say($"Raio entre {ArenaSettingsParser.MinZoneRadius:0} e {ArenaSettingsParser.MaxZoneRadius:0} m.");
+                return;
+            }
+            Ask(ArenaWire.ActAdminZoneSet, $"{name}\n{radius.ToString(CultureInfo.InvariantCulture)}");
+        }
+
+        protected override string Signature() =>
+            base.Signature() + ":" + ArenaConfig.Maps?.Value + ":" + ArenaDeadheim.ZonesText;
 
         private static string Here(Player player) =>
             ArenaConfig.Describe(player.transform.position, player.transform.eulerAngles.y);
@@ -811,12 +876,42 @@ namespace NpcValheim.UI
             Line("Formato de Maps: Nome;ouro x,y,z,giro;verde x,y,z,giro[;espectador x,y,z]|...", 13, ValheimUi.Muted, 22f);
             Gap();
 
-            Heading("Arenas configuradas");
             var maps = ArenaConfig.Current.Maps;
+            Heading("Área da arena");
+            if (!ArenaDeadheim.Installed)
+                Line("Sem o Deadheim não há área: a partida vale num raio em volta dos inícios.", 14, ValheimUi.Muted);
+            else
+            {
+                Line("Dentro da área o PvP vale sempre, sem perda de skill; quem sai dela durante a partida fugiu. " +
+                     "Fique no centro, escreva nome e raio acima e clique Marcar aqui (mesmo nome = muda a área).",
+                    13, ValheimUi.Muted, 40f);
+                var zones = ArenaDeadheim.Zones();
+                if (zones.Count == 0) Line("Nenhuma área marcada.", 15, ValheimUi.Danger);
+                foreach (var zone in zones)
+                {
+                    var inside = maps.Where(m => m.Area != null && string.Equals(m.Area.Name, zone.Name, StringComparison.OrdinalIgnoreCase))
+                        .Select(m => m.Name).ToList();
+                    var row = ButtonRow();
+                    Cell(row, string.Format(CultureInfo.InvariantCulture, "{0}: centro {1:0},{2:0} · raio {3:0} m · {4}",
+                        zone.Name, zone.X, zone.Z, zone.Radius,
+                        inside.Count > 0 ? "arenas: " + string.Join(", ", inside) : "nenhuma arena dentro"), 14);
+                    var picked = zone;
+                    Btn(row, "Editar", 80f, () =>
+                    {
+                        _zoneName.text = picked.Name;
+                        _zoneRadius.text = picked.Radius.ToString("0", CultureInfo.InvariantCulture);
+                    });
+                    Btn(row, "Remover", 90f, () => Ask(ArenaWire.ActAdminZoneRemove, picked.Name));
+                }
+            }
+            Gap();
+
+            Heading("Arenas configuradas");
             if (maps.Count == 0) Line("Nenhuma. Sem arena, ninguém entra na fila.", 15, ValheimUi.Danger);
             foreach (var map in maps)
                 Line($"{map.Name}: Ouro {ArenaConfig.Describe(map.Gold, map.GoldYaw)} · Verde {ArenaConfig.Describe(map.Green, map.GreenYaw)}" +
-                     (map.HasSpectator ? " · espectador" : ""), 14, ValheimUi.Beige);
+                     (map.HasSpectator ? " · espectador" : "") +
+                     (map.Area != null ? $" · área {map.Area.Name}" : ""), 14, ValheimUi.Beige);
             var problems = ArenaConfig.Problems();
             foreach (var problem in problems) Line(problem, 13, ValheimUi.Danger, 22f);
             Gap();

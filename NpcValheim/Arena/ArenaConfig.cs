@@ -17,6 +17,7 @@ namespace NpcValheim.Arena
         internal static ConfigEntry<bool> Enabled;
         internal static ConfigEntry<string> Brackets;
         internal static ConfigEntry<bool> Skirmish;
+        internal static ConfigEntry<bool> Solo;
         internal static ConfigEntry<KeyCode> PanelKey;
 
         internal static ConfigEntry<string> CharterCost;
@@ -66,6 +67,9 @@ namespace NpcValheim.Arena
                 "Liga a arena (NPCs Organizador, Mestre e Intendente da Arena).");
             Brackets = S(config, general, "Brackets", "2,3,5",
                 "Tamanhos de time que existem. WoW: 2,3,5. Acrescente 1 para ter 1v1 (o WoW nunca teve).");
+            Solo = S(config, general, "Solo", true,
+                "Arena 1v1 sem time: o jogador entra sozinho na fila do Mestre da Arena, sem carta nem assinaturas. " +
+                "O rating 1v1 e' dele. Liga o 1v1 mesmo que Brackets nao tenha o 1.");
             Skirmish = S(config, general, "Skirmish", true,
                 "Escaramuca: fila sem time e sem rating, sozinho ou em grupo.");
             PanelKey = config.Bind(general, "PanelKey", KeyCode.H,
@@ -105,9 +109,10 @@ namespace NpcValheim.Arena
             const string match = "Arena - Partida";
             Maps = S(config, match, "Maps", "",
                 "Arenas: Nome;x,y,z,giro;x,y,z,giro[;x,y,z]|... = inicio do time Ouro, inicio do time Verde e, opcional, " +
-                "onde fica quem foi derrotado. Os inicios precisam estar dentro de uma ArenaZones do Deadheim " +
-                "(PvP sempre, sem perda de skill). Uma partida por arena de cada vez. " +
-                "Use o botao 'Copiar posicao' na aba Admin do Mestre da Arena para pegar as coordenadas.");
+                "onde fica quem foi derrotado. Os inicios precisam estar dentro de uma area de arena (ArenaZones do " +
+                "Deadheim: PvP sempre, sem perda de skill), que se marca na aba Admin do Mestre da Arena; quem sai da " +
+                "area durante a partida fugiu. Uma partida por arena de cada vez. " +
+                "Use o botao 'Copiar posicao' na mesma aba para pegar as coordenadas.");
             PreparationSeconds = S(config, match, "PreparationSeconds", 60f,
                 "Preparacao antes dos portoes abrirem, contando da entrada do primeiro jogador.");
             TimeLimitMinutes = S(config, match, "TimeLimitMinutes", 47f,
@@ -165,11 +170,14 @@ namespace NpcValheim.Arena
                     _reported = text;
                     foreach (var p in problems) Plugin.Log.LogWarning("NpcValheim Arena: " + p);
                     Plugin.Log.LogInfo($"NpcValheim Arena: {_current.Maps.Count} arena(s), {_current.Offers.Count} item(ns) no Intendente, " +
-                                       $"times {string.Join("/", _current.Brackets)}");
+                                       $"times {string.Join("/", _current.ActiveBrackets)}");
                 }
                 return _current;
             }
         }
+
+        /// <summary>Rebuild on the next read: the arena area changed at the Battlemaster.</summary>
+        internal static void Invalidate() => _dirty = true;
 
         internal static List<string> Problems()
         {
@@ -184,6 +192,7 @@ namespace NpcValheim.Arena
             {
                 Enabled = Enabled.Value,
                 Brackets = ArenaSettingsParser.ParseBrackets(Brackets.Value, problems),
+                Solo = Solo.Value,
                 Skirmish = Skirmish.Value,
                 CharterCost = ArenaSettingsParser.ParseSizeMap(CharterCost.Value, "CharterCost", problems),
                 SignaturesRequired = SignaturesRequired.Value,
@@ -210,7 +219,7 @@ namespace NpcValheim.Arena
                 MaxPoints = Mathf.Max(0, MaxPoints.Value),
                 ResetHourUtc = Mathf.Clamp(ResetHourUtc.Value, 0, 23),
             };
-            if (t.Brackets.Count == 0)
+            if (t.Brackets.Count == 0 && !t.Solo)
             {
                 problems.Add("Brackets vazio: usando 2,3,5");
                 t.Brackets = new List<int> { 2, 3, 5 };
@@ -218,6 +227,7 @@ namespace NpcValheim.Arena
             if (ArenaSettingsParser.TryParseDay(ResetDay.Value, out var day)) t.ResetDay = day;
             else problems.Add($"ResetDay '{ResetDay.Value}' nao e um dia da semana: usando terca");
 
+            var zones = checkWorld ? ArenaDeadheim.Zones() : null;
             foreach (var map in ArenaSettingsParser.ParseMaps(Maps.Value, problems))
             {
                 if (checkWorld && !ArenaDeadheim.CoversMap(map, out string why))
@@ -225,6 +235,7 @@ namespace NpcValheim.Arena
                     problems.Add($"Maps: {map.Name}: {why}");
                     continue;
                 }
+                map.Area = ArenaSettingsParser.ZoneHolding(zones, map.Gold, map.Green);
                 t.Maps.Add(map);
             }
 
