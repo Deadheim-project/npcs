@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using UnityEngine;
 using NpcValheim.Npc;
@@ -115,6 +116,11 @@ namespace NpcValheim.Arena
 
             try
             {
+                if (action == ArenaWire.ActAdminZoneSet || action == ArenaWire.ActAdminZoneRemove)
+                {
+                    HandleZone(sender, playerId, name, admin, action, payload ?? "");
+                    return;
+                }
                 _engine.SetTuning(ArenaConfig.Current);
                 _engine.Handle(playerId, name, where ?? "", admin, action, payload ?? "");
             }
@@ -123,6 +129,66 @@ namespace NpcValheim.Arena
                 Plugin.Log.LogError($"NpcValheim Arena: '{action}' de {name} falhou: {e}");
                 ArenaNet.Send(sender, ArenaWire.Alert, "A arena falhou ao processar o pedido. Veja o log do servidor.");
             }
+        }
+
+        /// <summary>
+        /// The arena area, marked at the Battlemaster: a Deadheim ArenaZone centred on where the
+        /// admin stands (the server's view of it, not the client's word), or one removed. It is
+        /// Deadheim's setting, so the PvP rules follow it at once; the arena reads it back on
+        /// the next rebuild, which this forces.
+        /// </summary>
+        private static void HandleZone(long sender, long playerId, string name, bool admin, string action, string payload)
+        {
+            if (!admin)
+            {
+                ArenaNet.Send(sender, ArenaWire.Notice, "Só admin.");
+                return;
+            }
+            var f = payload.Split('\n');
+            string zone = ArenaSettingsParser.CleanZoneName(f[0]);
+            if (zone.Length == 0)
+            {
+                ArenaNet.Send(sender, ArenaWire.Notice, "Dê um nome à área.");
+                return;
+            }
+
+            string before = ArenaDeadheim.ZonesText, after, done;
+            if (action == ArenaWire.ActAdminZoneRemove)
+            {
+                after = ArenaSettingsParser.RemoveZone(before, zone, out bool removed);
+                if (!removed)
+                {
+                    ArenaNet.Send(sender, ArenaWire.Notice, $"Não há área \"{zone}\".");
+                    return;
+                }
+                done = $"Área \"{zone}\" removida.";
+            }
+            else
+            {
+                if (f.Length < 2 || !float.TryParse(f[1].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out float radius) ||
+                    radius < ArenaSettingsParser.MinZoneRadius || radius > ArenaSettingsParser.MaxZoneRadius)
+                {
+                    ArenaNet.Send(sender, ArenaWire.Notice,
+                        $"Raio entre {ArenaSettingsParser.MinZoneRadius:0} e {ArenaSettingsParser.MaxZoneRadius:0} m.");
+                    return;
+                }
+                if (!_host.TryGetPosition(playerId, out var at))
+                {
+                    ArenaNet.Send(sender, ArenaWire.Notice, "O servidor não sabe onde você está; tente de novo.");
+                    return;
+                }
+                after = ArenaSettingsParser.SetZone(before, zone, at.x, at.z, radius);
+                done = string.Format(CultureInfo.InvariantCulture, "Área \"{0}\": raio {1:0} m em {2:0},{3:0}.", zone, radius, at.x, at.z);
+            }
+
+            if (!ArenaDeadheim.TryWriteZones(after, out string why))
+            {
+                ArenaNet.Send(sender, ArenaWire.Alert, "Não foi possível gravar a área: " + why);
+                return;
+            }
+            ArenaConfig.Invalidate();
+            Plugin.Log.LogInfo($"NpcValheim Arena: {name} mudou ArenaZones: '{before}' -> '{after}'");
+            ArenaNet.Send(sender, ArenaWire.Notice, done);
         }
 
         internal static void Tick()

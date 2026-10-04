@@ -741,13 +741,16 @@ namespace NpcValheim.UI
 
     /// <summary>
     /// Admin page on the Battlemaster. Arenas are written in the cfg (live reload); this page
-    /// gives the coordinates to paste there, shows which arenas the server would refuse and
-    /// why, and runs the weekly payout on demand.
+    /// gives the coordinates to paste there, marks the arena area (Deadheim's ArenaZones) where
+    /// the admin stands, shows which arenas the server would refuse and why, and runs the
+    /// weekly payout on demand.
     /// </summary>
     internal sealed class ArenaAdminView : ArenaViewBase
     {
         private TMP_InputField _grantName;
         private TMP_InputField _grantPoints;
+        private TMP_InputField _zoneName;
+        private TMP_InputField _zoneRadius;
 
         protected override void OnBuild()
         {
@@ -773,10 +776,41 @@ namespace NpcValheim.UI
                 }
                 Ask(ArenaWire.ActAdminGrant, $"{_grantName.text.Trim()}\n{points}");
             });
-            CreateList(Vector2.zero, new Vector2(0f, -46f));
+
+            var area = ValheimUi.CreateRect("Area", Root);
+            ValheimUi.Anchor(area, new Vector2(0f, 1f), new Vector2(1f, 1f), new Vector2(0f, -84f), new Vector2(0f, -44f));
+            var areaLayout = area.gameObject.AddComponent<HorizontalLayoutGroup>();
+            areaLayout.spacing = 8f;
+            areaLayout.childControlWidth = true;
+            areaLayout.childControlHeight = true;
+            areaLayout.childForceExpandWidth = false;
+            var areaHint = ValheimUi.CreateLabel(area, "Área (nome, raio):", 15, ValheimUi.Muted, TextAlignmentOptions.Left);
+            ValheimUi.SetWidth(areaHint.gameObject, 120f);
+            _zoneName = ValheimUi.CreateInputField(area, "", 0f, 34f);
+            Flexible(_zoneName.gameObject);
+            _zoneRadius = ValheimUi.CreateInputField(area, "40", 90f, 34f);
+            var mark = ValheimUi.CreateButton(area, "Marcar aqui", 130f, 34f, 14);
+            mark.onClick.AddListener(MarkZone);
+            CreateList(Vector2.zero, new Vector2(0f, -90f));
         }
 
-        protected override string Signature() => base.Signature() + ":" + ArenaConfig.Maps?.Value;
+        /// <summary>Centres the named area on where the admin stands; the server takes the
+        /// position from its own view of the player.</summary>
+        private void MarkZone()
+        {
+            string name = ArenaSettingsParser.CleanZoneName(_zoneName.text);
+            if (name.Length == 0) { Say("Dê um nome à área."); return; }
+            if (!float.TryParse(_zoneRadius.text, NumberStyles.Float, CultureInfo.InvariantCulture, out float radius) ||
+                radius < ArenaSettingsParser.MinZoneRadius || radius > ArenaSettingsParser.MaxZoneRadius)
+            {
+                Say($"Raio entre {ArenaSettingsParser.MinZoneRadius:0} e {ArenaSettingsParser.MaxZoneRadius:0} m.");
+                return;
+            }
+            Ask(ArenaWire.ActAdminZoneSet, $"{name}\n{radius.ToString(CultureInfo.InvariantCulture)}");
+        }
+
+        protected override string Signature() =>
+            base.Signature() + ":" + ArenaConfig.Maps?.Value + ":" + ArenaDeadheim.ZonesText;
 
         private static string Here(Player player) =>
             ArenaConfig.Describe(player.transform.position, player.transform.eulerAngles.y);
@@ -811,12 +845,42 @@ namespace NpcValheim.UI
             Line("Formato de Maps: Nome;ouro x,y,z,giro;verde x,y,z,giro[;espectador x,y,z]|...", 13, ValheimUi.Muted, 22f);
             Gap();
 
-            Heading("Arenas configuradas");
             var maps = ArenaConfig.Current.Maps;
+            Heading("Área da arena");
+            if (!ArenaDeadheim.Installed)
+                Line("Sem o Deadheim não há área: a partida vale num raio em volta dos inícios.", 14, ValheimUi.Muted);
+            else
+            {
+                Line("Dentro da área o PvP vale sempre, sem perda de skill; quem sai dela durante a partida fugiu. " +
+                     "Fique no centro, escreva nome e raio acima e clique Marcar aqui (mesmo nome = muda a área).",
+                    13, ValheimUi.Muted, 40f);
+                var zones = ArenaDeadheim.Zones();
+                if (zones.Count == 0) Line("Nenhuma área marcada.", 15, ValheimUi.Danger);
+                foreach (var zone in zones)
+                {
+                    var inside = maps.Where(m => m.Area != null && string.Equals(m.Area.Name, zone.Name, StringComparison.OrdinalIgnoreCase))
+                        .Select(m => m.Name).ToList();
+                    var row = ButtonRow();
+                    Cell(row, string.Format(CultureInfo.InvariantCulture, "{0}: centro {1:0},{2:0} · raio {3:0} m · {4}",
+                        zone.Name, zone.X, zone.Z, zone.Radius,
+                        inside.Count > 0 ? "arenas: " + string.Join(", ", inside) : "nenhuma arena dentro"), 14);
+                    var picked = zone;
+                    Btn(row, "Editar", 80f, () =>
+                    {
+                        _zoneName.text = picked.Name;
+                        _zoneRadius.text = picked.Radius.ToString("0", CultureInfo.InvariantCulture);
+                    });
+                    Btn(row, "Remover", 90f, () => Ask(ArenaWire.ActAdminZoneRemove, picked.Name));
+                }
+            }
+            Gap();
+
+            Heading("Arenas configuradas");
             if (maps.Count == 0) Line("Nenhuma. Sem arena, ninguém entra na fila.", 15, ValheimUi.Danger);
             foreach (var map in maps)
                 Line($"{map.Name}: Ouro {ArenaConfig.Describe(map.Gold, map.GoldYaw)} · Verde {ArenaConfig.Describe(map.Green, map.GreenYaw)}" +
-                     (map.HasSpectator ? " · espectador" : ""), 14, ValheimUi.Beige);
+                     (map.HasSpectator ? " · espectador" : "") +
+                     (map.Area != null ? $" · área {map.Area.Name}" : ""), 14, ValheimUi.Beige);
             var problems = ArenaConfig.Problems();
             foreach (var problem in problems) Line(problem, 13, ValheimUi.Danger, 22f);
             Gap();

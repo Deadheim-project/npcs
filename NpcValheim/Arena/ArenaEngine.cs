@@ -1528,10 +1528,10 @@ namespace NpcValheim.Arena
                     }
                     if (seat.Offline) continue;
 
-                    // Out of the arena for good -- a portal, a Hearthstone, walking off. The
-                    // grace covers the teleport in, which takes a few seconds to land.
+                    // Out of the arena for good -- a portal, a Hearthstone, walking out of its
+                    // area. The grace covers the teleport in, which takes a few seconds to land.
                     if (_host.Now - seat.MovedAt > PresenceGrace && _host.TryGetPosition(seat.PlayerId, out var pos) &&
-                        Vector3.Distance(pos, match.Map.Center) > match.Map.Radius)
+                        !match.Map.Contains(pos))
                     {
                         LeaveMatch(seat.PlayerId, "fugiu");
                         changed = false;
