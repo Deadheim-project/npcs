@@ -1219,17 +1219,63 @@ namespace NpcValheim.Npc
 
         private static readonly ItemType[] LeftHandTypes = { ItemType.Shield, ItemType.Torch };
 
-        /// <summary>Every "Hair*"/"Beard*" prefab currently registered in ZNetScene. Scanned
-        /// at runtime (rather than hardcoded) so it stays correct across game updates/DLC.</summary>
-        public static List<string> GetHairNames() => GetPrefabNamesByPrefix("Hair");
+        /// <summary>Every "Hair*"/"Beard*" customization item, the same list the character
+        /// creator offers. They live in ObjectDB as ItemType.Customization -- not in ZNetScene,
+        /// which is why the old ZNetScene scan offered names the server then refused.
+        /// "HairNone"/"BeardNone" are left out: the window already has its own "(nenhum)".</summary>
+        public static List<string> GetHairNames() => GetCustomizationNames("Hair");
 
-        public static List<string> GetBeardNames() => GetPrefabNamesByPrefix("Beard");
+        public static List<string> GetBeardNames() => GetCustomizationNames("Beard");
 
         private static bool IsValidVisualPrefab(string prefix, string prefabName)
         {
             if (string.IsNullOrEmpty(prefabName)) return true;
             if (!prefabName.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) return false;
-            return ZNetScene.instance?.GetPrefab(prefabName) != null;
+            var shared = TryGetShared(ObjectDB.instance?.GetItemPrefab(prefabName));
+            return shared != null && shared.m_itemType == ItemType.Customization;
+        }
+
+        private static List<string> GetCustomizationNames(string prefix)
+        {
+            var results = new List<string>();
+            if (ObjectDB.instance?.m_items == null) return results;
+
+            foreach (var prefab in ObjectDB.instance.m_items)
+            {
+                var shared = TryGetShared(prefab);
+                if (shared == null || shared.m_itemType != ItemType.Customization) continue;
+                var name = prefab.name;
+                if (!name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) continue;
+                if (name.EndsWith("None", StringComparison.OrdinalIgnoreCase)) continue;
+                results.Add(name);
+            }
+
+            // Natural order, so Hair2 comes before Hair10.
+            return results.Distinct()
+                .OrderBy(n => n.TrimEnd("0123456789".ToCharArray()), StringComparer.OrdinalIgnoreCase)
+                .ThenBy(n => TrailingNumber(n))
+                .ThenBy(n => n, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+
+        private static int TrailingNumber(string name)
+        {
+            int i = name.Length;
+            while (i > 0 && char.IsDigit(name[i - 1])) i--;
+            return i < name.Length && int.TryParse(name.Substring(i), out int n) ? n : -1;
+        }
+
+        private static ItemDrop.ItemData.SharedData TryGetShared(GameObject prefab)
+        {
+            if (prefab == null) return null;
+            try
+            {
+                return prefab.GetComponent<ItemDrop>()?.m_itemData?.m_shared;
+            }
+            catch (MissingReferenceException)
+            {
+                return null;
+            }
         }
 
         public static List<string> GetHandItemNames(HandSlot slot)
@@ -1255,15 +1301,6 @@ namespace NpcValheim.Npc
             }
         }
 
-        private static List<string> GetPrefabNamesByPrefix(string prefix)
-        {
-            if (ZNetScene.instance == null) return new List<string>();
-            return ZNetScene.instance.GetPrefabNames()
-                .Where(n => n.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
-                .OrderBy(n => n)
-                .ToList();
-        }
-
         /// <summary>All armor prefab names in the game (including DLC) for a given slot.</summary>
         public static List<string> GetArmorNamesForSlot(ArmorSlot slot)
         {
@@ -1282,6 +1319,9 @@ namespace NpcValheim.Npc
         /// <summary>
         /// Safe counterpart to ObjectDB.GetAllItems. Modded servers can leave a destroyed
         /// prefab in m_items; GetAllItems touches it before callers can filter its result.
+        /// Only items a player could actually hold are offered: ObjectDB also carries the
+        /// creatures' own gear and attacks (Fuling armbands, troll slams, "Unarmed"...),
+        /// which have no icon or no translated name and only clutter the picker.
         /// </summary>
         private static List<string> GetItemPrefabNames(IEnumerable<ItemType> acceptedTypes)
         {
@@ -1291,26 +1331,33 @@ namespace NpcValheim.Npc
             var types = new HashSet<ItemType>(acceptedTypes);
             foreach (var prefab in ObjectDB.instance.m_items)
             {
-                if (prefab == null) continue;
-
-                ItemDrop drop;
-                try
-                {
-                    drop = prefab.GetComponent<ItemDrop>();
-                }
-                catch (MissingReferenceException)
-                {
-                    continue;
-                }
-
-                if (drop?.m_itemData?.m_shared == null ||
-                    !types.Contains(drop.m_itemData.m_shared.m_itemType))
-                    continue;
-
+                var shared = TryGetShared(prefab);
+                if (shared == null || !types.Contains(shared.m_itemType)) continue;
+                if (!IsPlayerFacingItem(prefab.name, shared)) continue;
                 results.Add(prefab.name);
             }
 
             return results.Distinct().OrderBy(name => name).ToList();
+        }
+
+        private static bool IsPlayerFacingItem(string prefabName, ItemDrop.ItemData.SharedData shared)
+        {
+            if (shared.m_icons == null || shared.m_icons.Length == 0 || shared.m_icons[0] == null)
+                return false;
+            if (prefabName.IndexOf("_attack", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                prefabName.IndexOf("unarmed", StringComparison.OrdinalIgnoreCase) >= 0)
+                return false;
+
+            // Untranslated names come back from Localization as "[key]": dev and creature
+            // items that never got a player-facing name.
+            var name = shared.m_name;
+            if (string.IsNullOrEmpty(name)) return false;
+            if (name.StartsWith("$") && Localization.instance != null)
+            {
+                var localized = Localization.instance.Localize(name);
+                if (string.IsNullOrEmpty(localized) || localized.StartsWith("[")) return false;
+            }
+            return true;
         }
     }
 }
