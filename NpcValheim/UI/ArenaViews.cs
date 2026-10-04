@@ -42,18 +42,26 @@ namespace NpcValheim.UI
             ValheimUi.Stretch(area, 4f, 4f);
             List = ValheimUi.CreateScrollList(area, spacing: 4f);
             _seenMessage = ArenaClient.MessageRevision;
-            if (Size == 0) Size = Brackets().FirstOrDefault();
+            if (Size == 0) Size = Sizes().FirstOrDefault();
             ArenaClient.RequestData();
         }
+
+        protected static bool SoloOn => ArenaConfig.Solo?.Value ?? true;
+
+        protected static bool IsSolo(int size) => SoloOn && size == 1;
 
         protected static List<int> Brackets()
         {
             var list = ArenaSettingsParser.ParseBrackets(ArenaConfig.Brackets?.Value ?? "2,3,5", null);
-            return list.Count > 0 ? list : new List<int> { 2, 3, 5 };
+            if (list.Count == 0 && !SoloOn) list = new List<int> { 2, 3, 5 };
+            return ArenaSettingsParser.WithSolo(list, SoloOn);
         }
 
+        /// <summary>The brackets this page offers; the Organizer leaves out the solo 1v1.</summary>
+        protected virtual List<int> Sizes() => Brackets();
+
         protected virtual string Signature() =>
-            $"{ArenaClient.Revision}:{ArenaClient.ResultRevision}:{Size}:{ArenaConfig.Brackets?.Value}";
+            $"{ArenaClient.Revision}:{ArenaClient.ResultRevision}:{Size}:{ArenaConfig.Brackets?.Value}:{SoloOn}";
 
         protected abstract void Rebuild();
 
@@ -158,7 +166,7 @@ namespace NpcValheim.UI
         {
             var row = ButtonRow();
             if (!string.IsNullOrEmpty(prefix)) Cell(row, prefix, 15, ValheimUi.Muted, 140f);
-            foreach (int size in Brackets())
+            foreach (int size in Sizes())
             {
                 int chosen = size;
                 var button = Btn(row, ArenaRules.BracketName(size), 90f, () =>
@@ -358,6 +366,8 @@ namespace NpcValheim.UI
             {
                 Line("Nada pendente.", 15, ValheimUi.Muted);
                 Line("Para jogar: compre a carta do time com o Organizador de Arena, junte o grupo (Groups) e entre na fila com o Mestre da Arena.", 14, ValheimUi.Muted, 44f);
+                if (SoloOn)
+                    Line("No 1v1 não precisa de time: fale com o Mestre da Arena e entre na fila sozinho.", 14, ValheimUi.Muted, 22f);
             }
         }
     }
@@ -400,14 +410,21 @@ namespace NpcValheim.UI
             BracketSelector("Time:");
             var s = ArenaClient.Snapshot;
             var team = s.TeamOf(Size);
+            bool solo = IsSolo(Size);
             if (team == null)
             {
+                if (solo)
+                {
+                    Line("Você ainda não jogou a 1v1 ranqueada.", 16, ValheimUi.Muted, 28f);
+                    Line("No 1v1 não tem time para montar: entre na fila sozinho com o Mestre da Arena e o seu rating começa ali.", 14, ValheimUi.Muted, 40f);
+                    return;
+                }
                 Line($"Você não tem time {ArenaRules.BracketName(Size)}.", 16, ValheimUi.Muted, 28f);
                 Line("Compre a carta do time com o Organizador de Arena e colete as assinaturas.", 14, ValheimUi.Muted);
                 return;
             }
 
-            bool captain = team.CaptainId == s.PlayerId;
+            bool captain = team.CaptainId == s.PlayerId && !solo;
             Heading($"{team.Name} · {ArenaRules.BracketName(team.Size)}");
             Line($"Rating {team.Rating}   ·   Posição #{team.Rank}   ·   MMR {team.Mmr}", 16, ValheimUi.Yellow, 26f);
             Line($"Semana: {team.WeekGames} jogos, {team.WeekWins} vitórias   ·   Temporada: {team.SeasonGames} jogos, {team.SeasonWins} vitórias", 14, ValheimUi.Beige);
@@ -448,6 +465,7 @@ namespace NpcValheim.UI
             Line($"Para receber Pontos de Arena: o time joga {ArenaConfig.GamesPerWeek?.Value ?? 10}+ partidas na semana e você joga " +
                  $"{ArenaConfig.ParticipationPercent?.Value ?? 30}% delas.", 13, ValheimUi.Muted, 22f);
 
+            if (solo) return;
             var actions = ButtonRow();
             if (captain)
             {
@@ -496,6 +514,12 @@ namespace NpcValheim.UI
             CreateList(Vector2.zero, new Vector2(0f, -90f));
         }
 
+        protected override List<int> Sizes()
+        {
+            var sizes = Brackets().Where(size => !IsSolo(size)).ToList();
+            return sizes.Count > 0 ? sizes : Brackets();
+        }
+
         private TMP_InputField FormRow(string caption, float top, string button, UnityAction onClick)
         {
             var form = ValheimUi.CreateRect("Form", Root);
@@ -517,6 +541,7 @@ namespace NpcValheim.UI
         protected override void Rebuild()
         {
             BracketSelector("Carta:");
+            if (SoloOn) Line("O 1v1 não precisa de carta: entre na fila sozinho com o Mestre da Arena.", 13, ValheimUi.Muted, 22f);
             var s = ArenaClient.Snapshot;
             int cost = ArenaConfig.CostOf(Size);
             int required = ArenaRules.RequiredSignatures(Size, ArenaConfig.SignaturesRequired?.Value ?? -1);
@@ -590,10 +615,13 @@ namespace NpcValheim.UI
             var group = ArenaGroups.Members();
             bool grouped = group.Count > 1;
 
+            bool solo = IsSolo(Size);
             Heading($"Arena {ArenaRules.BracketName(Size)}");
-            Line(team != null
-                ? $"Seu time: \"{team.Name}\"  ·  rating {team.Rating}  ·  seu pessoal {PersonalIn(team)}"
-                : $"Você não tem time {ArenaRules.BracketName(Size)} (Organizador de Arena).", 15, ValheimUi.Beige);
+            Line(solo
+                    ? team != null ? $"Seu rating 1v1: {team.Rating}  ·  posição #{team.Rank}" : "1v1: você entra sozinho, sem time. O rating começa na primeira ranqueada."
+                    : team != null
+                        ? $"Seu time: \"{team.Name}\"  ·  rating {team.Rating}  ·  seu pessoal {PersonalIn(team)}"
+                        : $"Você não tem time {ArenaRules.BracketName(Size)} (Organizador de Arena).", 15, ValheimUi.Beige);
             Line(!ArenaGroups.Installed
                     ? "Sem o mod Groups: só dá para entrar sozinho."
                     : grouped
@@ -604,10 +632,13 @@ namespace NpcValheim.UI
             bool busy = s.Queue != null || s.Match != null;
             var row = ButtonRow(40f);
             var rated = Btn(row, "Entrar: Ranqueada", 210f, () => Join(true), 15);
-            rated.interactable = !busy && team != null;
+            rated.interactable = !busy && (team != null || solo) && !(solo && grouped);
             var skirmish = Btn(row, "Entrar: Escaramuça", 210f, () => Join(false), 15);
             skirmish.interactable = !busy && (ArenaConfig.Skirmish?.Value ?? true);
-            Line($"Ranqueada: grupo de exatamente {Size} do mesmo time, rating em jogo. Escaramuça: sozinho ou em grupo, sem rating.", 13, ValheimUi.Muted, 22f);
+            Line(solo
+                    ? "1v1: entre sem grupo. Ranqueada vale rating; escaramuça, não."
+                    : $"Ranqueada: grupo de exatamente {Size} do mesmo time, rating em jogo. Escaramuça: sozinho ou em grupo, sem rating.",
+                13, ValheimUi.Muted, 22f);
             Gap();
             StatusBlocks(withResult: true);
         }
@@ -652,12 +683,12 @@ namespace NpcValheim.UI
             }
             if (rows.Count == 0)
             {
-                Line($"Nenhum time {ArenaRules.BracketName(Size)} ainda.", 15, ValheimUi.Muted);
+                Line(IsSolo(Size) ? "Ninguém jogou a 1v1 ranqueada ainda." : $"Nenhum time {ArenaRules.BracketName(Size)} ainda.", 15, ValheimUi.Muted);
                 return;
             }
             var header = ButtonRow(24f);
             Cell(header, "#", 13, ValheimUi.Muted, 50f);
-            Cell(header, "Time", 13, ValheimUi.Muted);
+            Cell(header, IsSolo(Size) ? "Jogador" : "Time", 13, ValheimUi.Muted);
             Cell(header, "Rating", 13, ValheimUi.Muted, 90f);
             Cell(header, "Jogos", 13, ValheimUi.Muted, 80f);
             Cell(header, "Vitórias", 13, ValheimUi.Muted, 90f);
