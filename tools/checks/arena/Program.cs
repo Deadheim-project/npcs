@@ -150,6 +150,7 @@ class Program
             Combat();
             Charters();
             RatedMatch();
+            SoloArena();
             InviteAndDesertion();
             DrawAndOffline();
             QueueRules();
@@ -218,6 +219,7 @@ class Program
         Check("5v5 charter needs 4", ArenaRules.RequiredSignatures(5, -1) == 4);
         Check("the server can lower it to 0", ArenaRules.RequiredSignatures(3, 0) == 0);
         Check("a team holds twice its size", ArenaRules.MaxMembers(3) == 6);
+        Check("a 1v1 team is the player alone", ArenaRules.MaxMembers(1) == 1);
         Check("ratings stop at zero", ArenaRules.Apply(5, -16) == 0 && ArenaRules.Apply(100, -16) == 84);
 
         var thursday = new DateTime(2026, 10, 1, 12, 0, 0, DateTimeKind.Utc);
@@ -332,6 +334,57 @@ class Program
         Check("3v3 needs two signatures", e.TeamOf(E, 3) == null);
         Do(e, E, ArenaEngine.AtOrganizer, ArenaWire.ActCharterAbandon, "3");
         Check("a charter can be torn up", e.Charter(E, 3) == null);
+    }
+
+    // ------------------------------------------------------------------- solo 1v1
+
+    static void SoloArena()
+    {
+        Section("1v1 alone, with no team to make");
+        var tuning = Tuning();
+        Check("solo puts 1v1 in front of the cfg brackets", string.Join(",", tuning.ActiveBrackets) == "1,2,3,5" && tuning.HasBracket(1));
+        var off = Tuning();
+        off.Solo = false;
+        Check("solo off: no 1v1 unless the cfg lists it", !off.HasBracket(1) && string.Join(",", off.ActiveBrackets) == "2,3,5");
+
+        var (e, h, _) = NewEngine();
+        Do(e, A, ArenaEngine.AtOrganizer, ArenaWire.ActCharterBuy, "1\nSozinho\n0");
+        Check("no charter for 1v1", e.Charter(A, 1) == null && h.Got(A, ArenaWire.Alert, "não precisa de carta"));
+
+        Do(e, A, ArenaEngine.AtBattlemaster, ArenaWire.ActQueueJoin, $"1\n1\n{B + 1000000}");
+        Check("rated 1v1 with a group is refused", e.QueueOf(A) == null && e.PendingOf(A) == null && e.TeamOf(A, 1) == null);
+
+        Do(e, A, ArenaEngine.AtBattlemaster, ArenaWire.ActQueueJoin, "1\n1\n");
+        var mine = e.TeamOf(A, 1);
+        Check("queueing rated alone makes the 1v1 team", mine != null && mine.Members.Count == 1 && mine.CaptainId == A && mine.Name == "Alfa");
+        Check("and puts the player in the queue", e.QueueOf(A) != null && e.QueueOf(A).Rated && e.QueueOf(A).TeamId == mine?.Id);
+        Check("the 1v1 team does not reserve the player's name for real teams", MakeTeam(e, C, D, "Alfa") != null);
+
+        Do(e, B, ArenaEngine.AtBattlemaster, ArenaWire.ActQueueJoin, "1\n1\n");
+        var match = e.Matches.SingleOrDefault();
+        Check("two solo players: a rated 1v1", match != null && match.Rated && match.Size == 1 && match.Seats.Count == 2);
+        Check("one on each side", match != null && SideOf(match, A) != SideOf(match, B));
+
+        EnterAll(e, match);
+        Advance(e, h, 61);
+        Check("the gates open", match.Status == MatchStatus.InProgress);
+        Do(e, B, "", ArenaWire.ActKo, A.ToString());
+        Check("one knockout ends a 1v1", match.Status == MatchStatus.WaitLeave && match.Winner == SideOf(match, A));
+        Check("the winner's 1v1 rating rises", e.TeamOf(A, 1).Rating == 48, "got " + e.TeamOf(A, 1).Rating);
+        Check("the loser keeps a 1v1 team too", e.TeamOf(B, 1) != null && e.TeamOf(B, 1).WeekGames == 1);
+        Advance(e, h, 130);
+
+        Do(e, A, "", ArenaWire.ActTeamInvite, "1\nCharlie");
+        Check("nobody can be invited into a 1v1 team", e.TeamOf(C, 1) == null && !h.Got(C, ArenaWire.Alert, "convidou você"));
+        Do(e, A, "", ArenaWire.ActTeamDisband, "1");
+        Do(e, A, "", ArenaWire.ActTeamLeave, "1");
+        Check("the 1v1 team cannot be thrown away with its rating", e.TeamOf(A, 1)?.Rating == 48);
+
+        Do(e, A, ArenaEngine.AtBattlemaster, ArenaWire.ActQueueJoin, "1\n1\n");
+        Check("queueing again reuses the same team", e.Teams.Count(t => t.Size == 1 && t.Member(A) != null) == 1 && e.QueueOf(A) != null);
+
+        Do(e, E, ArenaEngine.AtBattlemaster, ArenaWire.ActQueueJoin, "1\n0\n");
+        Check("1v1 skirmish needs no team either", e.QueueOf(E) != null && !e.QueueOf(E).Rated && e.TeamOf(E, 1) == null);
     }
 
     // ------------------------------------------------------------------- rated match

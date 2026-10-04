@@ -61,6 +61,9 @@ namespace NpcValheim.Arena
         public bool Enabled = true;
         /// <summary>Team sizes that exist. WoW: 2v2, 3v3, 5v5.</summary>
         public List<int> Brackets = new List<int> { 2, 3, 5 };
+        /// <summary>1v1 with no team to make: the player queues alone and the queue keeps a
+        /// one-person team for them behind the scenes. WoW never had it.</summary>
+        public bool Solo = true;
         public bool Skirmish = true;
 
         // Arena Organizer -- ArenaTeam.CharterCost.* (80/120/200 gold) and PetitionsHandler.
@@ -108,7 +111,13 @@ namespace NpcValheim.Arena
 
         public List<ArenaOffer> Offers = new List<ArenaOffer>();
 
-        public bool HasBracket(int size) => Brackets.Contains(size);
+        /// <summary>Every bracket that is played: the cfg's, plus 1v1 when Solo is on.</summary>
+        public List<int> ActiveBrackets => ArenaSettingsParser.WithSolo(Brackets, Solo);
+
+        public bool HasBracket(int size) => Brackets.Contains(size) || (Solo && size == 1);
+
+        /// <summary>A bracket whose team is the player alone, made by the queue, never by a charter.</summary>
+        public bool IsSolo(int size) => Solo && size == 1;
 
         public int CharterCostOf(int size) => CharterCost.TryGetValue(size, out int cost) ? Math.Max(0, cost) : 0;
 
@@ -153,6 +162,14 @@ namespace NpcValheim.Arena
                 if (!result.Contains(size)) result.Add(size);
             }
             result.Sort();
+            return result;
+        }
+
+        /// <summary>The brackets with 1v1 added in front when solo arena is on.</summary>
+        internal static List<int> WithSolo(List<int> brackets, bool solo)
+        {
+            var result = new List<int>(brackets ?? new List<int>());
+            if (solo && !result.Contains(1)) result.Insert(0, 1);
             return result;
         }
 
