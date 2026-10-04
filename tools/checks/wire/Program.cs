@@ -464,9 +464,9 @@ class Program
         Check("spacing and case do not matter",
               anyCase.Count == 1 && OfferField(anyCase[0], "Id") == "javali" &&
               OfferField(anyCase[0], "Currency") == "Deadcoins" && OfferField(anyCase[0], "Price") == "5");
-        var repeated = ParseMountOffers("mount=javali;price=5;currency=deadcoins|mount=javali;price=1;currency=coins", null);
+        var repeatedOffer = ParseMountOffers("mount=javali;price=5;currency=deadcoins|mount=javali;price=1;currency=coins", null);
         Check("a repeated offer keeps its first price",
-              repeated.Count == 1 && OfferField(repeated[0], "Price") == "5");
+              repeatedOffer.Count == 1 && OfferField(repeatedOffer[0], "Price") == "5");
 
         System.Console.WriteLine();
         System.Console.WriteLine("== Deadcoins balance files ==");
