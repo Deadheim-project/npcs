@@ -197,9 +197,20 @@ CostAmount = 100
             New-Item -ItemType Directory -Force "$Root\chars-$role" | Out-Null
         }
 
+        # AzuAntiCheat: com -batchmode -nographics ele se acha servidor dedicado, gera a propria
+        # chave e recusa a assinatura do servidor de verdade (ErrorBanned). Com cliente sem
+        # graficos, a copia de teste roda sem ele, no servidor e nos clientes.
+        $headlessClient = ($roles -contains 'B') -and -not $FullB
+        if ($headlessClient) {
+            foreach ($tree in @("$Root\server\BepInEx\plugins") + @($roles | ForEach-Object { "$Root\client$_\BepInEx\plugins" })) {
+                Get-ChildItem $tree -Recurse -Filter 'AzuAnticheat.dll' | Remove-Item -Force
+            }
+            Write-Step 'AzuAntiCheat fora da copia de teste (cliente B sem graficos)'
+        }
+
         # AzuAntiCheat: a whitelist do servidor e o espelho das pastas de plugin do cliente.
         $whitelist = "$Root\server\BepInEx\config\AzuAntiCheat\Whitelist"
-        if (Test-Path $whitelist) {
+        if (-not $headlessClient -and (Test-Path $whitelist)) {
             Remove-Item -Recurse -Force $whitelist
             New-Item -ItemType Directory -Force $whitelist | Out-Null
             Copy-Item -Recurse "$Root\clientA\BepInEx\plugins\*" $whitelist
@@ -223,11 +234,14 @@ CostAmount = 100
     Start-Sleep -Seconds 10
 
     if ($ServerOnly) {
+        # Os RPCs e a config da arena so saem no "Opened Steam server", ~10 s depois do
+        # "Game server connected": espera por eles em vez de contar com o sleep.
+        Wait-Log $bepLog 'server-authoritative service NPC RPCs registered' 60 | Out-Null
+        Wait-Log $bepLog 'NpcValheim Arena: \d+ arena\(s\), \d+ item\(ns\) no Intendente' 60 | Out-Null
         $log = Get-Content $bepLog -Raw
         $checks = [ordered]@{
             'NpcValheim carregou'                   = ($log -match 'NpcValheim 0\.\d+\.\d+ loaded')
             'config da arena lida'                  = ($log -match 'NpcValheim Arena: \d+ arena\(s\), \d+ item\(ns\) no Intendente')
-            'Deadheim PvP integrado'                = ($log -match 'Deadheim PvP integrado \(IsArena=True\)')
             'tres NPCs da arena registrados'        = (([regex]::Matches($log, "registered placer stub 'NpcValheim_Arena")).Count -eq 3)
             'RPCs registrados'                      = ($log -match 'server-authoritative service NPC RPCs registered')
             'nenhuma excecao da arena'              = -not ($log -match 'NpcValheim Arena: .*(falhou|nao subiu)')
@@ -236,6 +250,8 @@ CostAmount = 100
         Set-CfgValue $npcCfg 'Arena - Partida' 'Maps' 'Fora;9000,30,9000,90;9010,30,9000,270'
         $refused = Wait-Log $bepLog 'Maps: Fora: o inicio Ouro esta fora de todas as ArenaZones' 90
         $checks['arena fora da ArenaZones recusada, ao vivo'] = [bool]$refused
+        # A ponte com o Deadheim so resolve na primeira arena validada, isto e, no reload acima.
+        $checks['Deadheim PvP integrado'] = [bool](Wait-Log $bepLog 'Deadheim PvP integrado \(IsArena=True[,)]' 10)
         $fail = 0
         foreach ($k in $checks.Keys) {
             $ok = [bool]$checks[$k]

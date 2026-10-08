@@ -35,7 +35,7 @@ namespace NpcValheim.Npc
             "prefab=RoundLog;amount=50;price=100|prefab=FineWood;amount=50;price=150|" +
             "prefab=IronNails;amount=10;price=110|prefab=IronOre;amount=50;price=700|" +
             "prefab=SilverOre;amount=50;price=1000|prefab=GreydwarfEye;amount=500;price=250|" +
-            "prefab=SurtlingCore;amount=100;price=100|prefab=PortalToken;amount=1;price=750|" +
+            "prefab=SurtlingCore;amount=100;price=100|prefab=DeadToken;amount=1;price=750|" +
             "prefab=ResetToken;amount=1;price=250|prefab=Coins;amount=1000;price=500";
 
         /// <summary>
