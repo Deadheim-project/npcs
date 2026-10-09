@@ -84,6 +84,7 @@ namespace NpcValheim.Npc
             Nview.Register("RPC_KickHouse", (Action<long, string>)RPC_KickHouse);
             Nview.Register("RPC_MailStatus", (Action<long, string>)RPC_MailStatus);
             Nview.Register("RPC_MarkMailRead", (Action<long, string>)RPC_MarkMailRead);
+            Nview.Register("RPC_ReceiveParcel", (Action<long, string>)RPC_ReceiveParcel);
         }
 
         public void RequestMail()
@@ -163,7 +164,7 @@ namespace NpcValheim.Npc
             long playerId = GameApi.GetPlayerId(sender);
             if (playerId == 0L) return;
 
-            if (!TryDeliverClaim(mailId, playerId))
+            if (!TryDeliverClaim(sender, mailId, playerId))
                 ReplyStatus(sender, "Não foi possível entregar esta encomenda; ela continua guardada.");
             SendMailTo(sender);
         }
@@ -177,7 +178,7 @@ namespace NpcValheim.Npc
             int delivered = 0;
             foreach (var entry in MailDatabase.GetMail(playerId).Take(MaxClaimsPerRequest))
             {
-                if (TryDeliverClaim(entry.Id, playerId)) delivered++;
+                if (TryDeliverClaim(sender, entry.Id, playerId)) delivered++;
             }
             if (delivered >= MaxClaimsPerRequest)
                 ReplyStatus(sender, $"{delivered} encomendas entregues. Abra novamente para continuar.");
@@ -337,16 +338,16 @@ namespace NpcValheim.Npc
             SendMailTo(sender);
         }
 
-        /// <summary>Hands a parcel over in the world. Coins become a real Coins stack rather
-        /// than market balance, so mail is useful without ever touching a marketplace. A
-        /// written letter has nothing to drop -- claiming it just marks it read/removed.</summary>
-        private bool TryDeliverClaim(string mailId, long recipient)
+        /// <summary>Hands a parcel over. Coins become a real Coins stack rather than market
+        /// balance, so mail is useful without ever touching a marketplace. A written letter
+        /// has nothing to hand over -- claiming it just marks it read/removed.</summary>
+        private bool TryDeliverClaim(long sender, string mailId, long recipient)
         {
             string token = Guid.NewGuid().ToString("N");
             var entry = MailDatabase.BeginClaim(mailId, recipient, token);
             if (entry == null) return false;
 
-            if (!Deliver(entry, recipient))
+            if (!Deliver(sender, entry, recipient))
             {
                 MailDatabase.ReleaseClaim(mailId, recipient, token);
                 return false;
@@ -361,17 +362,74 @@ namespace NpcValheim.Npc
             return false;
         }
 
-        private bool Deliver(MailEntry entry, long recipient)
+        /// <summary>Sends the parcel to the claimant's own machine, the only place their
+        /// inventory can be written -- same as the marketplace's RPC_DeliverItem. It used to be
+        /// spawned on the ground next to the box, because this runs on the ZDO owner (the
+        /// server), which cannot reach into a remote bag. Validated here so the client is only
+        /// ever told to create something TrySpawn would also have accepted.</summary>
+        private bool Deliver(long sender, MailEntry entry, long recipient)
         {
             if (entry == null || entry.PlayerId != recipient) return false;
-            var dropPos = transform.position + Vector3.up + UnityEngine.Random.insideUnitSphere * 0.5f;
-            if (entry.IsCoins)
-                return ItemSpawner.TrySpawn(MarketplaceNpc.CoinPrefabName, entry.Coins, 1, dropPos);
-            else if (!string.IsNullOrEmpty(entry.ItemName) && entry.Amount > 0)
-                return ItemSpawner.TrySpawn(entry.ItemName, entry.Amount, entry.Quality, dropPos);
 
-            // Written messages have no attachment. Claiming one is just an acknowledgement.
-            return entry.IsMessage;
+            string itemName;
+            int amount, quality;
+            if (entry.IsCoins)
+            {
+                itemName = MarketplaceNpc.CoinPrefabName;
+                amount = entry.Coins;
+                quality = 1;
+            }
+            else if (!string.IsNullOrEmpty(entry.ItemName) && entry.Amount > 0)
+            {
+                itemName = entry.ItemName;
+                amount = entry.Amount;
+                quality = Mathf.Max(1, entry.Quality);
+            }
+            else
+            {
+                // Written messages have no attachment. Claiming one is just an acknowledgement.
+                return entry.IsMessage;
+            }
+
+            if (amount <= 0 || amount > ItemSpawner.MaxDeliverableAmount(itemName))
+            {
+                Plugin.Log.LogWarning($"NpcValheim: refused to deliver mail parcel {amount}x {itemName}");
+                return false;
+            }
+
+            Nview.InvokeRPC(sender, "RPC_ReceiveParcel",
+                itemName + ";" + quality.ToString(CultureInfo.InvariantCulture) + ";" +
+                amount.ToString(CultureInfo.InvariantCulture));
+            return true;
+        }
+
+        /// <summary>Client side: a claimed parcel arrives. The bag first; only what does not
+        /// fit goes on the ground, at the player's feet, and they are told.</summary>
+        private void RPC_ReceiveParcel(long sender, string packed)
+        {
+            if (!NpcRequestGuard.IsResponseFromOwner(Nview, sender)) return;
+            var player = Player.m_localPlayer;
+            if (player == null) return;
+
+            var parts = (packed ?? "").Split(';');
+            if (parts.Length != 3) return;
+            string itemName = parts[0];
+            if (!int.TryParse(parts[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out int quality) ||
+                !int.TryParse(parts[2], NumberStyles.Integer, CultureInfo.InvariantCulture, out int amount) ||
+                amount <= 0) return;
+
+            int given = ItemSpawner.GiveToInventory(player, itemName, amount, Mathf.Max(1, quality));
+            if (given > 0)
+                player.Message(MessageHud.MessageType.TopLeft,
+                    $"Recebido: {given}x {ItemNames.Display(itemName)}", given, null);
+
+            int left = amount - given;
+            if (left <= 0) return;
+
+            ItemSpawner.TrySpawn(itemName, left, Mathf.Max(1, quality),
+                player.transform.position + Vector3.up + UnityEngine.Random.insideUnitSphere * 0.5f);
+            player.Message(MessageHud.MessageType.Center,
+                $"Inventário cheio: {left}x {ItemNames.Display(itemName)} caiu no chão", 0, null);
         }
 
         /// <summary>`target` is a transient peer id -- fine for addressing the reply, wrong
