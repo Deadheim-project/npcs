@@ -24,6 +24,28 @@ namespace NpcValheim.Npc
 
         internal bool RequestService(string action, string payload) => InvokeServiceAction(action, payload);
 
+        /// <summary>Admin only: adds `amount` Deadcoins (negative removes) to a player's balance.</summary>
+        internal void RequestGrant(string playerName, int amount)
+        {
+            if (Nview == null || !Nview.IsValid() || !CanLocalPlayerAdminister()) return;
+            InvokeAuthoritativeRpc("RPC_GrantDeadcoins", (playerName ?? "").Trim(), amount);
+        }
+
+        internal override bool DispatchAdminMutation(long sender, string method, object[] arguments)
+        {
+            arguments = arguments ?? System.Array.Empty<object>();
+            if (method == "RPC_GrantDeadcoins" && arguments.Length == 2 &&
+                arguments[0] is string target && arguments[1] is int amount)
+            {
+                if (!CanAdminister(sender))
+                    ServiceNpcAuthority.SendStatus(sender, "O servidor não reconhece você como admin.");
+                else
+                    DeadcoinShop.ServeGrant(sender, target, amount, $"'{GetHoverName()}'");
+                return true;
+            }
+            return base.DispatchAdminMutation(sender, method, arguments);
+        }
+
         internal override bool DispatchServiceAction(long sender, string action, string payload)
         {
             switch (action)

@@ -35,7 +35,7 @@ namespace NpcValheim.Npc
             "prefab=RoundLog;amount=50;price=100|prefab=FineWood;amount=50;price=150|" +
             "prefab=IronNails;amount=10;price=110|prefab=IronOre;amount=50;price=700|" +
             "prefab=SilverOre;amount=50;price=1000|prefab=GreydwarfEye;amount=500;price=250|" +
-            "prefab=SurtlingCore;amount=100;price=100|prefab=PortalToken;amount=1;price=750|" +
+            "prefab=SurtlingCore;amount=100;price=100|prefab=DeadToken;amount=1;price=750|" +
             "prefab=ResetToken;amount=1;price=250|prefab=Coins;amount=1000;price=500";
 
         /// <summary>
@@ -235,6 +235,92 @@ namespace NpcValheim.Npc
             File.WriteAllText(path, balance.ToString(CultureInfo.InvariantCulture));
         }
 
+        /// <summary>
+        /// The balance files in `fileNames` that belong to `playerName`, ignoring case. The
+        /// account part never holds a '-' ("Steam_7656..."), so the name is everything before
+        /// the last one -- a player called "Ana-Maria" still matches.
+        /// </summary>
+        internal static List<string> FilesNamed(IEnumerable<string> fileNames, string playerName)
+        {
+            var result = new List<string>();
+            if (fileNames == null || string.IsNullOrWhiteSpace(playerName)) return result;
+            playerName = playerName.Trim();
+
+            foreach (var file in fileNames)
+            {
+                if (string.IsNullOrEmpty(file) ||
+                    !file.EndsWith(".json", StringComparison.OrdinalIgnoreCase)) continue;
+                var stem = file.Substring(0, file.Length - ".json".Length);
+                int dash = stem.LastIndexOf('-');
+                if (dash <= 0 || dash == stem.Length - 1) continue;
+                if (string.Equals(stem.Substring(0, dash), playerName, StringComparison.OrdinalIgnoreCase))
+                    result.Add(file);
+            }
+            return result;
+        }
+
+        /// <summary>
+        /// The balance file an admin means by a player name. Someone online is resolved from
+        /// their connection, exactly as their own purchases are, so the credit lands in the
+        /// file they will actually read. Someone offline is found by name among the existing
+        /// files, and only when exactly one matches: guessing between two accounts with the
+        /// same character name would credit a stranger.
+        ///
+        /// `peer` is the target's connection when they are online, for telling them; 0 otherwise.
+        /// </summary>
+        internal static bool TryResolveByName(string playerName, out string path, out string who,
+            out long peer, out string error)
+        {
+            path = null;
+            who = playerName;
+            peer = 0L;
+            error = null;
+            playerName = (playerName ?? "").Trim();
+            if (playerName.Length == 0)
+            {
+                error = "Informe o nome do jogador.";
+                return false;
+            }
+
+            var candidates = GameApi.ConnectedPeerIds();
+            // Solo/host: the host is no peer of its own.
+            long local = GameApi.LocalRpcSenderId();
+            if (local != 0L && Player.m_localPlayer != null) candidates.Add(local);
+
+            foreach (long id in candidates)
+            {
+                if (!string.Equals(GameApi.GetPlayerName(id), playerName, StringComparison.OrdinalIgnoreCase))
+                    continue;
+                if (!TryResolveAccount(id, out path, out who))
+                {
+                    error = $"{playerName} está online, mas o servidor não identificou a conta.";
+                    return false;
+                }
+                peer = id;
+                return true;
+            }
+
+            string[] files = Directory.Exists(Folder)
+                ? Directory.GetFiles(Folder, "*.json", SearchOption.TopDirectoryOnly)
+                : Array.Empty<string>();
+            var names = new List<string>();
+            foreach (var file in files) names.Add(Path.GetFileName(file));
+
+            var matches = FilesNamed(names, playerName);
+            if (matches.Count == 1)
+            {
+                path = Path.Combine(Folder, matches[0]);
+                who = Path.GetFileNameWithoutExtension(matches[0]);
+                return true;
+            }
+
+            error = matches.Count == 0
+                ? $"{playerName} não está online e não tem saldo registrado. " +
+                  "Ele precisa abrir a Loja Deadcoins uma vez, ou estar online."
+                : $"Há {matches.Count} contas chamadas {playerName}. Credite com ele online.";
+            return false;
+        }
+
         /// <summary>One line per purchase in the log the old mod kept, now with a timestamp, a
         /// line break and both balances -- enough to settle a "my Deadcoins vanished" from the
         /// file alone.</summary>
@@ -248,6 +334,15 @@ namespace NpcValheim.Npc
         {
             Directory.CreateDirectory(Path.GetDirectoryName(LogPath));
             File.AppendAllText(LogPath, $"{DateTime.Now:yyyy-MM-dd HH:mm:ss} {text}{Environment.NewLine}");
+        }
+
+        /// <summary>Same log, for a balance an admin changed at the counter.</summary>
+        internal static void AppendGrantLog(string admin, string who, int amount, int before, int after)
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(LogPath));
+            File.AppendAllText(LogPath,
+                $"{DateTime.Now:yyyy-MM-dd HH:mm:ss} admin {admin} {(amount >= 0 ? "credited" : "debited")} " +
+                $"{Math.Abs(amount)} Deadcoins to {who} (balance {before} -> {after}){Environment.NewLine}");
         }
     }
 
@@ -400,6 +495,10 @@ namespace NpcValheim.Npc
                     return;
                 }
                 SendBalance(sender, balance);
+                // Once a minute per player: enough to see in the server log which file a
+                // "my balance is wrong" is actually reading, without one line per poll.
+                if (NpcRequestGuard.AllowRate(sender, "deadcoin-balance-log", 1, 60f))
+                    Plugin.Log.LogInfo($"NpcValheim: Deadcoins balance of {who} is {balance} ({path})");
             }
             catch (Exception e)
             {
@@ -491,6 +590,72 @@ namespace NpcValheim.Npc
             // file that cannot be written must not stand between the player and the item.
             try { DeadcoinLedger.AppendLog(who, offer, balance, after); }
             catch (Exception e) { Plugin.Log.LogWarning($"NpcValheim: Deadcoins purchase log not written: {e.Message}"); }
+        }
+
+        /// <summary>Largest single change an admin can make at the counter: big enough for any
+        /// real donation, small enough that a typo cannot overflow a balance.</summary>
+        internal const int MaxGrant = 1000000;
+
+        /// <summary>
+        /// An admin adding (or, with a negative amount, removing) Deadcoins at the counter --
+        /// the same edit they used to make by hand in the player's file. The caller has already
+        /// checked that `admin` is on the admin list. A balance is never taken below 0.
+        /// </summary>
+        internal static void ServeGrant(long admin, string target, int amount, string where)
+        {
+            string adminName = GameApi.GetPlayerName(admin);
+            Plugin.Log.LogInfo($"NpcValheim: 'deadcoin-grant' {amount} to \"{target}\" from admin {adminName} at {where}");
+
+            if (amount == 0 || amount > MaxGrant || amount < -MaxGrant)
+            {
+                ServiceNpcAuthority.SendStatus(admin, $"Quantidade inválida (use de -{MaxGrant} a {MaxGrant}, sem 0).");
+                return;
+            }
+            if (!DeadcoinLedger.TryResolveByName(target, out string path, out string who, out long peer, out string error))
+            {
+                Plugin.Log.LogWarning($"NpcValheim: Deadcoins grant to \"{target}\" refused: {error}");
+                ServiceNpcAuthority.SendStatus(admin, error);
+                return;
+            }
+
+            int before, after;
+            try
+            {
+                if (!DeadcoinLedger.TryRead(path, out before))
+                {
+                    Plugin.Log.LogError($"NpcValheim: Deadcoins balance of {who} is not a number: {path}");
+                    ServiceNpcAuthority.SendStatus(admin, $"O arquivo de saldo de {who} está ilegível. Corrija-o à mão.");
+                    return;
+                }
+                if ((long)before + amount < 0)
+                {
+                    ServiceNpcAuthority.SendStatus(admin, $"{who} tem só {before} Deadcoins; não dá para tirar {-amount}.");
+                    return;
+                }
+                after = (int)Math.Min(int.MaxValue, (long)before + amount);
+                DeadcoinLedger.Write(path, after);
+            }
+            catch (Exception e)
+            {
+                Plugin.Log.LogError($"NpcValheim: could not change the Deadcoins balance of {who}: {e.Message}");
+                ServiceNpcAuthority.SendStatus(admin, "Falha ao gravar o saldo. Nada mudou. Consulte o log do servidor.");
+                return;
+            }
+
+            Plugin.Log.LogInfo($"NpcValheim: admin {adminName} changed the Deadcoins of {who} by {amount} ({before} -> {after}) at {path}");
+            try { DeadcoinLedger.AppendGrantLog(adminName, who, amount, before, after); }
+            catch (Exception e) { Plugin.Log.LogWarning($"NpcValheim: Deadcoins grant log not written: {e.Message}"); }
+
+            ServiceNpcAuthority.SendStatus(admin,
+                $"{(amount > 0 ? "Adicionados" : "Removidos")} {Math.Abs(amount)} Deadcoins de {who}. Saldo: {after}.");
+            if (peer != 0L)
+            {
+                SendBalance(peer, after);
+                if (peer != admin)
+                    SendNotice(peer, amount > 0
+                        ? $"Você recebeu {amount} Deadcoins. Saldo: {after}."
+                        : $"Foram removidos {-amount} Deadcoins. Saldo: {after}.");
+            }
         }
 
         private static void Refuse(long sender, int balance, string reason, string message)

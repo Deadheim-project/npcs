@@ -20,6 +20,7 @@ namespace NpcValheim.UI
     internal sealed class DeadcoinShopView : NpcViewBase
     {
         private const float PollSeconds = 5f;
+        private const float NoAnswerSeconds = 12f;
 
         /// <summary>The NPC this counter was opened at, or null when opened remotely.</summary>
         private DeadcoinShopNpc Shop => Npc as DeadcoinShopNpc;
@@ -33,6 +34,9 @@ namespace NpcValheim.UI
         private int _seenMessage;
         private float _nextPoll;
         private bool _remote;
+        private float _openedAt;
+        private TMP_InputField _grantPlayer;
+        private TMP_InputField _grantAmount;
         private readonly List<GameObject> _rows = new List<GameObject>();
 
         protected override void OnBuild()
@@ -46,8 +50,15 @@ namespace NpcValheim.UI
             ValheimUi.Anchor((RectTransform)_balance.transform, new Vector2(0f, 1f), new Vector2(1f, 1f),
                 new Vector2(0f, -30f), new Vector2(0f, 0f));
 
+            // Admins at an NPC get a strip at the bottom for crediting donations, which used to
+            // mean editing the player's file on the server by hand. Never on the remote (F7)
+            // counter: that one is a VIP convenience, not an admin tool.
+            bool admin = !_remote && Npc.CanLocalPlayerAdminister();
+            if (admin) BuildGrantRow();
+
             var pane = ValheimUi.CreateInlay(Root, "Offers");
-            ValheimUi.Anchor(pane, Vector2.zero, Vector2.one, Vector2.zero, new Vector2(0f, -40f));
+            ValheimUi.Anchor(pane, Vector2.zero, Vector2.one,
+                new Vector2(0f, admin ? 48f : 0f), new Vector2(0f, -40f));
 
             var header = ValheimUi.CreateLabel(pane, "À venda por Deadcoins", 18, ValheimUi.Orange,
                 TextAlignmentOptions.Center, display: true);
@@ -65,6 +76,46 @@ namespace NpcValheim.UI
 
             // Messages from before this panel opened are not about anything on it.
             _seenMessage = DeadcoinShop.MessageRevision;
+            _openedAt = Time.unscaledTime;
+        }
+
+        private void BuildGrantRow()
+        {
+            var row = Row(Root, 40f);
+            ValheimUi.Anchor(row, Vector2.zero, new Vector2(1f, 0f), Vector2.zero, new Vector2(0f, 40f));
+
+            ValheimUi.CreateLabel(row, "Admin:", 15, ValheimUi.Muted, TextAlignmentOptions.Left);
+            _grantPlayer = ValheimUi.CreateInputField(row, "", 200f, 36f);
+            Flexible(_grantPlayer.gameObject);
+            _grantAmount = ValheimUi.CreateInputField(row, "100", 90f, 36f);
+            _grantAmount.contentType = TMP_InputField.ContentType.IntegerNumber;
+
+            var add = ValheimUi.CreateButton(row, "Adicionar", 120f, 36f, 14);
+            add.onClick.AddListener(() => Grant(1));
+            var remove = ValheimUi.CreateButton(row, "Remover", 110f, 36f, 14);
+            remove.onClick.AddListener(() => Grant(-1));
+        }
+
+        private void Grant(int sign)
+        {
+            if (!(Npc is DeadcoinShopNpc shop)) return;
+
+            string name = (_grantPlayer.text ?? "").Trim();
+            if (name.Length == 0)
+            {
+                Say("Admin: escreva o nome do jogador (como aparece no jogo).");
+                return;
+            }
+            if (!int.TryParse(_grantAmount.text, out int amount) || amount <= 0 || amount > DeadcoinShop.MaxGrant)
+            {
+                Say($"Admin: quantidade entre 1 e {DeadcoinShop.MaxGrant}.");
+                return;
+            }
+
+            shop.RequestGrant(name, sign * amount);
+            Say($"{(sign > 0 ? "Adicionando" : "Removendo")} {amount} Deadcoins de {name}...");
+            // So the admin's own balance line catches up at once when they credited themselves.
+            _nextPoll = Time.unscaledTime + 1f;
         }
 
         public override void Refresh()
@@ -78,9 +129,13 @@ namespace NpcValheim.UI
                 DeadcoinShop.RequestBalance(shop);
             }
 
-            _balance.text = DeadcoinShop.Balance < 0
-                ? "<color=#9a9188>Consultando o seu saldo...</color>"
-                : $"<color=#9a9188>Seu saldo:</color> {DeadcoinShop.Balance} Deadcoins";
+            // "Consulting..." forever reads as a broken shop. After a while, say plainly that
+            // the server never answered, which is a server-side problem to look up in its log.
+            _balance.text = DeadcoinShop.Balance >= 0
+                ? $"<color=#9a9188>Seu saldo:</color> {DeadcoinShop.Balance} Deadcoins"
+                : Time.unscaledTime - _openedAt < NoAnswerSeconds
+                    ? "<color=#9a9188>Consultando o seu saldo...</color>"
+                    : "<color=#9a9188>O servidor não respondeu sobre o seu saldo. Avise um admin.</color>";
 
             if (DeadcoinShop.MessageRevision != _seenMessage)
             {
