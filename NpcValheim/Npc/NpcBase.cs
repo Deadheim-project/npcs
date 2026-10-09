@@ -154,7 +154,9 @@ namespace NpcValheim.Npc
             if (body == null) yield break;
 
             var before = transform.position;
-            if (TryFindGround(before, out float groundY))
+            // A test-world NPC stands on a floor in the sky. The terrain lookup would find the
+            // ground 800 m below and put him there; he was created exactly on the floor.
+            if (!Testing.TestWorld.IsFloating(Nview) && TryFindGround(before, out float groundY))
                 transform.position = new Vector3(before.x, groundY, before.z);
 
             body.constraints = RigidbodyConstraints.FreezeAll;
@@ -932,6 +934,10 @@ namespace NpcValheim.Npc
         /// when called on the owning peer) and re-persists the resulting state. Profiles
         /// created in code retain the historical full-replacement behavior; YAML templates
         /// carry an exact presence map and therefore act as patches.</summary>
+        /// <summary>The server configuring an NPC it created itself (the test world), with
+        /// no RPC and no sender to authorize.</summary>
+        internal bool ApplyProfileFromServer(NpcProfile profile) => ApplyProfileAuthoritative(profile);
+
         private bool ApplyProfileAuthoritative(NpcProfile profile)
         {
             if (profile == null || Nview == null || !Nview.IsValid()) return false;

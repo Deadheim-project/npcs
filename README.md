@@ -709,6 +709,31 @@ existe e não depende de Jötunn, mas é focado em criaturas/monstros novos
 clonamos o `Player` para reaproveitar customização em vez de criar uma
 criatura do zero. Não integrei.
 
+## Modo de teste (`[Teste] Enabled`)
+
+Desligado por padrão. **Nunca ligue num servidor aberto ao público.** Ligado:
+
+- Todo nascimento (entrar no mundo e renascer) põe todas as skills em
+  `SkillLevel` (100), completa a bolsa até `StartCoins` (10.000 moedas) e acontece
+  na plataforma de spawn, em vez de no templo, na cama ou no ponto de logout.
+- O servidor constrói uma vez, no céu (`Origin`, padrão `0,800,0`), três
+  plataformas de peças vanilla: **spawn** (6 mercadores com todos os itens do jogo
+  a 1 moeda, separados por tipo, os 3 NPCs da arena, caixa postal e teleportador),
+  **arena** a leste e **castelo** a oeste (muralha com portão duplo, torre com
+  porta dupla e RaidWard), a `PlatformDistance` (3008 m) do spawn. Cada uma tem
+  um teleportador para as três.
+- As peças levam `npcv_float` no ZDO: quem instancia lê no `WearNTear.Awake` e
+  desliga a checagem de apoio e o desgaste de chuva, e o martelo não remove.
+  Muralhas e portões continuam tomando dano, para o castelo poder ser invadido.
+- Para a arena e o castelo valerem como tais, a construção grava `TesteArena` em
+  `[Arena - Partida] Maps` e no `ArenaZones` do Deadheim, e `TesteCastelo` no
+  `Raid Zones` do RaidSystem. Desligar o modo **não** apaga essas entradas: tire-as
+  à mão antes de abrir o servidor.
+- `BuildVersion` mais alto apaga tudo o que o modo construiu e constrói de novo.
+
+Conferido num servidor dedicado isolado: 811 objetos e 13 NPCs construídos,
+todos de pé dois minutos depois.
+
 ## Build
 
 ```bash
