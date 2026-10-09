@@ -15,7 +15,7 @@ marketplace:
       price: 300
     - itemName: "Thunderstone"
       price: 150
-    - itemName: "PortalToken"
+    - itemName: "DeadToken"
       price: 2500
     - itemName: "CopperOre"
       price: 15

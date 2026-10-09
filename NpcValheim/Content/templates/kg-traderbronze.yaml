@@ -13,5 +13,5 @@ marketplace:
       price: 17
     - itemName: "TinOre"
       price: 17
-    - itemName: "PortalToken"
+    - itemName: "DeadToken"
       price: 2500

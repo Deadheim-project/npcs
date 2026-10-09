@@ -9,7 +9,7 @@ marketplace:
   sells:
     - itemName: "SurtlingCore"
       price: 25
-    - itemName: "PortalToken"
+    - itemName: "DeadToken"
       price: 2500
     - itemName: "CopperOre"
       price: 15
