@@ -151,6 +151,9 @@ namespace NpcValheim
             // [Arena*] sections: synchronized and locked like the rest, except the panel key.
             Arena.ArenaConfig.Bind(Config, ConfigSync);
 
+            // [Teste]: off by default; a test world with maxed skills, coins and a free shop.
+            Testing.TestWorldConfig.Bind(Config, ConfigSync);
+
             // Everything above is read where it is used (a new teleporter, a new listing, the
             // HUD every frame), so a reload takes effect on its own. The HUD offsets are the
             // exception and QuestTracker/QuestHudButton rebuild themselves when they change.
@@ -197,6 +200,7 @@ namespace NpcValheim
             Arena.ArenaServer.Tick();
             // Returns at once without a local player, so a dedicated server pays nothing.
             Arena.ArenaClient.Tick();
+            Testing.TestWorld.Tick();
         }
 
         private void OnDestroy()

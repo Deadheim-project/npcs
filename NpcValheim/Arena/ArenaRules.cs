@@ -110,8 +110,9 @@ namespace NpcValheim.Arena
         internal static int RequiredSignatures(int teamSize, int configured) =>
             configured >= 0 ? configured : Math.Max(0, teamSize - 1);
 
-        /// <summary>A team holds up to twice its bracket (ArenaTeam::AddMember).</summary>
-        internal static int MaxMembers(int teamSize) => teamSize * 2;
+        /// <summary>A team holds up to twice its bracket (ArenaTeam::AddMember); a 1v1 team is
+        /// the player alone.</summary>
+        internal static int MaxMembers(int teamSize) => teamSize <= 1 ? 1 : teamSize * 2;
 
         /// <summary>
         /// The rating an item requirement is checked against (Player::GetMaxPersonalArenaRatingRequirement):

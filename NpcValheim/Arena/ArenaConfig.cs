@@ -17,6 +17,7 @@ namespace NpcValheim.Arena
         internal static ConfigEntry<bool> Enabled;
         internal static ConfigEntry<string> Brackets;
         internal static ConfigEntry<bool> Skirmish;
+        internal static ConfigEntry<bool> Solo;
         internal static ConfigEntry<KeyCode> PanelKey;
 
         internal static ConfigEntry<string> CharterCost;
@@ -66,6 +67,9 @@ namespace NpcValheim.Arena
                 "Liga a arena (NPCs Organizador, Mestre e Intendente da Arena).");
             Brackets = S(config, general, "Brackets", "2,3,5",
                 "Tamanhos de time que existem. WoW: 2,3,5. Acrescente 1 para ter 1v1 (o WoW nunca teve).");
+            Solo = S(config, general, "Solo", true,
+                "Arena 1v1 sem time: o jogador entra sozinho na fila do Mestre da Arena, sem carta nem assinaturas. " +
+                "O rating 1v1 e' dele. Liga o 1v1 mesmo que Brackets nao tenha o 1.");
             Skirmish = S(config, general, "Skirmish", true,
                 "Escaramuca: fila sem time e sem rating, sozinho ou em grupo.");
             PanelKey = config.Bind(general, "PanelKey", KeyCode.H,
@@ -165,7 +169,7 @@ namespace NpcValheim.Arena
                     _reported = text;
                     foreach (var p in problems) Plugin.Log.LogWarning("NpcValheim Arena: " + p);
                     Plugin.Log.LogInfo($"NpcValheim Arena: {_current.Maps.Count} arena(s), {_current.Offers.Count} item(ns) no Intendente, " +
-                                       $"times {string.Join("/", _current.Brackets)}");
+                                       $"times {string.Join("/", _current.ActiveBrackets)}");
                 }
                 return _current;
             }
@@ -184,6 +188,7 @@ namespace NpcValheim.Arena
             {
                 Enabled = Enabled.Value,
                 Brackets = ArenaSettingsParser.ParseBrackets(Brackets.Value, problems),
+                Solo = Solo.Value,
                 Skirmish = Skirmish.Value,
                 CharterCost = ArenaSettingsParser.ParseSizeMap(CharterCost.Value, "CharterCost", problems),
                 SignaturesRequired = SignaturesRequired.Value,
@@ -210,7 +215,7 @@ namespace NpcValheim.Arena
                 MaxPoints = Mathf.Max(0, MaxPoints.Value),
                 ResetHourUtc = Mathf.Clamp(ResetHourUtc.Value, 0, 23),
             };
-            if (t.Brackets.Count == 0)
+            if (t.Brackets.Count == 0 && !t.Solo)
             {
                 problems.Add("Brackets vazio: usando 2,3,5");
                 t.Brackets = new List<int> { 2, 3, 5 };

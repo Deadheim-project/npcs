@@ -346,6 +346,7 @@ namespace NpcValheim.Arena
             string refusal = null;
             string name = null;
             if (!_t.HasBracket(size)) refusal = "Esse tamanho de time não existe aqui.";
+            else if (_t.IsSolo(size)) refusal = "O 1v1 não precisa de carta: entre na fila sozinho com o Mestre da Arena.";
             else if (TeamOf(id, size) != null) refusal = $"Você já está num time {ArenaRules.BracketName(size)}.";
             else if (Charter(id, size) != null) refusal = $"Você já tem uma carta {ArenaRules.BracketName(size)} aberta.";
             else
@@ -503,6 +504,47 @@ namespace NpcValheim.Arena
             }
         }
 
+        /// <summary>
+        /// The 1v1 team of a player, made the first time they queue rated: no charter, no
+        /// signatures, the player as its only member and captain. It carries their name, kept
+        /// up to date, under a key no typed team name can produce, so it never takes a name
+        /// away from the 2v2+ teams.
+        /// </summary>
+        private ArenaTeamRecord SoloTeam(ArenaPlayerRecord me)
+        {
+            var team = TeamOf(me.PlayerId, 1);
+            if (team != null)
+            {
+                if (!string.IsNullOrEmpty(me.Name) && team.Name != me.Name)
+                {
+                    team.Name = me.Name;
+                    team.Member(me.PlayerId).Name = me.Name;
+                    _db.SaveTeams(new[] { team });
+                }
+                return team;
+            }
+
+            team = new ArenaTeamRecord
+            {
+                Name = string.IsNullOrEmpty(me.Name) ? NameOf(me.PlayerId) : me.Name,
+                NameKey = "1v1:" + me.PlayerId.ToString(CultureInfo.InvariantCulture),
+                Size = 1,
+                CaptainId = me.PlayerId,
+                Rating = Math.Max(0, _t.StartRating),
+                CreatedUtcTicks = _host.UtcNow.Ticks,
+            };
+            team.Members.Add(new ArenaMemberRecord
+            {
+                PlayerId = me.PlayerId,
+                Name = team.Name,
+                PersonalRating = ArenaRules.StartingPersonalRating(team.Rating, _t.StartPersonalRating),
+            });
+            _db.InsertTeam(team);
+            _teams[team.Id] = team;
+            _host.Log($"Arena: time 1v1 de {team.Name} criado pela fila");
+            return team;
+        }
+
         /// <summary>Player::RemovePetitionsAndSigns: joining a team withdraws a player's other
         /// signatures in that bracket.</summary>
         private void ForgetSignatures(long playerId, int size)
@@ -550,6 +592,7 @@ namespace NpcValheim.Arena
             long id = me.PlayerId;
             var team = CaptainTeam(id, size, out string refusal);
             long target = 0L;
+            if (team != null && _t.IsSolo(size)) { team = null; refusal = "O time 1v1 é só você."; }
             if (team != null)
             {
                 target = _host.FindOnline((targetName ?? "").Trim());
@@ -619,6 +662,7 @@ namespace NpcValheim.Arena
             long id = me.PlayerId;
             var team = TeamOf(id, size);
             if (team == null) { Say(id, $"Você não está num time {ArenaRules.BracketName(size)}."); return; }
+            if (_t.IsSolo(size)) { Say(id, "O time 1v1 é só você: ele guarda o seu rating e não se desfaz.", alert: true); return; }
             if (TeamLocked(team)) { Say(id, "O time está na fila ou numa partida.", alert: true); return; }
             if (team.CaptainId == id && team.Members.Count > 1)
             {
@@ -685,7 +729,8 @@ namespace NpcValheim.Arena
         private void Disband(ArenaPlayerRecord me, int size)
         {
             var team = CaptainTeam(me.PlayerId, size, out string refusal);
-            if (team != null && TeamLocked(team)) refusal = "O time está na fila ou numa partida.";
+            if (team != null && _t.IsSolo(size)) refusal = "O time 1v1 é só você: ele guarda o seu rating e não se desfaz.";
+            else if (team != null && TeamLocked(team)) refusal = "O time está na fila ou numa partida.";
             if (refusal != null) { Say(me.PlayerId, refusal, alert: true); return; }
             DisbandTeam(team, me.Name);
         }
@@ -751,7 +796,12 @@ namespace NpcValheim.Arena
                 if (refusal != null) { Say(id, refusal, alert: true); return; }
             }
 
-            if (rated)
+            if (rated && _t.IsSolo(size))
+            {
+                if (members.Count != 1) refusal = "Na ranqueada 1v1 você entra sozinho: saia do grupo ou use a escaramuça.";
+                else SoloTeam(me);
+            }
+            else if (rated)
             {
                 var team = TeamOf(id, size);
                 if (team == null) refusal = $"Você não está num time {ArenaRules.BracketName(size)}.";
@@ -1474,14 +1524,14 @@ namespace NpcValheim.Arena
             if (now >= _nextRatedUpdate)
             {
                 _nextRatedUpdate = now + Mathf.Max(1f, _t.RatedUpdateSeconds);
-                foreach (int size in _t.Brackets) MatchRated(size);
+                foreach (int size in _t.ActiveBrackets) MatchRated(size);
             }
 
             if (now >= _nextSlowTick)
             {
                 _nextSlowTick = now + 1f;
                 SlowTick();
-                foreach (int size in _t.Brackets) MatchSkirmish(size);
+                foreach (int size in _t.ActiveBrackets) MatchSkirmish(size);
             }
 
             foreach (var match in _matches.Values.ToList()) UpdateMatch(match);
