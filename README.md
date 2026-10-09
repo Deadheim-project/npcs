@@ -335,8 +335,16 @@ quando esta versão entrar.
   na primeira vez que o jogador abre a loja, que é como o admin descobre o nome
   exato. Arquivo inexistente vale 0; arquivo que não contém um número faz a
   compra ser recusada, em vez de ser sobrescrito.
-- **Log:** `BepInEx/config/DonationShop/log/log.txt`, uma linha por compra com
-  data, conta, item e o saldo antes e depois.
+- **Creditar pelo NPC:** um admin (adminlist.txt) que abre a loja no NPC vê uma
+  linha **Admin** no rodapé: nome do jogador, quantidade, **Adicionar** /
+  **Remover**. O servidor confere o admin, acha o arquivo do jogador (pela
+  conexão, se ele estiver online; pelo nome entre os arquivos existentes, se
+  estiver offline e houver só uma conta com esse nome) e grava o novo saldo. O
+  saldo nunca fica negativo, e o jogador online vê o valor novo na hora. Não
+  aparece na loja remota (F7).
+- **Log:** `BepInEx/config/DonationShop/log/log.txt`, uma linha por compra ou
+  crédito de admin com data, conta e o saldo antes e depois. O log do servidor
+  também mostra, uma vez por minuto por jogador, qual arquivo de saldo foi lido.
 
 ### O que o DonationShop confiava ao cliente
 

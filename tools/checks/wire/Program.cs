@@ -181,6 +181,10 @@ class Program
         return ids;
     }
 
+    static List<string> FilesNamed(List<string> fileNames, string playerName) =>
+        (List<string>)Ledger.GetMethod("FilesNamed", BindingFlags.NonPublic | BindingFlags.Static)
+                            .Invoke(null, new object[] { fileNames, playerName });
+
     static readonly Type Merchant = typeof(MarketplaceNpc);
 
     static int ClosingPrice(int paid, int amount, int currentPrice, params int[] shown) =>
@@ -484,6 +488,20 @@ class Program
               FileNameFor("../Ragnar", "Steam_1") == null && FileNameFor("..\\Ragnar", "Steam_1") == null);
         Check("an account cannot leave the folder", FileNameFor("Ragnar", "Steam_1/../x") == null);
         Check("a missing part is refused", FileNameFor("", "Steam_1") == null && FileNameFor("Ragnar", "") == null);
+
+        // An admin credits an offline player by name; the file has to be theirs and only theirs.
+        var ledgerFiles = new List<string>
+        {
+            "Ragnar-Steam_76561198000000001.json", "ragnar2-Steam_2.json", "Ana-Maria-Steam_3.json",
+            "Bjorn-Steam_4.json", "Bjorn-Xbox_5.json", "notes.txt",
+        };
+        Check("a name finds its file, case ignored",
+              FilesNamed(ledgerFiles, "RAGNAR").Count == 1 && FilesNamed(ledgerFiles, "RAGNAR")[0] == ledgerFiles[0]);
+        Check("a name with a dash still matches", FilesNamed(ledgerFiles, "Ana-Maria").Count == 1);
+        Check("a prefix of a name is not the name", FilesNamed(ledgerFiles, "Ana").Count == 0 &&
+                                                    FilesNamed(ledgerFiles, "Rag").Count == 0);
+        Check("two accounts with one name are both reported", FilesNamed(ledgerFiles, "Bjorn").Count == 2);
+        Check("no name matches nothing", FilesNamed(ledgerFiles, " ").Count == 0);
 
         System.Console.WriteLine();
         System.Console.WriteLine("== boss pass prices ==");
