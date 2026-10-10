@@ -20,7 +20,7 @@ namespace NpcValheim
     {
         public const string Guid = "com.npcvalheim.mod";
         public const string Name = "NpcValheim";
-        public const string Version = "0.1.61";
+        public const string Version = "0.1.62";
 
         internal static ManualLogSource Log;
         private Harmony _harmony;
@@ -133,7 +133,7 @@ namespace NpcValheim
             // its own copy on every purchase and never takes a price from the client.
             DeadcoinShopItems = Config.Bind("DeadcoinShop", "Items", Npc.DeadcoinCatalog.DefaultItems,
                 "What the Deadcoins NPC sells: prefab=<item>;amount=<units per purchase>;price=<Deadcoins>, " +
-                "entries separated by |. Entries with a non-positive amount or price, or an unknown item, are skipped and named in the log. " +
+                "entries separated by |. Entries with a non-positive amount or price, or an unknown item, are skipped and named in the log. Admins can also edit it at the NPC, tab Itens (admin). " +
                 "Balances live in BepInEx/config/DonationShop/<player>-<account>.json, as they did with DonationShop.");
 
             // Same shape as DeadcoinShop.Items, for the same reason: one line an admin can read
