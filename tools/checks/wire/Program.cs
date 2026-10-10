@@ -83,6 +83,18 @@ class Program
         (List<DeadcoinOffer>)Catalog.GetMethod("Parse", BindingFlags.NonPublic | BindingFlags.Static)
                                     .Invoke(null, new object[] { raw, problems });
 
+    static string SetDeadcoinOffer(string raw, DeadcoinOffer offer) =>
+        (string)Catalog.GetMethod("SetOffer", BindingFlags.NonPublic | BindingFlags.Static)
+                       .Invoke(null, new object[] { raw, offer });
+
+    static string RemoveDeadcoinOffer(string raw, string prefab, out bool removed)
+    {
+        var args = new object[] { raw, prefab, false };
+        var result = (string)Catalog.GetMethod("RemoveOffer", BindingFlags.NonPublic | BindingFlags.Static).Invoke(null, args);
+        removed = (bool)args[2];
+        return result;
+    }
+
     static readonly Type MountCatalogType = typeof(QuestGiverNpc).Assembly.GetType("NpcValheim.Npc.MountCatalog");
 
     static string DefaultMountOffers =>
@@ -438,6 +450,23 @@ class Program
         Check("spacing and key case do not matter",
               loose.Count == 1 && loose[0].Prefab == "Wood" && loose[0].Price == 10);
         Check("an empty list is empty, not an error", ParseOffers("", null).Count == 0);
+
+        // What the counter's admin page writes, read back the way the counter reads it.
+        var changed = SetDeadcoinOffer(DefaultDeadcoinItems, new DeadcoinOffer { Prefab = "Stone", Amount = 75, Price = 90 });
+        var rereadCounter = ParseOffers(changed, null);
+        Check("saving an item changes it in place",
+              rereadCounter.Count == 16 && rereadCounter[5].Prefab == "Stone" && rereadCounter[5].Amount == 75 && rereadCounter[5].Price == 90,
+              changed);
+        changed = SetDeadcoinOffer(" Prefab = Wood ; AMOUNT = 5 ; price = 10 |broken", new DeadcoinOffer { Prefab = "Wood", Amount = 6, Price = 11 });
+        Check("a hand-written entry is matched, and an unreadable one is left alone",
+              changed == "prefab=Wood;amount=6;price=11|broken", changed);
+        changed = SetDeadcoinOffer("", new DeadcoinOffer { Prefab = "DeadToken", Amount = 1, Price = 750 });
+        Check("an item is added to an empty list", changed == "prefab=DeadToken;amount=1;price=750", changed);
+        changed = RemoveDeadcoinOffer(DefaultDeadcoinItems, "Coins", out bool counterRemoved);
+        Check("removing an item keeps the others",
+              counterRemoved && ParseOffers(changed, null).Count == 15 && ParseOffers(changed, null).TrueForAll(o => o.Prefab != "Coins"));
+        RemoveDeadcoinOffer(DefaultDeadcoinItems, "coins", out counterRemoved);
+        Check("prefabs compare exactly, as purchases look them up", !counterRemoved);
 
         System.Console.WriteLine();
         System.Console.WriteLine("== Mestre das Montarias ==");

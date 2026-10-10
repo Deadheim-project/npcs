@@ -301,6 +301,45 @@ namespace NpcValheim.Arena
         internal static string FormatPoint(Vector3 p, float yaw) =>
             string.Format(CultureInfo.InvariantCulture, "{0:0.##},{1:0.##},{2:0.##},{3:0}", p.x, p.y, p.z, yaw);
 
+        /// <summary>One arena as a Maps entry, the way <see cref="ParseMaps"/> reads it back.</summary>
+        internal static string FormatMap(ArenaMapDef map) =>
+            CleanMapName(map.Name) + ";" + FormatPoint(map.Gold, map.GoldYaw) + ";" + FormatPoint(map.Green, map.GreenYaw) +
+            (map.HasSpectator
+                ? string.Format(CultureInfo.InvariantCulture, ";{0:0.##},{1:0.##},{2:0.##}", map.Spectator.x, map.Spectator.y, map.Spectator.z)
+                : "");
+
+        /// <summary>An arena name the format can hold: no separators, no control characters, short.</summary>
+        internal static string CleanMapName(string name)
+        {
+            var clean = new string((name ?? "").Where(c => c != ';' && c != '|' && !char.IsControl(c)).ToArray()).Trim();
+            return clean.Length > 32 ? clean.Substring(0, 32).Trim() : clean;
+        }
+
+        private static string MapKey(string entry) => entry.Split(';')[0].Trim();
+
+        /// <summary>The Maps text with this arena saved: in place when one of the same name
+        /// (any case) exists, appended otherwise.</summary>
+        internal static string SetMap(string raw, ArenaMapDef map) =>
+            CfgList.Set(raw, FormatMap(map), MapKey, StringComparison.OrdinalIgnoreCase);
+
+        internal static string RemoveMap(string raw, string name, out bool removed) =>
+            CfgList.Remove(raw, name, MapKey, StringComparison.OrdinalIgnoreCase, out removed);
+
+        /// <summary>One Intendente item as an Items entry, the way <see cref="ParseOffers"/> reads it back.</summary>
+        internal static string FormatOffer(ArenaOffer o) =>
+            string.Format(CultureInfo.InvariantCulture, "prefab={0};amount={1};points={2};rating={3}", o.Prefab, o.Amount, o.Points, o.Rating) +
+            (o.Bracket > 0 ? ";bracket=" + o.Bracket.ToString(CultureInfo.InvariantCulture) : "");
+
+        private static string OfferKey(string entry) => CfgList.Field(entry, "prefab");
+
+        /// <summary>The Items text with this offer saved: in place when the prefab is already
+        /// sold, appended otherwise. Prefabs compare exactly, as purchases look them up.</summary>
+        internal static string SetOffer(string raw, ArenaOffer offer) =>
+            CfgList.Set(raw, FormatOffer(offer), OfferKey, StringComparison.Ordinal);
+
+        internal static string RemoveOffer(string raw, string prefab, out bool removed) =>
+            CfgList.Remove(raw, prefab, OfferKey, StringComparison.Ordinal, out removed);
+
         internal const float MinZoneRadius = 10f;
         internal const float MaxZoneRadius = 300f;
 

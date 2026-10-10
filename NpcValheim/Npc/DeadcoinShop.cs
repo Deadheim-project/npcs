@@ -120,6 +120,20 @@ namespace NpcValheim.Npc
             return result;
         }
 
+        /// <summary>One offer as an Items entry, the way <see cref="Parse"/> reads it back.</summary>
+        internal static string Format(DeadcoinOffer offer) =>
+            string.Format(CultureInfo.InvariantCulture, "prefab={0};amount={1};price={2}", offer.Prefab, offer.Amount, offer.Price);
+
+        private static string Key(string entry) => CfgList.Field(entry, "prefab");
+
+        /// <summary>The Items text with this offer saved: in place when the prefab is already
+        /// sold, appended otherwise. Prefabs compare exactly, as purchases look them up.</summary>
+        internal static string SetOffer(string raw, DeadcoinOffer offer) =>
+            CfgList.Set(raw, Format(offer), Key, StringComparison.Ordinal);
+
+        internal static string RemoveOffer(string raw, string prefab, out bool removed) =>
+            CfgList.Remove(raw, prefab, Key, StringComparison.Ordinal, out removed);
+
         private static string _reported;
 
         /// <summary>The server's own list, read now. Parsed on every call, so saving the cfg
@@ -656,6 +670,55 @@ namespace NpcValheim.Npc
                         ? $"Você recebeu {amount} Deadcoins. Saldo: {after}."
                         : $"Foram removidos {-amount} Deadcoins. Saldo: {after}.");
             }
+        }
+
+        /// <summary>
+        /// An admin putting an item on the counter, or changing its bundle or price, from the
+        /// NPC -- the same edit as the Items line of the cfg, which is saved and sent to every
+        /// client by ServerSync. The caller has already checked that `admin` is on the admin
+        /// list; the rules are the ones the counter itself reads the list with.
+        /// </summary>
+        internal static void ServeSetOffer(long admin, string prefab, int amount, int price, string where)
+        {
+            string adminName = GameApi.GetPlayerName(admin);
+            prefab = (prefab ?? "").Trim();
+            if (amount <= 0 || price <= 0)
+            {
+                ServiceNpcAuthority.SendStatus(admin, "Quantidade e preço precisam ser maiores que zero.");
+                return;
+            }
+            int max = ItemSpawner.MaxDeliverableAmount(prefab);
+            if (max <= 0)
+            {
+                ServiceNpcAuthority.SendStatus(admin, $"\"{prefab}\" não é um item que o jogo conhece (use o nome do prefab).");
+                return;
+            }
+            if (amount > max)
+            {
+                ServiceNpcAuthority.SendStatus(admin, $"{ItemNames.Display(prefab)}: no máximo {max} por entrega.");
+                return;
+            }
+
+            var offer = new DeadcoinOffer { Prefab = prefab, Amount = amount, Price = price };
+            Plugin.DeadcoinShopItems.Value = DeadcoinCatalog.SetOffer(Plugin.DeadcoinShopItems.Value, offer);
+            Plugin.Log.LogInfo($"NpcValheim: admin {adminName} set the Deadcoins offer {DeadcoinCatalog.Format(offer)} at {where}");
+            ServiceNpcAuthority.SendStatus(admin, $"À venda: {amount}x {ItemNames.Display(prefab)} por {price} Deadcoins.");
+        }
+
+        /// <summary>An admin taking an item off the counter.</summary>
+        internal static void ServeRemoveOffer(long admin, string prefab, string where)
+        {
+            string adminName = GameApi.GetPlayerName(admin);
+            prefab = (prefab ?? "").Trim();
+            string after = DeadcoinCatalog.RemoveOffer(Plugin.DeadcoinShopItems.Value, prefab, out bool removed);
+            if (!removed)
+            {
+                ServiceNpcAuthority.SendStatus(admin, $"A loja não vende \"{prefab}\".");
+                return;
+            }
+            Plugin.DeadcoinShopItems.Value = after;
+            Plugin.Log.LogInfo($"NpcValheim: admin {adminName} removed {prefab} from the Deadcoins counter at {where}");
+            ServiceNpcAuthority.SendStatus(admin, $"{ItemNames.Display(prefab)} retirado da loja.");
         }
 
         private static void Refuse(long sender, int balance, string reason, string message)

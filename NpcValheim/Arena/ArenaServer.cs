@@ -121,6 +121,12 @@ namespace NpcValheim.Arena
                     HandleZone(sender, playerId, name, admin, action, payload ?? "");
                     return;
                 }
+                if (action == ArenaWire.ActAdminMapSet || action == ArenaWire.ActAdminMapRemove ||
+                    action == ArenaWire.ActAdminOfferSet || action == ArenaWire.ActAdminOfferRemove)
+                {
+                    HandleCfgEdit(sender, name, admin, action, payload ?? "");
+                    return;
+                }
                 _engine.SetTuning(ArenaConfig.Current);
                 _engine.Handle(playerId, name, where ?? "", admin, action, payload ?? "");
             }
@@ -188,6 +194,102 @@ namespace NpcValheim.Arena
             }
             ArenaConfig.Invalidate();
             Plugin.Log.LogInfo($"NpcValheim Arena: {name} mudou ArenaZones: '{before}' -> '{after}'");
+            ArenaNet.Send(sender, ArenaWire.Notice, done);
+        }
+
+        /// <summary>
+        /// An arena (Maps) or an Intendente item (Items) saved or removed from an admin page.
+        /// The entry is parsed exactly as the cfg is, so the page cannot save what the server
+        /// would then refuse to read; the cfg is saved and ServerSync sends it to everyone,
+        /// all from the setting changing, as if the file had been edited by hand.
+        /// </summary>
+        private static void HandleCfgEdit(long sender, string name, bool admin, string action, string payload)
+        {
+            if (!admin)
+            {
+                ArenaNet.Send(sender, ArenaWire.Notice, "Só admin.");
+                return;
+            }
+
+            var problems = new List<string>();
+            string done;
+            switch (action)
+            {
+                case ArenaWire.ActAdminMapSet:
+                {
+                    var maps = ArenaSettingsParser.ParseMaps(payload, problems);
+                    if (maps.Count != 1 || problems.Count > 0)
+                    {
+                        ArenaNet.Send(sender, ArenaWire.Notice, problems.Count > 0 ? problems[0] : "Arena inválida.");
+                        return;
+                    }
+                    var map = maps[0];
+                    if (ArenaSettingsParser.CleanMapName(map.Name) != map.Name)
+                    {
+                        ArenaNet.Send(sender, ArenaWire.Notice, "Nome de arena inválido (sem ; ou |, até 32 letras).");
+                        return;
+                    }
+                    ArenaConfig.Maps.Value = ArenaSettingsParser.SetMap(ArenaConfig.Maps.Value, map);
+                    done = $"Arena \"{map.Name}\" salva.";
+                    if (!ArenaDeadheim.CoversMap(map, out string why)) done += " Ainda não vale: " + why + ".";
+                    break;
+                }
+                case ArenaWire.ActAdminMapRemove:
+                {
+                    string map = payload.Trim();
+                    string after = ArenaSettingsParser.RemoveMap(ArenaConfig.Maps.Value, map, out bool removed);
+                    if (!removed)
+                    {
+                        ArenaNet.Send(sender, ArenaWire.Notice, $"Não há arena \"{map}\".");
+                        return;
+                    }
+                    ArenaConfig.Maps.Value = after;
+                    done = $"Arena \"{map}\" removida.";
+                    break;
+                }
+                case ArenaWire.ActAdminOfferSet:
+                {
+                    var offers = ArenaSettingsParser.ParseOffers(payload, problems);
+                    if (offers.Count != 1 || problems.Count > 0)
+                    {
+                        ArenaNet.Send(sender, ArenaWire.Notice, problems.Count > 0 ? problems[0] : "Item inválido.");
+                        return;
+                    }
+                    var offer = offers[0];
+                    int max = ItemSpawner.MaxDeliverableAmount(offer.Prefab);
+                    if (max <= 0)
+                    {
+                        ArenaNet.Send(sender, ArenaWire.Notice, $"\"{offer.Prefab}\" não é um item que o jogo conhece.");
+                        return;
+                    }
+                    if (offer.Amount > max)
+                    {
+                        ArenaNet.Send(sender, ArenaWire.Notice, $"{ItemNames.Display(offer.Prefab)}: no máximo {max} por entrega.");
+                        return;
+                    }
+                    ArenaConfig.VendorItems.Value = ArenaSettingsParser.SetOffer(ArenaConfig.VendorItems.Value, offer);
+                    done = $"Intendente: {offer.Amount}x {ItemNames.Display(offer.Prefab)} por {offer.Points} pontos.";
+                    break;
+                }
+                case ArenaWire.ActAdminOfferRemove:
+                {
+                    string prefab = payload.Trim();
+                    string after = ArenaSettingsParser.RemoveOffer(ArenaConfig.VendorItems.Value, prefab, out bool removed);
+                    if (!removed)
+                    {
+                        ArenaNet.Send(sender, ArenaWire.Notice, $"O Intendente não vende \"{prefab}\".");
+                        return;
+                    }
+                    ArenaConfig.VendorItems.Value = after;
+                    done = $"Intendente: {ItemNames.Display(prefab)} retirado.";
+                    break;
+                }
+                default:
+                    return;
+            }
+
+            ArenaConfig.Invalidate();
+            Plugin.Log.LogInfo($"NpcValheim Arena: {name} '{action}' \"{payload}\"");
             ArenaNet.Send(sender, ArenaWire.Notice, done);
         }
 

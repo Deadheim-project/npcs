@@ -342,6 +342,11 @@ quando esta versão entrar.
   estiver offline e houver só uma conta com esse nome) e grava o novo saldo. O
   saldo nunca fica negativo, e o jogador online vê o valor novo na hora. Não
   aparece na loja remota (F7).
+- **Itens pelo NPC:** a aba **Itens (admin)** da loja edita a lista: item (nome do
+  jogo, como "Madeira", ou o prefab, "Wood"), quantidade por compra e preço, **Salvar**
+  (mesmo item = muda), **Editar** / **Remover** em cada linha. O servidor confere o
+  admin e o item e grava `[DeadcoinShop] Items` no cfg; o ServerSync manda a lista
+  nova a todos, então a loja, o F7 e o arquivo nunca discordam.
 - **Log:** `BepInEx/config/DonationShop/log/log.txt`, uma linha por compra ou
   crédito de admin com data, conta e o saldo antes e depois. O log do servidor
   também mostra, uma vez por minuto por jogador, qual arquivo de saldo foi lido.
@@ -513,9 +518,11 @@ que copia.
 ### O que muda porque é Valheim
 
 - **Arenas são lugares do mundo**, não instâncias: uma partida por arena de cada vez.
-  O admin constrói a arena e escreve `[Arena - Partida] Maps`
-  (`Nome;ouro x,y,z,giro;verde x,y,z,giro[;espectador x,y,z]`). A aba **Arena (admin)**
-  do Mestre da Arena mostra a posição para copiar e diz se a arena foi recusada e por quê.
+  O admin constrói a arena e a monta na aba **Arena (admin)** do Mestre da Arena: nome,
+  **Ouro aqui** / **Verde aqui** em cada início (o giro é para onde ele olha),
+  **Espectador** opcional e **Salvar**; **Editar** / **Remover** em cada arena. Isso grava
+  `[Arena - Partida] Maps` (`Nome;ouro x,y,z,giro;verde x,y,z,giro[;espectador x,y,z]`),
+  que também pode ser escrito à mão. A aba diz se a arena foi recusada e por quê.
 - **A arena do Deadheim é reaproveitada**: os dois inícios precisam estar numa
   `ArenaZones` do `Detalhes.Deadheim.cfg`. Lá o PvP já é obrigatório e não há perda de
   skill, PK nem imunidade. Uma arena fora da zona é recusada.
@@ -538,6 +545,9 @@ que copia.
   tudo se recusar, ou o troco.
 - **Prêmios pelo correio**: o Intendente manda o item para a Caixa Postal, e a
   distribuição semanal manda uma carta com os pontos.
+- **Recompensas pelo NPC**: a aba **Recompensas** do Intendente (só admin) edita o que
+  ele vende: item, quantidade, pontos, rating mínimo e tamanho mínimo do time. Grava
+  `[Arena - Intendente] Items`.
 
 ### Testes
 

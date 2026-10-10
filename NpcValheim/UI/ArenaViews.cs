@@ -771,10 +771,79 @@ namespace NpcValheim.UI
     }
 
     /// <summary>
-    /// Admin page on the Battlemaster. Arenas are written in the cfg (live reload); this page
-    /// gives the coordinates to paste there, marks the arena area (Deadheim's ArenaZones) where
-    /// the admin stands, shows which arenas the server would refuse and why, and runs the
-    /// weekly payout on demand.
+    /// Admin page on the Intendente: what it hands out for Arena Points. It edits the
+    /// server's "Arena - Intendente" Items line, which is saved and sent to every client, so
+    /// the page and a hand-edited cfg are the same list.
+    /// </summary>
+    internal sealed class ArenaVendorAdminView : ArenaViewBase
+    {
+        private OfferForm _form;
+
+        protected override void OnBuild()
+        {
+            _form = OfferForm.Build(Root,
+                new[] { ("Qtd", "1", 70f), ("Pontos", "100", 80f), ("Rating", "0", 80f), ("Time", "0", 56f) }, Save);
+            CreateList(Vector2.zero, new Vector2(0f, -76f));
+        }
+
+        protected override string Signature() => base.Signature() + ":" + ArenaConfig.VendorItems?.Value;
+
+        private void Save()
+        {
+            string prefab = OfferForm.Resolve(_form.Item.text);
+            if (prefab == null) { Say("Escolha um item que o jogo conhece."); return; }
+            int? amount = _form.Number(0), points = _form.Number(1), rating = _form.Number(2), bracket = _form.Number(3);
+            if (amount == null || amount <= 0 || points == null || points <= 0)
+            {
+                Say("Quantidade e pontos precisam ser números maiores que zero.");
+                return;
+            }
+            if (rating == null || rating < 0 || bracket == null || bracket < 0 || bracket > 10)
+            {
+                Say("Rating a partir de 0; Time de 0 a 10.");
+                return;
+            }
+            var offer = new ArenaOffer { Prefab = prefab, Amount = amount.Value, Points = points.Value, Rating = rating.Value, Bracket = bracket.Value };
+            Ask(ArenaWire.ActAdminOfferSet, ArenaSettingsParser.FormatOffer(offer));
+            Say($"Salvando {offer.Amount}x {ItemNames.Display(prefab)}...");
+        }
+
+        protected override void Rebuild()
+        {
+            Line("Rating = mínimo (o menor entre pessoal e do time) para comprar, 0 = sem requisito. " +
+                 "Time = tamanho mínimo do time em que esse rating vale (0 = qualquer). Os itens vão pela Caixa Postal.",
+                13, ValheimUi.Muted, 40f);
+
+            var problems = new List<string>();
+            var offers = ArenaSettingsParser.ParseOffers(ArenaConfig.VendorItems?.Value, problems);
+            Heading($"Recompensas do Intendente ({offers.Count})");
+            if (offers.Count == 0) Line("O Intendente não vende nada.", 15, ValheimUi.Muted);
+            foreach (var offer in offers)
+            {
+                var o = offer;
+                var row = ButtonRow(48f);
+                ValheimUi.CreateItemIcon(row, o.Prefab, 38f);
+                int max = ItemSpawner.MaxDeliverableAmount(o.Prefab);
+                string fault = max <= 0 ? "   <color=#ee6b57>não é item do jogo: fora da venda</color>"
+                    : o.Amount > max ? $"   <color=#ee6b57>mais que uma entrega ({max}): fora da venda</color>" : "";
+                string requirement = o.Rating > 0
+                    ? $" · rating {o.Rating}{(o.Bracket > 1 ? $" ({ArenaRules.BracketName(o.Bracket)}+)" : "")}"
+                    : "";
+                Cell(row, $"{o.Amount}x {ItemNames.Display(o.Prefab)}  <size=12><color=#9a9188>{o.Prefab}</color></size>\n" +
+                          $"<size=13><color=#9a9188>{o.Points} pontos{requirement}</color>{fault}</size>", 15);
+                Btn(row, "Editar", 90f, () => _form.Load(o.Prefab, o.Amount, o.Points, o.Rating, o.Bracket));
+                Btn(row, "Remover", 100f, () => Ask(ArenaWire.ActAdminOfferRemove, o.Prefab));
+            }
+            foreach (var problem in problems) Line(problem, 13, ValheimUi.Danger, 22f);
+        }
+    }
+
+    /// <summary>
+    /// Admin page on the Battlemaster: builds the arenas -- where each team starts, and
+    /// where the defeated watch from -- from where the admin stands, marks the arena area
+    /// (Deadheim's ArenaZones), shows which arenas the server would refuse and why, and runs
+    /// the weekly payout on demand. Arenas are saved in the server's Maps line, the same
+    /// one the cfg holds.
     /// </summary>
     internal sealed class ArenaAdminView : ArenaViewBase
     {
@@ -782,6 +851,12 @@ namespace NpcValheim.UI
         private TMP_InputField _grantPoints;
         private TMP_InputField _zoneName;
         private TMP_InputField _zoneRadius;
+        private TMP_InputField _mapName;
+
+        // The arena being put together: each start is taken where the admin stands when the
+        // button is pressed, and nothing reaches the server until Salvar.
+        private Vector3? _gold, _green, _spectator;
+        private float _goldYaw, _greenYaw;
 
         protected override void OnBuild()
         {
@@ -822,7 +897,82 @@ namespace NpcValheim.UI
             _zoneRadius = ValheimUi.CreateInputField(area, "40", 90f, 34f);
             var mark = ValheimUi.CreateButton(area, "Marcar aqui", 130f, 34f, 14);
             mark.onClick.AddListener(MarkZone);
-            CreateList(Vector2.zero, new Vector2(0f, -90f));
+
+            var arena = ValheimUi.CreateRect("Arena", Root);
+            ValheimUi.Anchor(arena, new Vector2(0f, 1f), new Vector2(1f, 1f), new Vector2(0f, -128f), new Vector2(0f, -88f));
+            var arenaLayout = arena.gameObject.AddComponent<HorizontalLayoutGroup>();
+            arenaLayout.spacing = 8f;
+            arenaLayout.childControlWidth = true;
+            arenaLayout.childControlHeight = true;
+            arenaLayout.childForceExpandWidth = false;
+            var arenaHint = ValheimUi.CreateLabel(arena, "Arena (nome):", 15, ValheimUi.Muted, TextAlignmentOptions.Left);
+            ValheimUi.SetWidth(arenaHint.gameObject, 120f);
+            _mapName = ValheimUi.CreateInputField(arena, "", 0f, 34f);
+            Flexible(_mapName.gameObject);
+            ValheimUi.CreateButton(arena, "Ouro aqui", 104f, 34f, 14).onClick.AddListener(() => Capture(ArenaSide.Gold));
+            ValheimUi.CreateButton(arena, "Verde aqui", 104f, 34f, 14).onClick.AddListener(() => Capture(ArenaSide.Green));
+            ValheimUi.CreateButton(arena, "Espectador", 104f, 34f, 14).onClick.AddListener(() => Capture(ArenaSide.None));
+            ValheimUi.CreateButton(arena, "Salvar", 90f, 34f, 14).onClick.AddListener(SaveMap);
+            CreateList(Vector2.zero, new Vector2(0f, -134f));
+        }
+
+        /// <summary>Takes one point of the arena being built where the admin stands, facing
+        /// where they face (the team starts looking that way). None = the spectator spot.</summary>
+        private void Capture(int side)
+        {
+            var player = Player.m_localPlayer;
+            if (player == null) return;
+            var at = player.transform.position;
+            float yaw = player.transform.eulerAngles.y;
+            if (side == ArenaSide.Gold) { _gold = at; _goldYaw = yaw; }
+            else if (side == ArenaSide.Green) { _green = at; _greenYaw = yaw; }
+            else _spectator = at;
+            string what = side == ArenaSide.None ? "Espectador" : "Início " + ArenaSide.Name(side);
+            Say($"{what}: {ArenaConfig.Describe(at, yaw)} -- {ZoneHere(player)}. Clique Salvar quando terminar.");
+        }
+
+        private void SaveMap()
+        {
+            string name = ArenaSettingsParser.CleanMapName(_mapName.text);
+            if (name.Length == 0) { Say("Dê um nome à arena."); return; }
+            if (_gold == null || _green == null)
+            {
+                Say("Marque os dois inícios: fique em cada um e clique Ouro aqui / Verde aqui.");
+                return;
+            }
+            if (Vector3.Distance(_gold.Value, _green.Value) > 300f)
+            {
+                Say("Os dois inícios estão a mais de 300 m um do outro.");
+                return;
+            }
+            var map = new ArenaMapDef
+            {
+                Name = name, Gold = _gold.Value, GoldYaw = _goldYaw, Green = _green.Value, GreenYaw = _greenYaw,
+                HasSpectator = _spectator != null, Spectator = _spectator ?? Vector3.zero,
+            };
+            Ask(ArenaWire.ActAdminMapSet, ArenaSettingsParser.FormatMap(map));
+            Say($"Salvando a arena \"{name}\"...");
+        }
+
+        /// <summary>Puts an existing arena in the form, so one point can be retaken and saved
+        /// again under the same name.</summary>
+        private void EditMap(ArenaMapDef map)
+        {
+            _mapName.text = map.Name;
+            _gold = map.Gold;
+            _goldYaw = map.GoldYaw;
+            _green = map.Green;
+            _greenYaw = map.GreenYaw;
+            _spectator = map.HasSpectator ? map.Spectator : (Vector3?)null;
+            Say($"Editando \"{map.Name}\": retome o ponto que quiser e clique Salvar.");
+        }
+
+        private string Draft()
+        {
+            string Point(Vector3? p, float yaw) => p == null ? "<color=#ee6b57>falta</color>" : ArenaConfig.Describe(p.Value, yaw);
+            return $"Ouro {Point(_gold, _goldYaw)} · Verde {Point(_green, _greenYaw)} · Espectador " +
+                   (_spectator == null ? "<color=#9a9188>nenhum</color>"
+                       : string.Format(CultureInfo.InvariantCulture, "{0:0.##},{1:0.##},{2:0.##}", _spectator.Value.x, _spectator.Value.y, _spectator.Value.z));
         }
 
         /// <summary>Centres the named area on where the admin stands; the server takes the
@@ -873,7 +1023,21 @@ namespace NpcValheim.UI
                     Say($"Copiado: {here}");
                 });
             }
-            Line("Formato de Maps: Nome;ouro x,y,z,giro;verde x,y,z,giro[;espectador x,y,z]|...", 13, ValheimUi.Muted, 22f);
+            Gap();
+
+            Heading("Montar arena");
+            Line("Escreva o nome, fique no início de cada time (olhando para onde ele deve olhar) e clique Ouro aqui / " +
+                 "Verde aqui; Espectador (opcional) é onde fica quem foi derrotado. Salvar com o mesmo nome muda a arena. " +
+                 "Os dois inícios precisam estar dentro de uma área (abaixo).", 13, ValheimUi.Muted, 40f);
+            LiveLine(Draft, 14, ValheimUi.Beige);
+            var draftRow = ButtonRow();
+            Btn(draftRow, "Sem espectador", 150f, () => { _spectator = null; Say("Espectador retirado do rascunho."); });
+            Btn(draftRow, "Limpar", 100f, () =>
+            {
+                _gold = _green = _spectator = null;
+                _mapName.text = "";
+                Say("Rascunho limpo.");
+            });
             Gap();
 
             var maps = ArenaConfig.Current.Maps;
@@ -909,9 +1073,27 @@ namespace NpcValheim.UI
             Heading("Arenas configuradas");
             if (maps.Count == 0) Line("Nenhuma. Sem arena, ninguém entra na fila.", 15, ValheimUi.Danger);
             foreach (var map in maps)
-                Line($"{map.Name}: Ouro {ArenaConfig.Describe(map.Gold, map.GoldYaw)} · Verde {ArenaConfig.Describe(map.Green, map.GreenYaw)}" +
-                     (map.HasSpectator ? " · espectador" : "") +
-                     (map.Area != null ? $" · área {map.Area.Name}" : ""), 14, ValheimUi.Beige);
+            {
+                var m = map;
+                var row = ButtonRow();
+                Cell(row, $"{m.Name}: Ouro {ArenaConfig.Describe(m.Gold, m.GoldYaw)} · Verde {ArenaConfig.Describe(m.Green, m.GreenYaw)}" +
+                          (m.HasSpectator ? " · espectador" : "") +
+                          (m.Area != null ? $" · área {m.Area.Name}" : ""), 14);
+                Btn(row, "Editar", 80f, () => EditMap(m));
+                Btn(row, "Remover", 90f, () => Ask(ArenaWire.ActAdminMapRemove, m.Name));
+            }
+            // A map the server refuses (outside every area, say) is not in the list above, but
+            // it is still in the cfg; name it so it can be removed from here too.
+            var refused = ArenaSettingsParser.ParseMaps(ArenaConfig.Maps?.Value, null)
+                .Where(m => maps.All(ok => !string.Equals(ok.Name, m.Name, StringComparison.OrdinalIgnoreCase))).ToList();
+            foreach (var map in refused)
+            {
+                var m = map;
+                var row = ButtonRow();
+                Cell(row, $"{m.Name}: <color=#ee6b57>recusada pelo servidor (veja abaixo)</color>", 14);
+                Btn(row, "Editar", 80f, () => EditMap(m));
+                Btn(row, "Remover", 90f, () => Ask(ArenaWire.ActAdminMapRemove, m.Name));
+            }
             var problems = ArenaConfig.Problems();
             foreach (var problem in problems) Line(problem, 13, ValheimUi.Danger, 22f);
             Gap();

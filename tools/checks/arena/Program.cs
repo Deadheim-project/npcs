@@ -249,6 +249,43 @@ class Program
         Check("free, malformed and repeated offers are refused", problems.Count == 3, string.Join(" / ", problems));
         Check("the default vendor list parses whole", ArenaSettingsParser.ParseOffers(ArenaSettingsParser.DefaultOffers, null).Count == 10);
 
+        // What the admin pages write must read back as what they meant, and touch nothing else.
+        const string cfgMaps = "Anel;100,30,100,90;140,30,100,270;120,40,100|quebrada;1,2|Poço;0,0,0,0;10,0,0,180";
+        var poco = new ArenaMapDef { Name = "poço", Gold = new Vector3(5.5f, 1, 2), GoldYaw = 45, Green = new Vector3(20, 1, 2), GreenYaw = 225 };
+        string mapsAfter = ArenaSettingsParser.SetMap(cfgMaps, poco);
+        var reread = ArenaSettingsParser.ParseMaps(mapsAfter, null);
+        Check("saving an arena replaces the one of the same name in place",
+            mapsAfter.Split('|').Length == 3 && reread.Count == 2 && reread[1].Name == "poço" && Math.Abs(reread[1].Gold.x - 5.5f) < 0.01f && !reread[1].HasSpectator,
+            mapsAfter);
+        Check("an entry the mod cannot read is left as written", mapsAfter.Contains("|quebrada;1,2|"), mapsAfter);
+        poco.Name = "Nova|;x";
+        poco.HasSpectator = true;
+        poco.Spectator = new Vector3(1, 2, 3);
+        mapsAfter = ArenaSettingsParser.SetMap(cfgMaps, poco);
+        reread = ArenaSettingsParser.ParseMaps(mapsAfter, null);
+        Check("a new arena is appended, separators out of its name, spectator kept",
+            reread.Count == 3 && reread[2].Name == "Novax" && reread[2].HasSpectator && Math.Abs(reread[2].Spectator.z - 3f) < 0.01f, mapsAfter);
+        mapsAfter = ArenaSettingsParser.RemoveMap(cfgMaps, "ANEL", out bool mapRemoved);
+        Check("removing an arena ignores case and keeps the rest", mapRemoved && mapsAfter == "quebrada;1,2|Poço;0,0,0,0;10,0,0,180", mapsAfter);
+        ArenaSettingsParser.RemoveMap(cfgMaps, "Nenhuma", out mapRemoved);
+        Check("removing an arena that is not there says so", !mapRemoved);
+
+        var kit = new ArenaOffer { Prefab = "ArmorKit1", Amount = 2, Points = 150, Rating = 1300, Bracket = 3 };
+        string offersAfter = ArenaSettingsParser.SetOffer(ArenaSettingsParser.DefaultOffers, kit);
+        var reoffers = ArenaSettingsParser.ParseOffers(offersAfter, null);
+        var kitBack = reoffers.FirstOrDefault(o => o.Prefab == "ArmorKit1");
+        Check("saving a vendor item replaces it in place",
+            reoffers.Count == 10 && reoffers[1].Prefab == "ArmorKit1" && kitBack.Amount == 2 && kitBack.Points == 150 && kitBack.Rating == 1300 && kitBack.Bracket == 3,
+            offersAfter);
+        offersAfter = ArenaSettingsParser.SetOffer(ArenaSettingsParser.DefaultOffers, new ArenaOffer { Prefab = "Wood", Amount = 50, Points = 10 });
+        Check("a new vendor item is appended without a bracket", offersAfter.EndsWith("|prefab=Wood;amount=50;points=10;rating=0") &&
+            ArenaSettingsParser.ParseOffers(offersAfter, null).Count == 11, offersAfter);
+        offersAfter = ArenaSettingsParser.RemoveOffer(ArenaSettingsParser.DefaultOffers, "WeaponKit1", out bool offerRemoved);
+        Check("removing a vendor item", offerRemoved && ArenaSettingsParser.ParseOffers(offersAfter, null).All(o => o.Prefab != "WeaponKit1") &&
+            ArenaSettingsParser.ParseOffers(offersAfter, null).Count == 9);
+        ArenaSettingsParser.RemoveOffer(ArenaSettingsParser.DefaultOffers, "weaponkit1", out offerRemoved);
+        Check("vendor prefabs compare exactly, as purchases look them up", !offerRemoved);
+
         Check("brackets parse, sort and dedupe", string.Join(",", ArenaSettingsParser.ParseBrackets("5, 2,3,2", null)) == "2,3,5");
         problems.Clear();
         Check("a bracket of 11 is refused", ArenaSettingsParser.ParseBrackets("2,11", problems).Count == 1 && problems.Count == 1);

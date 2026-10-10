@@ -53,6 +53,10 @@ namespace NpcValheim.Arena
         internal const string ActAdminGrant = "admin.grant";
         internal const string ActAdminZoneSet = "admin.zone.set";
         internal const string ActAdminZoneRemove = "admin.zone.del";
+        internal const string ActAdminMapSet = "admin.map.set";
+        internal const string ActAdminMapRemove = "admin.map.del";
+        internal const string ActAdminOfferSet = "admin.offer.set";
+        internal const string ActAdminOfferRemove = "admin.offer.del";
 
         internal static string Clean(string text) =>
             string.IsNullOrEmpty(text) ? "" : text.Replace('\t', ' ').Replace('\n', ' ').Replace('\r', ' ');

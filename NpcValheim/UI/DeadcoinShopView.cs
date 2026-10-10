@@ -201,4 +201,96 @@ namespace NpcValheim.UI
             Say("O pedido não chegou ao servidor.");
         }
     }
+
+    /// <summary>
+    /// Admin page of the Deadcoins counter: what it sells, at what bundle and price. It edits
+    /// the server's DeadcoinShop.Items -- the cfg is saved and every client gets the new list
+    /// by ServerSync -- so the counter, the VIP F7 counter and the cfg never disagree.
+    /// </summary>
+    internal sealed class DeadcoinShopAdminView : NpcViewBase
+    {
+        private OfferForm _form;
+        private RectTransform _list;
+        private string _signature;
+        private readonly List<GameObject> _rows = new List<GameObject>();
+
+        protected override void OnBuild()
+        {
+            _form = OfferForm.Build(Root, new[] { ("Qtd", "1", 80f), ("Preço", "100", 90f) }, Save);
+
+            var pane = ValheimUi.CreateInlay(Root, "Offers");
+            ValheimUi.Anchor(pane, Vector2.zero, Vector2.one, Vector2.zero, new Vector2(0f, -76f));
+            var area = ValheimUi.CreateRect("Area", pane);
+            ValheimUi.Stretch(area, 4f, 4f);
+            _list = ValheimUi.CreateScrollList(area, spacing: 4f);
+        }
+
+        private void Save()
+        {
+            if (!(Npc is DeadcoinShopNpc shop)) return;
+            string prefab = OfferForm.Resolve(_form.Item.text);
+            if (prefab == null) { Say("Escolha um item que o jogo conhece."); return; }
+            int? amount = _form.Number(0), price = _form.Number(1);
+            if (amount == null || amount <= 0 || price == null || price <= 0)
+            {
+                Say("Quantidade e preço precisam ser números maiores que zero.");
+                return;
+            }
+            shop.RequestSetOffer(prefab, amount.Value, price.Value);
+            Say($"Salvando {amount}x {ItemNames.Display(prefab)} por {price} Deadcoins...");
+        }
+
+        public override void Refresh()
+        {
+            string raw = Plugin.DeadcoinShopItems.Value ?? "";
+            if (raw == _signature) return;
+            _signature = raw;
+            Rebuild(raw);
+        }
+
+        private void Rebuild(string raw)
+        {
+            foreach (var row in _rows) if (row != null) Object.Destroy(row);
+            _rows.Clear();
+
+            var problems = new List<string>();
+            // Parse, not Available: an entry the game cannot deliver is listed too (in red), so
+            // it can be fixed or removed here instead of only in the file.
+            var offers = DeadcoinCatalog.Parse(raw, problems);
+            Add(Row(_list, 26f), $"À venda ({offers.Count}) · Editar põe o item no formulário acima; Salvar com o mesmo item muda o preço.",
+                13, ValheimUi.Muted);
+            foreach (var offer in offers)
+            {
+                var o = offer;
+                var row = Row(_list, 44f);
+                _rows.Add(row.gameObject);
+                ValheimUi.CreateItemIcon(row, o.Prefab, 34f);
+                int max = ItemSpawner.MaxDeliverableAmount(o.Prefab);
+                string fault = max <= 0 ? "  <color=#ee6b57>não é item do jogo: fora da loja</color>"
+                    : o.Amount > max ? $"  <color=#ee6b57>mais que uma entrega ({max}): fora da loja</color>" : "";
+                var label = ValheimUi.CreateLabel(row,
+                    $"{o.Amount}x {ItemNames.Display(o.Prefab)}  <size=12><color=#9a9188>{o.Prefab}</color></size>\n" +
+                    $"<size=12><color=#9a9188>{o.Price} Deadcoins</color>{fault}</size>",
+                    15, ValheimUi.Beige, TextAlignmentOptions.Left);
+                Flexible(label.gameObject);
+                var edit = ValheimUi.CreateButton(row, "Editar", 90f, 34f, 14);
+                edit.onClick.AddListener(() => _form.Load(o.Prefab, o.Amount, o.Price));
+                var remove = ValheimUi.CreateButton(row, "Remover", 100f, 34f, 14);
+                remove.onClick.AddListener(() =>
+                {
+                    if (!(Npc is DeadcoinShopNpc shop)) return;
+                    shop.RequestRemoveOffer(o.Prefab);
+                    Say($"Retirando {ItemNames.Display(o.Prefab)}...");
+                });
+            }
+            if (offers.Count == 0) Add(Row(_list, 26f), "A loja não vende nada.", 15, ValheimUi.Muted);
+            foreach (var problem in problems) Add(Row(_list, 22f), "cfg: " + problem, 13, ValheimUi.Danger);
+        }
+
+        private void Add(RectTransform row, string text, int size, Color color)
+        {
+            _rows.Add(row.gameObject);
+            Flexible(ValheimUi.CreateLabel(row, text, size, color, TextAlignmentOptions.Left).gameObject);
+        }
+    }
 }

@@ -112,7 +112,7 @@ namespace NpcValheim.Arena
                 "onde fica quem foi derrotado. Os inicios precisam estar dentro de uma area de arena (ArenaZones do " +
                 "Deadheim: PvP sempre, sem perda de skill), que se marca na aba Admin do Mestre da Arena; quem sai da " +
                 "area durante a partida fugiu. Uma partida por arena de cada vez. " +
-                "Use o botao 'Copiar posicao' na mesma aba para pegar as coordenadas.");
+                "Tambem se monta no jogo, na aba Arena (admin) do Mestre da Arena (Ouro aqui / Verde aqui / Salvar).");
             PreparationSeconds = S(config, match, "PreparationSeconds", 60f,
                 "Preparacao antes dos portoes abrirem, contando da entrada do primeiro jogador.");
             TimeLimitMinutes = S(config, match, "TimeLimitMinutes", 47f,
@@ -138,7 +138,7 @@ namespace NpcValheim.Arena
             VendorItems = S(config, vendor, "Items", ArenaSettingsParser.DefaultOffers,
                 "O que o Intendente da Arena vende: prefab=<item>;amount=<qtd>;points=<pontos>;rating=<minimo>;bracket=<tamanho>, " +
                 "separados por |. rating = o menor entre pessoal e do time, num time do tamanho 'bracket' ou maior " +
-                "(0 = sem requisito). O item vai pelo correio.");
+                "(0 = sem requisito). O item vai pelo correio. Tambem se edita no jogo, na aba Recompensas do Intendente.");
         }
 
         private static ConfigEntry<T> S<T>(ConfigFile config, string section, string key, T value, string description)

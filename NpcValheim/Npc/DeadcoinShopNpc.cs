@@ -31,9 +31,40 @@ namespace NpcValheim.Npc
             InvokeAuthoritativeRpc("RPC_GrantDeadcoins", (playerName ?? "").Trim(), amount);
         }
 
+        /// <summary>Admin only: puts an item on the counter, or changes its bundle and price.</summary>
+        internal void RequestSetOffer(string prefab, int amount, int price)
+        {
+            if (Nview == null || !Nview.IsValid() || !CanLocalPlayerAdminister()) return;
+            InvokeAuthoritativeRpc("RPC_SetDeadcoinOffer", (prefab ?? "").Trim(), amount, price);
+        }
+
+        /// <summary>Admin only: takes an item off the counter.</summary>
+        internal void RequestRemoveOffer(string prefab)
+        {
+            if (Nview == null || !Nview.IsValid() || !CanLocalPlayerAdminister()) return;
+            InvokeAuthoritativeRpc("RPC_RemoveDeadcoinOffer", prefab ?? "");
+        }
+
         internal override bool DispatchAdminMutation(long sender, string method, object[] arguments)
         {
             arguments = arguments ?? System.Array.Empty<object>();
+            if (method == "RPC_SetDeadcoinOffer" && arguments.Length == 3 &&
+                arguments[0] is string setPrefab && arguments[1] is int setAmount && arguments[2] is int setPrice)
+            {
+                if (!CanAdminister(sender))
+                    ServiceNpcAuthority.SendStatus(sender, "O servidor não reconhece você como admin.");
+                else
+                    DeadcoinShop.ServeSetOffer(sender, setPrefab, setAmount, setPrice, $"'{GetHoverName()}'");
+                return true;
+            }
+            if (method == "RPC_RemoveDeadcoinOffer" && arguments.Length == 1 && arguments[0] is string removePrefab)
+            {
+                if (!CanAdminister(sender))
+                    ServiceNpcAuthority.SendStatus(sender, "O servidor não reconhece você como admin.");
+                else
+                    DeadcoinShop.ServeRemoveOffer(sender, removePrefab, $"'{GetHoverName()}'");
+                return true;
+            }
             if (method == "RPC_GrantDeadcoins" && arguments.Length == 2 &&
                 arguments[0] is string target && arguments[1] is int amount)
             {
