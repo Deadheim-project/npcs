@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using BepInEx;
+using HarmonyLib;
 using UnityEngine;
 
 namespace NpcValheim.Npc
@@ -207,7 +208,7 @@ namespace NpcValheim.Npc
 
             // Host/solo: the buyer is this process, which has no peer to ask.
             if (string.IsNullOrEmpty(host) && ServiceNpcAuthority.IsAuthoritativeSender(sender))
-                host = PlayFabManager.m_customId.ToString();
+                host = LocalCustomId();
 
             string account = CanonicalAccountId(host);
             who = $"{name} ({(account.Length > 0 ? account : "no account")})";
@@ -217,6 +218,16 @@ namespace NpcValheim.Npc
             if (file == null) return false;
             path = Path.Combine(Folder, file);
             return true;
+        }
+
+        /// <summary>PlayFabManager.m_customId by reflection. Read directly, the field (private in
+        /// the real assembly) made the Mono of the dedicated server refuse to JIT the whole
+        /// TryResolveAccount -- FieldAccessException on every Deadcoins request, not only on a
+        /// host -- even though that line only runs for the host.</summary>
+        private static string LocalCustomId()
+        {
+            var field = AccessTools.Field(AccessTools.TypeByName("PlayFabManager"), "m_customId");
+            return field?.GetValue(null)?.ToString() ?? "";
         }
 
         /// <summary>
