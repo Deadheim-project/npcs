@@ -149,16 +149,19 @@ namespace NpcValheim.Integration
                     return;
                 }
 
-                _resolved = true;
                 var api = assembly.GetType(TypeName);
                 var version = api?.GetField("Version", BindingFlags.Public | BindingFlags.Static)?.GetValue(null);
                 if (!(version is int v) || v != KnownVersion)
                 {
                     Plugin.Log.LogWarning($"NpcValheim: Montarias API version {version ?? "missing"} is not {KnownVersion}; skipping integration");
+                    _api = null;
+                    _resolved = false;
                     return;
                 }
 
                 _api = api;
+                _resolved = true;
+                _loggedMissing = false;
                 Plugin.Log.LogInfo($"NpcValheim: Montarias integration ready (API v{v})");
             }
             catch (Exception e)
