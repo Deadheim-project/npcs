@@ -54,7 +54,7 @@ namespace NpcValheim.UI
         /// skip the guards the key path applies.</summary>
         internal static void Toggle()
         {
-            if (_instance == null || Player.m_localPlayer == null) return;
+            if (_instance == null || Player.m_localPlayer == null || UiInputBlocker.IsTyping) return;
             if (_instance._open) _instance.Close(); else _instance.Open();
         }
 
@@ -121,7 +121,7 @@ namespace NpcValheim.UI
             }
 
             // Never while another panel owns the input, or the key would type into a field.
-            if (!UiInputBlocker.IsOpen && Input.GetKeyDown(Plugin.QuestJournalKey.Value))
+            if (!UiInputBlocker.IsOpen && !UiInputBlocker.IsTyping && Input.GetKeyDown(Plugin.QuestJournalKey.Value))
             {
                 if (_open) Close(); else Open();
             }

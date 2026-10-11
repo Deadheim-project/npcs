@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
 using NpcValheim.Persistence;
+using NpcValheim.UI;
 using ItemType = ItemDrop.ItemData.ItemType;
 
 namespace NpcValheim.Npc
@@ -307,6 +308,7 @@ namespace NpcValheim.Npc
         {
             if (hold) return false; // only act on the initial press, not on key repeat
             if (!(user is Player)) return false;
+            if (UiInputBlocker.IsTyping) return false;
             if (Nview == null || !Nview.IsValid()) return false;
 
             PanelOpenRequested = true;

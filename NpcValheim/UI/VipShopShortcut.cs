@@ -40,7 +40,7 @@ namespace NpcValheim.UI
                 return;
             }
 
-            if (UiInputBlocker.IsOpen || !VipList.VipListApi.IsLocalPlayerVip()) return;
+            if (UiInputBlocker.IsOpen || UiInputBlocker.IsTyping || !VipList.VipListApi.IsLocalPlayerVip()) return;
 
             UiRoot.OpenStandalone("Loja Deadcoins", "Deadcoins", new DeadcoinShopView(), Player.m_localPlayer);
         }

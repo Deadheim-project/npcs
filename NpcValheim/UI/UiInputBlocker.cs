@@ -1,4 +1,7 @@
+﻿using TMPro;
 using UnityEngine;
+using UnityEngine.EventSystems;
+using UnityEngine.UI;
 
 namespace NpcValheim.UI
 {
@@ -17,6 +20,27 @@ namespace NpcValheim.UI
     internal static class UiInputBlocker
     {
         public static bool IsOpen => UiRoot.IsOpen || QuestJournal.IsOpen;
+
+        public static bool IsTyping
+        {
+            get
+            {
+                if ((Chat.instance != null && Chat.instance.HasFocus()) || Console.IsVisible() ||
+                    (TextInput.instance != null && TextInput.IsVisible()))
+                    return true;
+
+                GameObject selected = EventSystem.current != null
+                    ? EventSystem.current.currentSelectedGameObject
+                    : null;
+                if (!selected) return false;
+
+                InputField input = selected.GetComponentInParent<InputField>();
+                if (input && input.isFocused) return true;
+
+                TMP_InputField tmpInput = selected.GetComponentInParent<TMP_InputField>();
+                return tmpInput && tmpInput.isFocused;
+            }
+        }
 
         /// <summary>Frees the cursor for a panel. Call from LateUpdate so it is the last word
         /// for the frame. Goes through ZCursor, the game's own wrapper, so its idea of whether

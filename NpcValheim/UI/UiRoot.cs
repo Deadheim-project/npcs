@@ -73,6 +73,8 @@ namespace NpcValheim.UI
 
         private void Show(NpcBase npc, Player player, bool standalone, System.Func<NpcWindow> build)
         {
+            if (UiInputBlocker.IsTyping) return;
+
             // Assets live in the game's UI scene; if they are not up yet there is nothing to
             // build a Valheim-looking window out of, and a half-styled one is worse than
             // waiting a frame.
