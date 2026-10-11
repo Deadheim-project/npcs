@@ -105,6 +105,10 @@ class Program
         (System.Collections.IList)MountCatalogType.GetMethod("Parse", BindingFlags.NonPublic | BindingFlags.Static)
                                                   .Invoke(null, new object[] { raw, problems });
 
+    static string ResolveMountId(string id, params string[] mounts) =>
+        (string)MountCatalogType.GetMethod("ResolveMountId", BindingFlags.NonPublic | BindingFlags.Static)
+                                .Invoke(null, new object[] { id, new HashSet<string>(mounts, StringComparer.Ordinal) });
+
     static string OfferField(object offer, string name) => offer.GetType().GetField(name).GetValue(offer)?.ToString();
 
     static string CanonicalAccountId(string hostName) =>
@@ -479,8 +483,14 @@ class Program
               shipped.Count == 4 &&
               OfferField(shipped[0], "Kind") == "Skill" && OfferField(shipped[0], "Rank") == "1" &&
               OfferField(shipped[0], "Currency") == "Coins" &&
-              OfferField(shipped[3], "Kind") == "Mount" && OfferField(shipped[3], "Id") == "javali" &&
+              OfferField(shipped[3], "Kind") == "Mount" && OfferField(shipped[3], "Id") == "capivara" &&
               OfferField(shipped[3], "Currency") == "Deadcoins");
+        Check("the previous javali setting resolves to the current capivara id",
+              ResolveMountId("javali", "capivara", "neck") == "capivara");
+        Check("current mount ids remain unchanged",
+              ResolveMountId("neck", "capivara", "neck") == "neck");
+        Check("unknown mount ids remain unavailable",
+              ResolveMountId("javali", "neck") == null && ResolveMountId("unknown", "capivara") == null);
 
         Check("a free level is refused", ParseMountOffers("skill=1;price=0", null).Count == 0);
         Check("a negative price is refused", ParseMountOffers("mount=javali;price=-5;currency=deadcoins", null).Count == 0);

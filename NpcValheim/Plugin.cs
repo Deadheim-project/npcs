@@ -20,7 +20,7 @@ namespace NpcValheim
     {
         public const string Guid = "com.npcvalheim.mod";
         public const string Name = "NpcValheim";
-        public const string Version = "0.1.64";
+        public const string Version = "0.1.65";
 
         internal static ManualLogSource Log;
         private Harmony _harmony;
@@ -241,4 +241,3 @@ namespace NpcValheim
         }
     }
 }
-

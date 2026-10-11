@@ -570,11 +570,12 @@ montaria. O que é cada nível (nome, bônus de velocidade) e cada montaria (nom
 nível exigido) vem do mod **Montarias**; aqui fica só o que está à venda e por quanto.
 
 - **Lista:** `[MountTrainer] Offers` no cfg do NpcValheim, por exemplo
-  `skill=1;price=500;currency=coins|mount=javali;price=300;currency=deadcoins`.
+  `skill=1;price=500;currency=coins|mount=capivara;price=300;currency=deadcoins`.
   `skill=N` é o nível N da habilidade e `mount=<id>` é uma montaria do Montarias. A moeda é
   escolhida **por item** (`coins` ou `deadcoins`), porque depende do que se vende. Entrada
   com preço não positivo, moeda desconhecida, nível que não existe ou montaria que o
-  Montarias não conhece é ignorada e aparece no log.
+  Montarias não conhece é ignorada e aparece no log. O ID antigo `javali` continua sendo
+  aceito e convertido para `capivara` nas configurações existentes.
 - **Ordem do WoW:** um nível só pode ser aprendido em cima do anterior.
 - **Quem guarda o quê:** o que o jogador sabe e possui é o registro do Montarias **no
   servidor** (`BepInEx/config/ValheimMontarias/cavaleiros/<personagem>-<conta>.txt`).

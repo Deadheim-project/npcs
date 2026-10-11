@@ -41,7 +41,7 @@ namespace NpcValheim.Npc
     {
         internal const string DefaultOffers =
             "skill=1;price=500;currency=coins|skill=2;price=2500;currency=coins|" +
-            "skill=3;price=500;currency=deadcoins|mount=javali;price=300;currency=deadcoins";
+            "skill=3;price=500;currency=deadcoins|mount=capivara;price=300;currency=deadcoins";
 
         /// <summary>Every well-formed entry, in the order written. A non-positive price is
         /// refused, not clamped: it would hand the thing out for free.</summary>
@@ -135,6 +135,7 @@ namespace NpcValheim.Npc
 
             int ranks = MontariasApi.RankCount();
             var mounts = new HashSet<string>(MontariasApi.MountIds(), StringComparer.Ordinal);
+            var seen = new HashSet<string>(StringComparer.Ordinal);
             foreach (var offer in Parse(raw, problems))
             {
                 if (offer.Kind == MountOfferKind.Skill && offer.Rank > ranks)
@@ -142,14 +143,35 @@ namespace NpcValheim.Npc
                     problems?.Add($"skill {offer.Rank}: Montarias has {ranks} level(s)");
                     continue;
                 }
-                if (offer.Kind == MountOfferKind.Mount && !mounts.Contains(offer.Id))
+                if (offer.Kind == MountOfferKind.Mount)
                 {
-                    problems?.Add($"mount '{offer.Id}' is not a Montarias mount");
+                    string currentId = ResolveMountId(offer.Id, mounts);
+                    if (currentId == null)
+                    {
+                        problems?.Add($"mount '{offer.Id}' is not a Montarias mount");
+                        continue;
+                    }
+                    if (!string.Equals(currentId, offer.Id, StringComparison.Ordinal))
+                        problems?.Add($"mount id '{offer.Id}' is outdated; using '{currentId}'");
+                    offer.Id = currentId;
+                }
+
+                if (!seen.Add(offer.Kind + ":" + offer.Id))
+                {
+                    problems?.Add($"{offer.Kind} {offer.Id} is listed more than once after resolving mount ids; the first entry wins");
                     continue;
                 }
                 result.Add(offer);
             }
             return result;
+        }
+
+        private static string ResolveMountId(string id, HashSet<string> mounts)
+        {
+            if (mounts.Contains(id)) return id;
+            if (string.Equals(id, "javali", StringComparison.Ordinal) && mounts.Contains("capivara"))
+                return "capivara";
+            return null;
         }
 
         private static string _reported;
