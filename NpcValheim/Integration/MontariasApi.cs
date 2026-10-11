@@ -54,6 +54,10 @@ namespace NpcValheim.Integration
 
         public static float RankSpeed(int rank) => CallValue("RankSpeed", 1f, rank);
 
+        /// <summary>What the level multiplies every cast time by (1 = no change). Montarias
+        /// before 0.3.14 has no such method and every level reads as 1.</summary>
+        public static float RankCast(int rank) => CallValue("RankCast", 1f, rank);
+
         // ---- local player ----
 
         public static bool LocalKnown() => CallValue("LocalKnown", false);

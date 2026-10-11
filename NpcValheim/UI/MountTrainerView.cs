@@ -135,7 +135,7 @@ namespace NpcValheim.UI
                 else MountIcon(row, offer.Id, 40f);
 
                 string detail = offer.Kind == MountOfferKind.Skill
-                    ? $"velocidade das montarias {MontariasApi.RankSpeed(offer.Rank) * 100f:0}%"
+                    ? $"velocidade das montarias {MontariasApi.RankSpeed(offer.Rank) * 100f:0}%{CastText(MontariasApi.RankCast(offer.Rank))}"
                     : $"exige {MontariasApi.RankName(MontariasApi.MountRequiredRank(offer.Id))}";
                 var label = ValheimUi.CreateLabel(row,
                     $"{offer.Title}\n<size=12><color=#9a9188>{detail} · {offer.Price} {offer.CurrencyName}</color></size>",
@@ -154,6 +154,10 @@ namespace NpcValheim.UI
                 buy.onClick.AddListener(() => Buy(trainer, offer));
             }
         }
+
+        /// <summary>", conjuração -25%" for a level that shortens the summon cast, nothing otherwise.</summary>
+        private static string CastText(float cast) =>
+            cast < 0.999f ? $", conjuração -{(1f - cast) * 100f:0}%" : "";
 
         /// <summary>Why a row has no button, or null when it can be bought.</summary>
         private static string StateOf(MountOffer offer, bool known, int rank)
