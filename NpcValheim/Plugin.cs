@@ -20,7 +20,7 @@ namespace NpcValheim
     {
         public const string Guid = "com.npcvalheim.mod";
         public const string Name = "NpcValheim";
-        public const string Version = "0.1.67";
+        public const string Version = "0.1.68";
 
         internal static ManualLogSource Log;
         private Harmony _harmony;
@@ -162,6 +162,8 @@ namespace NpcValheim
                 "Deadcoins are charged from the server's ledger. Coins live in the buyer's inventory, which the server cannot see: " +
                 "the buyer's client pays after the server grants, as at the merchant, so a modified client can skip paying. " +
                 "Sell what must not be had for free for Deadcoins. Entries Montarias does not know are skipped and named in the log.");
+            if (System.Array.IndexOf(Npc.MountCatalog.OldDefaultOffers, MountTrainerOffers.Value) >= 0)
+                MountTrainerOffers.Value = Npc.MountCatalog.DefaultOffers;
 
             // Server-authoritative entries. The Quests/VIP keys and HUD positions are left out
             // on purpose: they are each player's own preferences.

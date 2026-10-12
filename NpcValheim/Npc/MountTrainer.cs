@@ -41,7 +41,21 @@ namespace NpcValheim.Npc
     {
         internal const string DefaultOffers =
             "skill=1;price=500;currency=coins|skill=2;price=2500;currency=coins|" +
-            "skill=3;price=500;currency=deadcoins|mount=capivara;price=300;currency=deadcoins";
+            "skill=3;price=500;currency=deadcoins|mount=capivara;price=300;currency=deadcoins|" +
+            "mount=neck;price=300;currency=deadcoins|mount=deer;price=300;currency=deadcoins|" +
+            "mount=boar;price=300;currency=deadcoins|mount=eikthyr;price=300;currency=deadcoins";
+
+        /// <summary>Defaults this mod shipped before; a config still holding one of them was
+        /// never edited and is moved to <see cref="DefaultOffers"/>. Until 0.1.67 only the
+        /// capybara was for sale, so the Neck, Deer, Boar and Eikthyr of Montarias 0.3.x never
+        /// reached the counter.</summary>
+        internal static readonly string[] OldDefaultOffers =
+        {
+            "skill=1;price=500;currency=coins|skill=2;price=2500;currency=coins|" +
+            "skill=3;price=500;currency=deadcoins|mount=javali;price=300;currency=deadcoins",
+            "skill=1;price=500;currency=coins|skill=2;price=2500;currency=coins|" +
+            "skill=3;price=500;currency=deadcoins|mount=capivara;price=300;currency=deadcoins",
+        };
 
         /// <summary>Every well-formed entry, in the order written. A non-positive price is
         /// refused, not clamped: it would hand the thing out for free.</summary>

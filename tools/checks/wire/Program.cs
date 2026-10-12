@@ -477,10 +477,10 @@ class Program
 
         var mountProblems = new List<string>();
         var shipped = ParseMountOffers(DefaultMountOffers, mountProblems);
-        Check("the default offers are whole", shipped.Count == 4 && mountProblems.Count == 0,
+        Check("the default offers are whole", shipped.Count == 8 && mountProblems.Count == 0,
               shipped.Count + " / " + string.Join(" / ", mountProblems));
         Check("the default sells the first level for Coins and the capybara for Deadcoins",
-              shipped.Count == 4 &&
+              shipped.Count == 8 &&
               OfferField(shipped[0], "Kind") == "Skill" && OfferField(shipped[0], "Rank") == "1" &&
               OfferField(shipped[0], "Currency") == "Coins" &&
               OfferField(shipped[3], "Kind") == "Mount" && OfferField(shipped[3], "Id") == "capivara" &&
