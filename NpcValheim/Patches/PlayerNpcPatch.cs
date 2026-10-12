@@ -120,17 +120,58 @@ namespace NpcValheim.Patches
 
     /// <summary>Service NPCs are world fixtures, not combatants. Until their visual root no
     /// longer derives from Player, stop vanilla damage/death from deleting a configured NPC
-    /// without running the authorized removal and snapshot cleanup flow.</summary>
+    /// without running the authorized removal and snapshot cleanup flow.
+    ///
+    /// Blocking Damage alone did not stop skill farming: Attack, Projectile and Aoe call
+    /// RaiseSkill on the attacker right after target.Damage(hit), whatever the target did
+    /// with the hit. So a hit on an NPC also remembers the attacker for the current frame,
+    /// and that attacker's RaiseSkill is dropped while the frame lasts. A single swing that
+    /// hits an NPC and a monster at once loses that one raise -- acceptable next to an
+    /// endless training dummy.</summary>
     [HarmonyPatch(typeof(Character))]
     internal static class ServiceNpcDamagePatch
     {
+        private static Character _npcHitAttacker;
+        private static int _npcHitFrame = -1;
+
         [HarmonyPatch(nameof(Character.Damage)), HarmonyPrefix]
-        private static bool Damage(Character __instance) => !IsServiceNpc(__instance);
+        private static bool Damage(Character __instance, HitData hit)
+        {
+            if (!IsServiceNpc(__instance)) return true;
+
+            var attacker = hit?.GetAttacker();
+            if (attacker != null)
+            {
+                _npcHitAttacker = attacker;
+                _npcHitFrame = UnityEngine.Time.frameCount;
+            }
+            return false;
+        }
+
+        // Second layer for hits that reach the NPC without the local Damage entry point:
+        // a routed RPC from another client, or status-effect ticks (burning, poison...).
+        [HarmonyPatch(nameof(Character.RPC_Damage)), HarmonyPrefix]
+        private static bool RpcDamage(Character __instance) => !IsServiceNpc(__instance);
+
+        [HarmonyPatch(nameof(Character.ApplyDamage)), HarmonyPrefix]
+        private static bool ApplyDamage(Character __instance) => !IsServiceNpc(__instance);
 
         [HarmonyPatch(nameof(Character.OnDeath)), HarmonyPrefix]
         private static bool OnDeath(Character __instance) => !IsServiceNpc(__instance);
 
+        internal static bool JustHitServiceNpc(Character attacker) =>
+            attacker != null && attacker == _npcHitAttacker &&
+            _npcHitFrame == UnityEngine.Time.frameCount;
+
         private static bool IsServiceNpc(Character character) =>
             character != null && character.GetComponent<NpcMarker>() != null;
+    }
+
+    [HarmonyPatch(typeof(Player))]
+    internal static class ServiceNpcSkillPatch
+    {
+        [HarmonyPatch(nameof(Player.RaiseSkill)), HarmonyPrefix]
+        private static bool RaiseSkill(Player __instance) =>
+            !ServiceNpcDamagePatch.JustHitServiceNpc(__instance);
     }
 }
