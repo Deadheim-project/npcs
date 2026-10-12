@@ -30,6 +30,7 @@ namespace NpcValheim.Npc
         public const string Scale = "npcv_scale";
         public const string AppearanceRevision = "npcv_appearance_rev";
         public const string ProfileId = "npcv_profile_id";
+        public const string BodyPrefab = "npcv_body_prefab";
     }
 
     /// <summary>
@@ -43,6 +44,7 @@ namespace NpcValheim.Npc
     {
         protected ZNetView Nview;
         protected VisEquipment VisEq;
+        private NpcBody _body;
         private float _appliedScale = -1f;
         private int _appliedAppearanceRevision = int.MinValue;
         private float _nextAppearanceSync;
@@ -92,6 +94,7 @@ namespace NpcValheim.Npc
             Nview.Register("RPC_SetHairColor", (Action<long, Vector3>)RPC_SetHairColor);
             Nview.Register("RPC_SetHandItem", (Action<long, string, string>)RPC_SetHandItem);
             Nview.Register("RPC_SetScale", (Action<long, float>)RPC_SetScale);
+            Nview.Register("RPC_SetBodyPrefab", (Action<long, string>)RPC_SetBodyPrefab);
             Nview.Register("RPC_SaveAsTemplate", (Action<long, string>)RPC_SaveAsTemplate);
             Nview.Register("RPC_ApplyTemplateByName", (Action<long, string>)RPC_ApplyTemplateByName);
             Nview.Register("RPC_RequestTemplateIndex", (Action<long>)RPC_RequestTemplateIndex);
@@ -282,7 +285,7 @@ namespace NpcValheim.Npc
 
         /// <summary>How high the floating name sits. Player-clone NPCs keep the default
         /// (about head height); a mailbox is furniture and wants it just above the box.</summary>
-        public virtual float NameplateHeight => 2.15f;
+        public virtual float NameplateHeight => _body != null && _body.HasBody ? _body.TopHeight : 2.15f;
 
         /// <summary>
         /// Where the game draws its own hover text, in metres above the object's origin.
@@ -452,6 +455,9 @@ namespace NpcValheim.Npc
                 case "RPC_SetScale" when arguments.Length == 1 && arguments[0] is float scale:
                     RPC_SetScale(sender, scale);
                     return true;
+                case "RPC_SetBodyPrefab" when arguments.Length == 1 && arguments[0] is string bodyPrefab:
+                    RPC_SetBodyPrefab(sender, bodyPrefab);
+                    return true;
                 case "RPC_RequestTemplateIndex" when arguments.Length == 0:
                     RPC_RequestTemplateIndex(sender);
                     return true;
@@ -558,7 +564,7 @@ namespace NpcValheim.Npc
 
         private void RPC_SetArmor(long sender, string slotName, string itemName)
         {
-            if (!CanAdminister(sender)) return;
+            if (!CanAdminister(sender) || !HasHumanBody) return;
             if (!Enum.TryParse(slotName, out ArmorSlot slot)) return;
             if (!IsValidArmorItem(slot, itemName)) return;
             ApplyArmorAuthoritative(slot, itemName);
@@ -605,6 +611,21 @@ namespace NpcValheim.Npc
             if (VisEq == null || Nview == null || !Nview.IsValid()) return;
             var zdo = Nview.GetZDO();
 
+            // A creature body wears nothing: every human piece is emptied, so VisEquipment has
+            // nothing to attach to the hidden human skeleton.
+            if (!NpcBody.IsHuman(zdo.GetString(ZdoKeys.BodyPrefab, "")))
+            {
+                foreach (ArmorSlot slot in Enum.GetValues(typeof(ArmorSlot)))
+                    ApplyArmorVisual(slot, "");
+                VisEq.SetHairItem(0);
+                VisEq.SetBeardItem(0);
+                VisEq.SetRightItem(0, VisualQuality);
+                VisEq.SetLeftItem(0, 0, VisualQuality);
+                ApplyScale(zdo.GetFloat(ZdoKeys.Scale, 1f));
+                ApplyBody(zdo);
+                return;
+            }
+
             foreach (ArmorSlot slot in Enum.GetValues(typeof(ArmorSlot)))
             {
                 var itemName = zdo.GetString(ZdoKeys.ArmorSlotKey(slot), "");
@@ -625,6 +646,61 @@ namespace NpcValheim.Npc
             VisEq.SetRightItem(VisualHash(zdo.GetString(ZdoKeys.RightHand, "")), VisualQuality);
             VisEq.SetLeftItem(VisualHash(zdo.GetString(ZdoKeys.LeftHand, "")), 0, VisualQuality);
             ApplyScale(zdo.GetFloat(ZdoKeys.Scale, 1f));
+            ApplyBody(zdo);
+        }
+
+        // ----- Body prefab (creature look) -----
+
+        /// <summary>Creature prefab this NPC looks like, or empty for the normal human body.</summary>
+        public string BodyPrefab =>
+            Nview != null && Nview.IsValid() ? Nview.GetZDO().GetString(ZdoKeys.BodyPrefab, "") : "";
+
+        /// <summary>Armour, hands, hair, beard, colours and body model only exist on the human
+        /// body. With a creature body they are hidden in the UI and refused by the server.</summary>
+        public bool HasHumanBody => NpcBody.IsHuman(BodyPrefab);
+
+        private void ApplyBody(ZDO zdo)
+        {
+            var prefab = zdo.GetString(ZdoKeys.BodyPrefab, "");
+            if (_body == null)
+            {
+                if (NpcBody.IsHuman(prefab)) return;
+                _body = GetComponent<NpcBody>() ?? gameObject.AddComponent<NpcBody>();
+            }
+            _body.Apply(prefab);
+        }
+
+        public void RequestSetBodyPrefab(Player requester, string prefabName)
+        {
+            if (Nview == null || !Nview.IsValid() || !CanLocalPlayerAdminister()) return;
+            InvokeAuthoritativeRpc("RPC_SetBodyPrefab", prefabName ?? "");
+        }
+
+        private void RPC_SetBodyPrefab(long sender, string prefabName)
+        {
+            if (!CanAdminister(sender)) return;
+            prefabName = NpcBody.IsHuman(prefabName) ? "" : prefabName.Trim();
+            if (!NpcBody.IsValidBodyPrefab(prefabName)) return;
+
+            var zdo = Nview.GetZDO();
+            SetBodyPrefab(zdo, prefabName);
+            PublishAppearance(zdo, "body");
+            PersistProfileSnapshot();
+        }
+
+        /// <summary>Leaving the human body drops its gear for good, so neither the ZDO nor the
+        /// YAML mirror keeps armour settings for a boar.</summary>
+        private static void SetBodyPrefab(ZDO zdo, string prefabName)
+        {
+            zdo.Set(ZdoKeys.BodyPrefab, prefabName ?? "");
+            if (NpcBody.IsHuman(prefabName)) return;
+
+            foreach (ArmorSlot slot in Enum.GetValues(typeof(ArmorSlot)))
+                zdo.Set(ZdoKeys.ArmorSlotKey(slot), "");
+            zdo.Set(ZdoKeys.Hair, "");
+            zdo.Set(ZdoKeys.Beard, "");
+            zdo.Set(ZdoKeys.RightHand, "");
+            zdo.Set(ZdoKeys.LeftHand, "");
         }
 
         // ----- Hair / beard / skin / gender customization -----
@@ -688,7 +764,7 @@ namespace NpcValheim.Npc
 
         private void RPC_SetHair(long sender, string prefabName)
         {
-            if (!CanAdminister(sender) || !IsValidVisualPrefab("Hair", prefabName)) return;
+            if (!CanAdminister(sender) || !HasHumanBody || !IsValidVisualPrefab("Hair", prefabName)) return;
             var zdo = Nview.GetZDO();
             zdo.Set(ZdoKeys.Hair, prefabName ?? "");
             PublishAppearance(zdo, "hair");
@@ -697,7 +773,7 @@ namespace NpcValheim.Npc
 
         private void RPC_SetBeard(long sender, string prefabName)
         {
-            if (!CanAdminister(sender) || !IsValidVisualPrefab("Beard", prefabName)) return;
+            if (!CanAdminister(sender) || !HasHumanBody || !IsValidVisualPrefab("Beard", prefabName)) return;
             var zdo = Nview.GetZDO();
             zdo.Set(ZdoKeys.Beard, prefabName ?? "");
             PublishAppearance(zdo, "beard");
@@ -706,7 +782,7 @@ namespace NpcValheim.Npc
 
         private void RPC_SetModel(long sender, int modelIndex)
         {
-            if (!CanAdminister(sender)) return;
+            if (!CanAdminister(sender) || !HasHumanBody) return;
             if (modelIndex < 0 || modelIndex >= GetModelCount()) return;
             var zdo = Nview.GetZDO();
             zdo.Set(ZdoKeys.Model, modelIndex);
@@ -716,7 +792,7 @@ namespace NpcValheim.Npc
 
         private void RPC_SetSkinPreset(long sender, int presetIndex)
         {
-            if (!CanAdminister(sender)) return;
+            if (!CanAdminister(sender) || !HasHumanBody) return;
             if (presetIndex < 0 || presetIndex >= NpcCustomizationPresets.SkinTones.Length) return;
             var color = NpcCustomizationPresets.SkinTones[presetIndex];
             var zdo = Nview.GetZDO();
@@ -729,7 +805,7 @@ namespace NpcValheim.Npc
 
         private void RPC_SetHairColorPreset(long sender, int presetIndex)
         {
-            if (!CanAdminister(sender)) return;
+            if (!CanAdminister(sender) || !HasHumanBody) return;
             if (presetIndex < 0 || presetIndex >= NpcCustomizationPresets.HairColors.Length) return;
             var color = NpcCustomizationPresets.HairColors[presetIndex];
             var zdo = Nview.GetZDO();
@@ -742,7 +818,7 @@ namespace NpcValheim.Npc
 
         private void RPC_SetSkinColor(long sender, Vector3 color)
         {
-            if (!CanAdminister(sender) || !TryNormalizeColor(color, out color)) return;
+            if (!CanAdminister(sender) || !HasHumanBody || !TryNormalizeColor(color, out color)) return;
             var zdo = Nview.GetZDO();
             zdo.Set(ZdoKeys.SkinColor, color);
             zdo.Set(ZdoKeys.SkinColorSet, true);
@@ -752,7 +828,7 @@ namespace NpcValheim.Npc
 
         private void RPC_SetHairColor(long sender, Vector3 color)
         {
-            if (!CanAdminister(sender) || !TryNormalizeColor(color, out color)) return;
+            if (!CanAdminister(sender) || !HasHumanBody || !TryNormalizeColor(color, out color)) return;
             var zdo = Nview.GetZDO();
             zdo.Set(ZdoKeys.HairColor, color);
             zdo.Set(ZdoKeys.HairColorSet, true);
@@ -762,7 +838,7 @@ namespace NpcValheim.Npc
 
         private void RPC_SetHandItem(long sender, string slotName, string itemName)
         {
-            if (!CanAdminister(sender) || !Enum.TryParse(slotName, out HandSlot slot)) return;
+            if (!CanAdminister(sender) || !HasHumanBody || !Enum.TryParse(slotName, out HandSlot slot)) return;
             itemName ??= "";
             if (!IsValidHandItem(slot, itemName)) return;
 
@@ -926,9 +1002,24 @@ namespace NpcValheim.Npc
                 RightHand = zdo.GetString(ZdoKeys.RightHand, ""),
                 LeftHand = zdo.GetString(ZdoKeys.LeftHand, ""),
                 Scale = zdo.GetFloat(ZdoKeys.Scale, 1f),
+                BodyPrefab = zdo.GetString(ZdoKeys.BodyPrefab, ""),
             };
-            foreach (ArmorSlot slot in Enum.GetValues(typeof(ArmorSlot)))
-                profile.Armor[slot.ToString()] = zdo.GetString(ZdoKeys.ArmorSlotKey(slot), "");
+            if (NpcBody.IsHuman(profile.BodyPrefab))
+            {
+                foreach (ArmorSlot slot in Enum.GetValues(typeof(ArmorSlot)))
+                    profile.Armor[slot.ToString()] = zdo.GetString(ZdoKeys.ArmorSlotKey(slot), "");
+            }
+            else
+            {
+                // No armour section at all for a creature: there is nothing it could wear.
+                profile.Armor = null;
+                profile.Hair = null;
+                profile.Beard = null;
+                profile.RightHand = null;
+                profile.LeftHand = null;
+                profile.SkinColor = null;
+                profile.HairColor = null;
+            }
             return profile;
         }
 
@@ -961,7 +1052,23 @@ namespace NpcValheim.Npc
                 zdo.Set(ZdoKeys.Name, profile.Name);
 
             bool appearanceChanged = false;
-            if (profile.HasField("armor"))
+            if (profile.HasField("bodyPrefab"))
+            {
+                var body = NpcBody.IsHuman(profile.BodyPrefab) ? "" : profile.BodyPrefab.Trim();
+                if (!NpcBody.IsValidBodyPrefab(body))
+                {
+                    Plugin.Log.LogWarning($"NpcValheim: template body '{body}' is not a creature, using the human body");
+                    body = "";
+                }
+                SetBodyPrefab(zdo, body);
+                appearanceChanged = true;
+            }
+
+            // Armour, hands, hair, beard, colours and model are human gear; a creature body
+            // ignores them, so a look template applied to a boar cannot dress it.
+            bool human = NpcBody.IsHuman(zdo.GetString(ZdoKeys.BodyPrefab, ""));
+
+            if (human && profile.HasField("armor"))
             {
                 // A complete/legacy profile replaces every slot. In patch YAML, a non-empty
                 // map changes only the named slots, while `armor: {}` explicitly clears all.
@@ -980,27 +1087,27 @@ namespace NpcValheim.Npc
                 }
             }
 
-            if (profile.HasField("hair"))
+            if (human && profile.HasField("hair"))
             {
                 zdo.Set(ZdoKeys.Hair,
                     IsValidVisualPrefab("Hair", profile.Hair) ? profile.Hair ?? "" : "");
                 appearanceChanged = true;
             }
-            if (profile.HasField("beard"))
+            if (human && profile.HasField("beard"))
             {
                 zdo.Set(ZdoKeys.Beard,
                     IsValidVisualPrefab("Beard", profile.Beard) ? profile.Beard ?? "" : "");
                 appearanceChanged = true;
             }
-            if (profile.HasField("model"))
+            if (human && profile.HasField("model"))
             {
                 int model = profile.Model >= 0 && profile.Model < GetModelCount() ? profile.Model : 0;
                 zdo.Set(ZdoKeys.Model, model);
                 appearanceChanged = true;
             }
 
-            bool skinPresetSpecified = profile.HasField("skinPreset");
-            bool skinColorSpecified = profile.HasField("skinColor");
+            bool skinPresetSpecified = human && profile.HasField("skinPreset");
+            bool skinColorSpecified = human && profile.HasField("skinColor");
             if (skinPresetSpecified)
                 zdo.Set(ZdoKeys.SkinPreset, Mathf.Clamp(profile.SkinPreset, 0,
                     NpcCustomizationPresets.SkinTones.Length - 1));
@@ -1018,8 +1125,8 @@ namespace NpcValheim.Npc
                 appearanceChanged = true;
             }
 
-            bool hairPresetSpecified = profile.HasField("hairColorPreset");
-            bool hairColorSpecified = profile.HasField("hairColor");
+            bool hairPresetSpecified = human && profile.HasField("hairColorPreset");
+            bool hairColorSpecified = human && profile.HasField("hairColor");
             if (hairPresetSpecified)
                 zdo.Set(ZdoKeys.HairColorPreset, Mathf.Clamp(profile.HairColorPreset, 0,
                     NpcCustomizationPresets.HairColors.Length - 1));
@@ -1037,13 +1144,13 @@ namespace NpcValheim.Npc
                 appearanceChanged = true;
             }
 
-            if (profile.HasField("rightHand"))
+            if (human && profile.HasField("rightHand"))
             {
                 zdo.Set(ZdoKeys.RightHand,
                     IsValidHandItem(HandSlot.Right, profile.RightHand) ? profile.RightHand ?? "" : "");
                 appearanceChanged = true;
             }
-            if (profile.HasField("leftHand"))
+            if (human && profile.HasField("leftHand"))
             {
                 zdo.Set(ZdoKeys.LeftHand,
                     IsValidHandItem(HandSlot.Left, profile.LeftHand) ? profile.LeftHand ?? "" : "");

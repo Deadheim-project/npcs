@@ -91,8 +91,11 @@ namespace NpcValheim.Persistence
             return slug.Length == 0 ? "npc" : slug;
         }
 
+        // Null sections are left out rather than written as empty keys: a creature-bodied NPC
+        // has no armour/hair/hands at all, and a teleporter no marketplace block.
         private static readonly ISerializer Serializer = new SerializerBuilder()
             .WithNamingConvention(CamelCaseNamingConvention.Instance)
+            .ConfigureDefaultValuesHandling(DefaultValuesHandling.OmitNull)
             .Build();
 
         private static readonly IDeserializer Deserializer = new DeserializerBuilder()

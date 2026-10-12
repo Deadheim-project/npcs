@@ -17,7 +17,7 @@ namespace NpcValheim.UI
     /// </summary>
     internal sealed class AppearanceView : NpcViewBase
     {
-        private enum Category { Armor, Hands, Hair, Beard, Skin, HairColor, Model, Scale }
+        private enum Category { Body, Armor, Hands, Hair, Beard, Skin, HairColor, Model, Scale }
 
         private Category _category = Category.Armor;
         private ArmorSlot _armorSlot = ArmorSlot.Helmet;
@@ -28,6 +28,7 @@ namespace NpcValheim.UI
         private RectTransform _colorEditor;
         private readonly List<GameObject> _optionRows = new List<GameObject>();
         private readonly List<GameObject> _subTabButtons = new List<GameObject>();
+        private readonly Dictionary<Category, GameObject> _categoryButtons = new Dictionary<Category, GameObject>();
 
         private TMP_InputField _r, _g, _b, _scale;
         private Image _colorPreview;
@@ -48,6 +49,7 @@ namespace NpcValheim.UI
                 var captured = category;
                 var button = ValheimUi.CreateButton(sideList, Label(category), 0f, 40f, 15);
                 button.onClick.AddListener(() => { _category = captured; _builtKey = null; });
+                _categoryButtons[category] = button.gameObject;
             }
 
             var right = ValheimUi.CreateInlay(Root, "Options");
@@ -71,6 +73,7 @@ namespace NpcValheim.UI
 
         private static string Label(Category category) => category switch
         {
+            Category.Body => "Corpo (prefab)",
             Category.Armor => "Armadura",
             Category.Hands => "Mãos",
             Category.Hair => "Cabelo",
@@ -82,9 +85,20 @@ namespace NpcValheim.UI
             _ => category.ToString(),
         };
 
+        /// <summary>Only the body and its size exist on a creature; the rest is human gear.</summary>
+        private static bool AppliesToCreature(Category category) =>
+            category == Category.Body || category == Category.Scale;
+
         public override void Refresh()
         {
-            string key = $"{_category}:{_armorSlot}:{_handSlot}";
+            // The body can change under an open window (another admin, or the server's reply
+            // to our own click), so the category list follows it rather than being built once.
+            bool human = Npc.HasHumanBody;
+            foreach (var entry in _categoryButtons)
+                if (entry.Value != null) entry.Value.SetActive(human || AppliesToCreature(entry.Key));
+            if (!human && !AppliesToCreature(_category)) _category = Category.Body;
+
+            string key = $"{_category}:{_armorSlot}:{_handSlot}:{Npc.BodyPrefab}";
             if (key == _builtKey) return;
             _builtKey = key;
             Rebuild();
@@ -103,6 +117,7 @@ namespace NpcValheim.UI
 
             switch (_category)
             {
+                case Category.Body: BuildBodies(); break;
                 case Category.Armor: BuildArmor(); break;
                 case Category.Hands: BuildHands(); break;
                 case Category.Hair: BuildNamed(NpcBase.GetHairNames(), n => Npc.RequestSetHair(Player, n)); break;
@@ -113,6 +128,25 @@ namespace NpcValheim.UI
                 case Category.HairColor: ConfigureEditor(); break;
             }
         }
+
+        private void BuildBodies()
+        {
+            string current = Npc.BodyPrefab;
+            bool human = NpcBody.IsHuman(current);
+
+            AddOption(Mark(human, "Humano (Player)"), null, () => Npc.RequestSetBodyPrefab(Player, ""),
+                "armadura, mãos, cabelo e cores");
+            foreach (var name in NpcBody.GetCreaturePrefabNames())
+            {
+                var captured = name;
+                bool selected = string.Equals(name, current, StringComparison.OrdinalIgnoreCase);
+                AddOption(Mark(selected, NpcBody.DisplayName(name)), null,
+                    () => Npc.RequestSetBodyPrefab(Player, captured), name);
+            }
+        }
+
+        private static string Mark(bool selected, string text) =>
+            selected ? $"<color=#ffcc33>► {text}</color>" : text;
 
         private void BuildArmor()
         {

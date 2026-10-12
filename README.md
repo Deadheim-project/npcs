@@ -40,6 +40,12 @@ atrás dela. Fecha com **Esc** ou no **X**.
 - **Pele RGB** / **Cabelo RGB** — entrada livre de R/G/B entre 0 e 255, com
   amostra da cor antes de aplicar. Os presets antigos continuam compatíveis
   com YAMLs já salvos
+- **Corpo (prefab)** — troca o visual do NPC por qualquer criatura do
+  `ZNetScene` (ex.: `Boar`, `Deer`, `Troll`); "Humano (Player)" volta ao normal.
+  O NPC continua sendo o clone de Player por baixo (rede, interação, permissões);
+  só o desenho muda. Com uma criatura, Armadura/Mãos/Cabelo/Barba/Cores/Modelo
+  somem da janela, o servidor recusa esses RPCs e o YAML grava `bodyPrefab` sem
+  essas seções. Só **Tamanho** continua valendo
 - **Modelo** — índice do modelo de corpo (`VisEquipment.SetModel`)
 - **Tamanho** — escala de 0.5x a 2.0x
 

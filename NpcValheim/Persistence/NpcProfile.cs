@@ -58,6 +58,11 @@ namespace NpcValheim.Persistence
         public string LeftHand { get; set; } = "";
         public float Scale { get; set; } = 1f;
 
+        /// <summary>Creature prefab the NPC looks like ("Boar", "Deer"...). Empty or "Player"
+        /// is the normal human body; with a creature, armour, hands, hair, beard, colours and
+        /// model do not apply and are left out of the file.</summary>
+        public string BodyPrefab { get; set; } = "";
+
         // Null when not applicable to the NPC type -- keeps a Teleporter's yaml free of
         // marketplace noise and vice versa.
         public TeleporterSettings Teleporter { get; set; }
