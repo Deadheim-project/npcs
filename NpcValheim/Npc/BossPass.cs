@@ -374,6 +374,9 @@ namespace NpcValheim.Npc
     {
         private const string RpcResponse = "NpcValheim_BossPassResponse";
         private const string RpcPay = "NpcValheim_BossPassPay";
+        /// <summary>A client asking for its own passes without standing at a counter: what
+        /// other mods gate on a pass (Montarias' Moder) go through BossPassApi.</summary>
+        private const string RpcStatusRequest = "NpcValheim_BossPassStatusRequest";
         private const float PurchaseTimeout = 10f;
         private const float QuoteSeconds = 120f;
 
@@ -423,6 +426,21 @@ namespace NpcValheim.Npc
             EndPurchase();
             rpc.Register(RpcResponse, (Action<long, string, string>)RPC_Response);
             rpc.Register(RpcPay, (Action<long, string>)RPC_Pay);
+            rpc.Register(RpcStatusRequest, (Action<long>)RPC_StatusRequest);
+        }
+
+        /// <summary>Asks the server for this character's passes; the answer is the counter's
+        /// own "status" reply, so it fills <see cref="Known"/> and the passes the same way.</summary>
+        internal static void RequestLocalStatus()
+        {
+            ServiceNpcAuthority.TryRegister();
+            ZRoutedRpc.instance?.InvokeRoutedRPC(GameApi.GetServerPeerId(), RpcStatusRequest);
+        }
+
+        private static void RPC_StatusRequest(long sender)
+        {
+            if (ZNet.instance == null || !ZNet.instance.IsServer()) return;
+            ServeStatus(sender);
         }
 
         internal static bool HasLocalPass(string boss) => !string.IsNullOrEmpty(boss) && OwnPasses.ContainsKey(boss);

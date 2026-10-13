@@ -41,16 +41,23 @@ namespace NpcValheim.Npc
     {
         internal const string DefaultOffers =
             "skill=1;price=500;currency=coins|skill=2;price=2500;currency=coins|" +
-            "skill=3;price=500;currency=deadcoins|mount=capivara;price=300;currency=deadcoins|" +
+            "skill=3;price=500;currency=deadcoins|skill=4;price=1000;currency=deadcoins|" +
+            "mount=capivara;price=300;currency=deadcoins|" +
             "mount=neck;price=300;currency=deadcoins|mount=deer;price=300;currency=deadcoins|" +
-            "mount=boar;price=300;currency=deadcoins|mount=eikthyr;price=300;currency=deadcoins";
+            "mount=boar;price=300;currency=deadcoins|mount=eikthyr;price=300;currency=deadcoins|" +
+            "mount=moder;price=600;currency=deadcoins";
 
         /// <summary>Defaults this mod shipped before; a config still holding one of them was
         /// never edited and is moved to <see cref="DefaultOffers"/>. Until 0.1.67 only the
         /// capybara was for sale, so the Neck, Deer, Boar and Eikthyr of Montarias 0.3.x never
-        /// reached the counter.</summary>
+        /// reached the counter; until 0.1.70 there was no level 4 (Montaria Voadora) nor the
+        /// Moder.</summary>
         internal static readonly string[] OldDefaultOffers =
         {
+            "skill=1;price=500;currency=coins|skill=2;price=2500;currency=coins|" +
+            "skill=3;price=500;currency=deadcoins|mount=capivara;price=300;currency=deadcoins|" +
+            "mount=neck;price=300;currency=deadcoins|mount=deer;price=300;currency=deadcoins|" +
+            "mount=boar;price=300;currency=deadcoins|mount=eikthyr;price=300;currency=deadcoins",
             "skill=1;price=500;currency=coins|skill=2;price=2500;currency=coins|" +
             "skill=3;price=500;currency=deadcoins|mount=javali;price=300;currency=deadcoins",
             "skill=1;price=500;currency=coins|skill=2;price=2500;currency=coins|" +
