@@ -6,8 +6,10 @@ using NpcValheim.UI;
 namespace NpcValheim.Npc
 {
     /// <summary>
-    /// The floating name above an NPC, plus the MMO quest marker: <b>!</b> when this player
-    /// has a quest they can pick up here, <b>?</b> when they have one ready to hand in.
+    /// The MMO quest marker over an NPC: <b>!</b> when this player has a quest they can pick up
+    /// here, <b>?</b> when they have one ready to hand in. The name itself is the game's
+    /// (EnemyHud, see NpcHudPatch) for every NPC that is a Character; only furniture such as
+    /// the mailbox, which the game draws no plate for, gets its name from here.
     ///
     /// The marker is deliberately per-player, not per-NPC: whether there is anything to do
     /// here depends entirely on who is looking. The client already receives its own quest
@@ -34,10 +36,13 @@ namespace NpcValheim.Npc
         private float _questPollInterval = 2f;
         private bool _loggedMarker;
 
+        private bool _gameDrawsName;
+
         private void Awake()
         {
             _npc = GetComponent<NpcBase>();
             _questGiver = _npc as QuestGiverNpc;
+            _gameDrawsName = GetComponent<Character>() != null;
         }
 
         private void LateUpdate()
@@ -78,6 +83,10 @@ namespace NpcValheim.Npc
                 ? 1f
                 : Mathf.InverseLerp(VisibleDistance, FadeStart, distance);
 
+            // A character NPC has its name drawn by the game's EnemyHud (NpcHudPatch); this
+            // plate keeps only the quest marker for it. Furniture (the mailbox) is not a
+            // Character, so the game draws nothing for it and the name stays here.
+            _name.gameObject.SetActive(!_gameDrawsName);
             _name.text = _npc.GetHoverName();
             _name.alpha = alpha;
 
@@ -190,7 +199,7 @@ namespace NpcValheim.Npc
             nameRect.anchorMin = nameRect.anchorMax = new Vector2(0.5f, 0.5f);
             nameRect.sizeDelta = new Vector2(600f, 44f);
             nameRect.anchoredPosition = Vector2.zero;
-            AddOutline(_name);
+            if (!CopyGameNameStyle(_name)) AddOutline(_name);
 
             // Big and gold, the way an MMO marks a quest. The old 54pt orange glyph read as a
             // dark speck from any distance -- and a marker you have to look for is a marker
@@ -207,6 +216,25 @@ namespace NpcValheim.Npc
             _marker.gameObject.SetActive(false);
 
             _root = go.transform;
+            return true;
+        }
+
+        /// <summary>
+        /// The look of the name the game draws over players (EnemyHud's player plate): its font,
+        /// material (which carries the outline) and colour, so the mailbox's name matches the
+        /// names EnemyHud draws over the other NPCs. False when that plate is not there yet.
+        /// </summary>
+        private static bool CopyGameNameStyle(TextMeshProUGUI label)
+        {
+            var hud = EnemyHud.instance;
+            var source = hud != null && hud.m_baseHudPlayer != null
+                ? hud.m_baseHudPlayer.transform.Find("Name")?.GetComponent<TextMeshProUGUI>()
+                : null;
+            if (source == null) return false;
+            label.font = source.font;
+            label.fontSharedMaterial = source.fontSharedMaterial;
+            label.color = source.color;
+            label.fontStyle = source.fontStyle;
             return true;
         }
 

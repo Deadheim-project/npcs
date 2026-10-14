@@ -31,6 +31,8 @@ namespace NpcValheim.Npc
         public const string AppearanceRevision = "npcv_appearance_rev";
         public const string ProfileId = "npcv_profile_id";
         public const string BodyPrefab = "npcv_body_prefab";
+        /// <summary>Phrases and emotes, packed by NpcDialogue. Absent = the type's defaults.</summary>
+        public const string Dialogue = "npcv_dialogue";
     }
 
     /// <summary>
@@ -107,7 +109,10 @@ namespace NpcValheim.Npc
             // Nameplate and quest markers are purely a client-side reading of state; a
             // headless server has no camera, no local player and no UI assets to build from.
             if (!Application.isBatchMode)
+            {
                 gameObject.AddComponent<NpcNameplate>();
+                gameObject.AddComponent<NpcGreeter>();
+            }
         }
 
         /// <summary>
@@ -315,11 +320,43 @@ namespace NpcValheim.Npc
             if (Nview == null || !Nview.IsValid()) return false;
 
             PanelOpenRequested = true;
+            GetComponent<NpcGreeter>()?.OnTalk();
 
             // Talking to somebody is a quest objective in its own right ("take word to the
             // smith"), and opening their panel is what talking to them means here.
             QuestProgressNetwork.ReportTalk(this);
             return true;
+        }
+
+        /// <summary>What this NPC says and does when greeted, talked to and left. Until an
+        /// admin sets something, the type's own defaults (null = quiet).</summary>
+        protected virtual DialogueSettings DefaultDialogue => null;
+
+        /// <summary>The type's defaults, for the Falas tab's "use the default" button.</summary>
+        internal DialogueSettings TypeDefaultDialogue => DefaultDialogue ?? new DialogueSettings();
+
+        private const string NoDialogue = "\u0000";
+
+        public DialogueSettings GetDialogue()
+        {
+            if (Nview == null || !Nview.IsValid()) return DefaultDialogue ?? new DialogueSettings();
+            string packed = Nview.GetZDO().GetString(ZdoKeys.Dialogue, NoDialogue);
+            return packed == NoDialogue
+                ? DefaultDialogue ?? new DialogueSettings()
+                : NpcDialogue.Unpack(packed);
+        }
+
+        public void RequestSetDialogue(Player requester, DialogueSettings dialogue)
+        {
+            if (Nview == null || !Nview.IsValid() || !CanLocalPlayerAdminister()) return;
+            InvokeAuthoritativeRpc("RPC_SetDialogue", NpcDialogue.Pack(dialogue));
+        }
+
+        private void RPC_SetDialogue(long sender, string packed)
+        {
+            if (!CanAdminister(sender)) return;
+            Nview.GetZDO().Set(ZdoKeys.Dialogue, NpcDialogue.Pack(NpcDialogue.Unpack(packed)));
+            PersistProfileSnapshot();
         }
 
         public bool UseItem(Humanoid user, ItemDrop.ItemData item) => false;
@@ -420,6 +457,9 @@ namespace NpcValheim.Npc
             {
                 case "RPC_SetName" when arguments.Length == 1 && arguments[0] is string name:
                     RPC_SetName(sender, name);
+                    return true;
+                case "RPC_SetDialogue" when arguments.Length == 1 && arguments[0] is string dialogue:
+                    RPC_SetDialogue(sender, dialogue);
                     return true;
                 case "RPC_SetArmor" when arguments.Length == 2 &&
                                              arguments[0] is string armorSlot &&
@@ -1003,6 +1043,9 @@ namespace NpcValheim.Npc
                 LeftHand = zdo.GetString(ZdoKeys.LeftHand, ""),
                 Scale = zdo.GetFloat(ZdoKeys.Scale, 1f),
                 BodyPrefab = zdo.GetString(ZdoKeys.BodyPrefab, ""),
+                Dialogue = zdo.GetString(ZdoKeys.Dialogue, NoDialogue) is var packed && packed != NoDialogue
+                    ? NpcDialogue.Unpack(packed)
+                    : null,
             };
             if (NpcBody.IsHuman(profile.BodyPrefab))
             {
@@ -1167,6 +1210,10 @@ namespace NpcValheim.Npc
 
             if (appearanceChanged)
                 PublishAppearance(zdo, "template");
+
+            // Whole-section: a template with "dialogue:" replaces every phrase and emote.
+            if (profile.HasField("dialogue") && profile.Dialogue != null)
+                zdo.Set(ZdoKeys.Dialogue, NpcDialogue.Pack(profile.Dialogue));
 
             // Derived handlers predate patch YAML. Feed them a compatibility view where
             // omitted nested fields stay null and explicit empty lists take their clear path.

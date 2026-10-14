@@ -141,6 +141,12 @@ namespace NpcValheim.UI
                 case GuildRegistrarNpc _:
                     AddTab("Guildas", new GuildRegistrarView(), npc, player);
                     break;
+                case BountyHunterNpc _:
+                    AddTab("Bounty", new BountyView(), npc, player);
+                    break;
+                case WarJudgeNpc _:
+                    AddTab("PvE / PvP", new WarJudgeView(), npc, player);
+                    break;
                 // WoW style: the trainer teaches the riding skill and sells the mounts, and
                 // the two are different purchases, so each gets its own tab.
                 case MountTrainerNpc _:
@@ -171,6 +177,10 @@ namespace NpcValheim.UI
                 if (npc.ShowsAppearanceTab)
                     AddTab("Aparência", new AppearanceView(), npc, player);
                 AddTab("Admin", new AdminView(), npc, player);
+                if (npc.ShowsAppearanceTab)
+                    AddTab("Falas", new DialogueView(), npc, player);
+                if (npc is WarJudgeNpc)
+                    AddTab("Atributos", new WarJudgeAdminView(), npc, player);
                 if (npc is ArenaBattlemasterNpc)
                     AddTab("Arena (admin)", new ArenaAdminView(), npc, player);
                 if (npc is ArenaVendorNpc)
@@ -178,6 +188,19 @@ namespace NpcValheim.UI
                 if (npc is DeadcoinShopNpc)
                     AddTab("Itens (admin)", new DeadcoinShopAdminView(), npc, player);
             }
+            FitTabs();
+        }
+
+        /// <summary>Narrows the tabs when there are more than fit at full width (an admin at
+        /// the Mestre da Arena has six), instead of letting the last ones run off the frame.</summary>
+        private void FitTabs()
+        {
+            const float full = 150f, spacing = 8f;
+            float available = Width - 48f;
+            if (_tabs.Count == 0 || _tabs.Count * (full + spacing) - spacing <= available) return;
+            float width = Mathf.Floor((available - spacing * (_tabs.Count - 1)) / _tabs.Count);
+            foreach (var (button, _, _) in _tabs)
+                ValheimUi.SetWidth(button.gameObject, width);
         }
 
         private void AddTab(string label, NpcViewBase view, NpcBase npc, Player player)

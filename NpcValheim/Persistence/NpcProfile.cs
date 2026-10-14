@@ -69,6 +69,10 @@ namespace NpcValheim.Persistence
         public MarketplaceSettings Marketplace { get; set; }
         public QuestGiverSettings QuestGiver { get; set; }
 
+        /// <summary>Phrases and emotes for greeting, talking and saying goodbye. Null when the
+        /// NPC has never had any set (it then uses its type's defaults).</summary>
+        public DialogueSettings Dialogue { get; set; }
+
         internal bool HasExplicitPresence => Presence != null;
 
         internal bool HasField(string name) => Presence == null || Presence.Root.Contains(name);

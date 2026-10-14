@@ -20,7 +20,7 @@ namespace NpcValheim
     {
         public const string Guid = "com.npcvalheim.mod";
         public const string Name = "NpcValheim";
-        public const string Version = "0.1.70";
+        public const string Version = "0.1.71";
 
         internal static ManualLogSource Log;
         private Harmony _harmony;
@@ -66,6 +66,7 @@ namespace NpcValheim
         internal static ConfigEntry<int> ListingDurationHours;
         internal static ConfigEntry<string> GuildCostItem;
         internal static ConfigEntry<int> GuildCostAmount;
+        internal static ConfigEntry<bool> GuildWindowNpcOnly;
         internal static ConfigEntry<string> DeadcoinShopItems;
         internal static ConfigEntry<string> BossPassBosses;
         internal static ConfigEntry<float> BossPassKillRadius;
@@ -152,6 +153,9 @@ namespace NpcValheim
                 "Prefab name of the item charged to found a guild at the Guild Registrar");
             GuildCostAmount = Config.Bind("Guildas", "CostAmount", 0,
                 "How many of CostItem founding a guild costs (0 = free). Charged only once the guild exists");
+            GuildWindowNpcOnly = Config.Bind("Guildas", "SomentePeloNpc", true,
+                "Liga: a janela de guildas (do mod Guilds) so abre no Registrador de Guildas; a tecla do Guilds " +
+                "nao abre nada. Desliga: a tecla volta a abrir a janela (fundar continua so no Registrador).");
 
             // What the Mestre das Montarias sells. The levels and the mounts themselves are the
             // Montarias mod's; this only prices them. Synchronized for display, like the
@@ -176,6 +180,7 @@ namespace NpcValheim
             ConfigSync.AddConfigEntry(BossPassKillRadius).SynchronizedConfig = true;
             ConfigSync.AddConfigEntry(GuildCostItem).SynchronizedConfig = true;
             ConfigSync.AddConfigEntry(GuildCostAmount).SynchronizedConfig = true;
+            ConfigSync.AddConfigEntry(GuildWindowNpcOnly).SynchronizedConfig = true;
 
             // [Arena*] sections: synchronized and locked like the rest, except the panel key.
             Arena.ArenaConfig.Bind(Config, ConfigSync);

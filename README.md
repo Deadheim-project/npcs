@@ -638,9 +638,17 @@ Dois erros de uGUI que valem registro porque não dão erro nenhum:
 
 ## Nomes e marcadores sobre a cabeça
 
-`Npc/NpcNameplate.cs` desenha o nome do NPC num canvas world-space reaimado à
-câmera todo frame, e o marcador clássico de MMO: **!** quando há missão para
-pegar, **?** quando há missão pronta para entregar.
+O **nome** é o do próprio jogo: o `EnemyHud` desenha sobre os NPCs a mesma placa que
+desenha sobre os outros jogadores (fonte, contorno, tamanho na tela e alcance de 10 m),
+porque os NPCs são clones de `Player`. `Patches/NpcHudPatch.cs` só tira a barra de vida
+dessa placa e a coloca na altura do NPC (`NameplateHeight`), que num corpo de criatura ou
+num NPC com escala não é a cabeça do rig do jogador. A Caixa Postal não é personagem e o
+jogo não desenha nada para ela; o nome dela continua vindo de `Npc/NpcNameplate.cs`, com a
+fonte, o material e a cor copiados da placa do jogo.
+
+`Npc/NpcNameplate.cs` desenha o marcador clássico de MMO num canvas world-space reaimado
+à câmera todo frame: **!** quando há missão para pegar, **?** quando há missão pronta
+para entregar.
 
 O marcador é por jogador, não por NPC — o que há para fazer ali depende de quem
 está olhando, e o cliente já recebe o próprio snapshot de missões. O `?` é
@@ -649,8 +657,65 @@ enxerga inventário remoto e responde `CanTurnIn=true` otimista para objetivos d
 coleta; usar isso direto fazia o `?` aparecer sobre missões cujos itens o
 jogador não tinha.
 
-`Patches/NpcHudPatch.cs` tira a barra de vida verde que o jogo desenhava sobre
-eles — são clones de `Player`, então o `EnemyHud` os tratava como qualquer lobo.
+## Falas e animações (aba *Falas*)
+
+Como o Haldor do vanilla: quando o jogador chega a menos de 5 m o NPC faz uma animação e
+diz uma frase num balão (`Chat.SetNpcText`); quando o jogador abre a janela dele, outra;
+quando se afasta além de 7 m, outra. Enquanto o jogador fica perto, o NPC solta uma frase
+de *falar* a cada 30 a 50 s (não com a janela dele aberta). A saudação não se repete antes
+de 20 s.
+
+- **Admin:** aba *Falas* (todo NPC com corpo, não a Caixa Postal): para cada momento, uma
+  animação (os emotes de uma vez do jogador: acenar, reverência, apontar, joinha, rir...) e
+  as frases, uma por linha, sorteadas. `{jogador}` vira o nome de quem está ouvindo. Até 12
+  frases de 160 caracteres por momento. *Usar o padrão* carrega o padrão do tipo.
+- **Onde fica:** um texto empacotado no ZDO (`npcv_dialogue`), gravado pelo servidor depois
+  de conferir o admin, como o nome; no yaml da instância e nos templates é a seção
+  `dialogue:` (`greet`, `talk`, `bye`, `greetEmote`, `talkEmote`, `byeEmote`), e um template
+  com ela troca todas as falas.
+- **Padrões:** sem nada salvo, o NPC fica calado, menos o Caçador de Recompensas e o Juiz de
+  Guerra, que já vêm com frases.
+- **Local, como no vanilla:** cada cliente vê o NPC cumprimentar o próprio jogador; o
+  gatilho de animação é só nessa cópia e nada vai pela rede. Em corpo de criatura, a
+  animação só toca se o animator dela tiver aquele emote (sem aviso no log se não tiver).
+
+`Npc/NpcDialogue.cs` (empacotamento e o `NpcGreeter`), `UI/DialogueView.cs` (a aba).
+
+## Caçador de Recompensas (bounty do Deadheim)
+
+NPC colocável **Caçador de Recompensas** (`BountyHunterNpc`, prefab
+`NpcValheim_BountyHunter`). É onde fica a bounty que antes era o comando `/bounty` do
+Deadheim (que saiu na 7.5.9): o quadro de procurados (quem, quanto paga, estado, online),
+o formulário para pôr moedas na cabeça de alguém (o botão *Aumentar* de uma linha preenche
+o nome) e a cabeça do próprio jogador, com o botão de pagar para encerrar.
+
+A bounty continua sendo do Deadheim: pote, tempos, teto diário e regras ficam no servidor
+dele. O NPC não guarda nada e não manda nada próprio; a tela chama a `PvpApi` do Deadheim
+por reflexão (`Integration/DeadheimPvpApi.cs`, como a `MontariasApi`). Sem Deadheim 7.5.9+,
+o NPC diz que a bounty está fechada.
+
+## Juiz de Guerra (PvE ou PvP)
+
+NPC colocável **Juiz de Guerra** (`WarJudgeNpc`, prefab `NpcValheim_WarJudge`). Tira o
+jogador do PvP (vira PvE) e devolve, no lugar do `/pve` do Deadheim, que era só de ida e
+saiu na 7.5.9. A tela mostra lado a lado o que cada lado ganha, quanto falta para a próxima
+troca e por que a troca seria recusada (PK, bounty, combate, espera).
+
+- **Aba *Atributos* (admin):** espera entre trocas, título do PvE, troca liberada ou não, e
+  ganho de skill e coleta do PvE e do PvP. São a config do **servidor do Deadheim**
+  (`[PvP - PvE permanente]` e `PvpResourceRate`): o *Salvar* vai pelo canal de admin do
+  próprio Deadheim (o mesmo da aba Servidor do menu Esc), que confere a adminlist pela
+  conexão, grava o cfg e o ServerSync espalha. Vale para todos os Juízes de uma vez.
+- Quem decide a troca é o servidor do Deadheim; o NPC só pede.
+
+## Guildas só no Registrador (`[Guildas] SomentePeloNpc`)
+
+Com `SomentePeloNpc = true` (padrão, sincronizado), a tecla do mod Guilds não abre mais a
+janela de guildas: o patch em `Guilds.Interface.Update` fecha no mesmo frame a janela que a
+tecla abriu, antes de ela aparecer, e avisa para procurar o Registrador. O Registrador de
+Guildas ganhou o botão **Abrir a minha guilda** / **Procurar guildas**, que abre a mesma
+janela do Guilds (membros, pedidos, cargos, procurar e pedir para entrar). Com `false`, a
+tecla volta a funcionar; fundar guilda continua só no Registrador nos dois casos.
 
 ## Permissões: o que um jogador comum vê
 

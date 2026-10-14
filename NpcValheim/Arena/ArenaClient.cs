@@ -207,6 +207,7 @@ namespace NpcValheim.Arena
             MapName = Str(f, 6);
             _gateRadius = Mathf.Max(2f, Float(f, 7, 6f));
             SetPhase(PhasePrep);
+            ArenaGate.Show(MapName, Side, _spawn, _gateRadius);
 
             UI.UiRoot.RequestClose();
             if (!player.TeleportTo(_spawn, Quaternion.Euler(0f, _spawnYaw, 0f), true) && !player.IsTeleporting())
@@ -225,6 +226,7 @@ namespace NpcValheim.Arena
         private static void SetPhase(int phase)
         {
             Phase = phase;
+            if (phase != PhasePrep) ArenaGate.Open();
             Publish();
         }
 
@@ -234,6 +236,7 @@ namespace NpcValheim.Arena
             Side = ArenaSide.None;
             Phase = PhaseNone;
             MapName = null;
+            ArenaGate.Clear();
             Publish();
         }
 

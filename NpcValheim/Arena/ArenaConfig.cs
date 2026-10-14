@@ -44,6 +44,17 @@ namespace NpcValheim.Arena
         internal static ConfigEntry<float> LeaveSeconds;
         internal static ConfigEntry<float> GateRadius;
 
+        internal static ConfigEntry<ArenaGateStyle> GateStyle;
+        internal static ConfigEntry<string> GateColorGold;
+        internal static ConfigEntry<string> GateColorGreen;
+        internal static ConfigEntry<float> GateHeight;
+        internal static ConfigEntry<string> GateTexture;
+        internal static ConfigEntry<float> GateScrollSpeed;
+        internal static ConfigEntry<string> GatePrefab;
+        internal static ConfigEntry<float> GatePrefabSpacing;
+        internal static ConfigEntry<float> GatePrefabScale;
+        internal static ConfigEntry<float> GatePrefabYaw;
+
         internal static ConfigEntry<int> GamesPerWeek;
         internal static ConfigEntry<int> ParticipationPercent;
         internal static ConfigEntry<float> PointsRate;
@@ -121,6 +132,31 @@ namespace NpcValheim.Arena
                 "Depois do fim, quanto tempo o placar fica antes de todos voltarem para onde estavam.");
             GateRadius = S(config, match, "GateRadius", 6f,
                 "Na preparacao, distancia maxima do ponto de inicio (os portoes fechados).");
+
+            const string gate = "Arena - Portao";
+            GateStyle = S(config, gate, "Style", ArenaGateStyle.Ambos,
+                "Como os portoes fechados aparecem em volta do inicio de cada time, ate a batalha comecar: " +
+                "Parede (cortina de energia), Pecas (um prefab do jogo repetido em circulo), Ambos, ou Nenhum (invisivel, " +
+                "so a barreira).");
+            GateColorGold = S(config, gate, "ColorGold", "FFC23D99",
+                "Cor da parede do time Ouro, RRGGBB ou RRGGBBAA (AA = opacidade, 00 a FF).");
+            GateColorGreen = S(config, gate, "ColorGreen", "4CDC6A99",
+                "Cor da parede do time Verde, RRGGBB ou RRGGBBAA.");
+            GateHeight = S(config, gate, "Height", 4f, "Altura da parede em metros.");
+            GateTexture = S(config, gate, "Texture", "",
+                "PNG da parede (vazio = padrao de energia gerado). Nome de arquivo em Assets/ArenaGate do mod, ou caminho " +
+                "completo. A imagem e tingida pela cor do time: use tons de cinza/branco para a cor valer. Precisa estar " +
+                "no PC de cada jogador.");
+            GateScrollSpeed = S(config, gate, "ScrollSpeed", 0.25f,
+                "Velocidade com que a textura da parede sobe (voltas por segundo). 0 = parada; negativo = desce.");
+            GatePrefab = S(config, gate, "Prefab", "iron_grate",
+                "Prefab do jogo usado no estilo Pecas (so o visual: sem colisao, sem rede). Ex.: iron_grate, " +
+                "wood_gate, piece_sharpstakes, wood_pole2, piece_brazierfloor01.");
+            GatePrefabSpacing = S(config, gate, "PrefabSpacing", 2f,
+                "Distancia em metros entre uma peca e a proxima no circulo.");
+            GatePrefabScale = S(config, gate, "PrefabScale", 1f, "Escala das pecas.");
+            GatePrefabYaw = S(config, gate, "PrefabYaw", 0f,
+                "Giro extra de cada peca em graus (ajuste se o prefab ficar de lado em vez de virado para fora).");
 
             const string points = "Arena - Pontos";
             GamesPerWeek = S(config, points, "GamesPerWeek", 10,
