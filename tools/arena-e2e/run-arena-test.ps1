@@ -19,6 +19,10 @@
     -GuildOnly: servidor e um cliente so (Alfa), so o roteiro do Registrador de Guildas --
     longe dele o Guilds nao funda guilda; perto, o formulario abre e a guilda nasce.
 
+    -SandboxB <caixa>: o Bravo roda dentro dessa caixa do Sandboxie-Plus, onde uma segunda conta
+    Steam ja esta logada (uma conta Steam so nao passa: "invalid session ticket"). A caixa
+    precisa de OpenFilePath para a pasta -Root, senao os logs e o sync ficam dentro da sandbox.
+
     -ServerOnly: so o servidor -- confere que o NpcValheim sobe, a config da arena e lida,
     a arena do Deadheim e reconhecida e nada lanca excecao. Cabe numa maquina ocupada.
 
@@ -41,6 +45,8 @@ param(
     [switch]$CursorOnly,
     [switch]$GuildOnly,
     [switch]$FullB,
+    [string]$SandboxB = "",
+    [string]$SandboxieDir = "C:\Program Files\Sandboxie-Plus",
     [switch]$KeepRunning
 )
 
@@ -109,7 +115,8 @@ dotnet build (Join-Path $repo 'NpcValheim.sln') -c Release -v q --nologo | Out-N
 if ($LASTEXITCODE -ne 0) { throw 'O NpcValheim nao compilou.' }
 dotnet build $driverProj -c Release -v q --nologo | Out-Null
 if ($LASTEXITCODE -ne 0) { throw 'O driver nao compilou.' }
-foreach ($f in @($npcDll, $driverDll, "$SourceServer\valheim_server.exe", "$ClientDir\valheim.exe", "$ClientProfile\core\BepInEx.Preloader.dll")) {
+if ($SandboxB -and -not (Test-Path "$SandboxieDir\Start.exe")) { throw "Sandboxie-Plus nao encontrado em $SandboxieDir" }
+foreach ($f in @($npcDll, $driverDll,"$SourceServer\valheim_server.exe", "$ClientDir\valheim.exe", "$ClientProfile\core\BepInEx.Preloader.dll")) {
     if (-not (Test-Path $f)) { throw "Nao encontrei $f" }
 }
 
@@ -278,7 +285,21 @@ CostAmount = 100
                 $(if ($scenario) { "-arenatest-scenario $scenario " } else { '' }) +
                 $screen + "-logFile `"$Root\client$role-unity.log`""
         Write-Step ("Cliente $role" + $(if ($headless) { ' (sem graficos)' } else { '' }))
-        $client = Start-Process -FilePath "$ClientDir\valheim.exe" -ArgumentList $argLine -WorkingDirectory $ClientDir -PassThru
+        if ($role -eq 'B' -and $SandboxB) {
+            # O Start.exe do Sandboxie sai logo: o processo que conta e o valheim.exe novo.
+            $before = @(Get-Process valheim -ErrorAction SilentlyContinue | ForEach-Object { $_.Id })
+            Start-Process -FilePath "$SandboxieDir\Start.exe" -ArgumentList "/box:$SandboxB `"$ClientDir\valheim.exe`" $argLine" -WorkingDirectory $ClientDir | Out-Null
+            $client = $null
+            $until = (Get-Date).AddMinutes(2)
+            while (-not $client) {
+                if ((Get-Date) -gt $until) { throw "O Valheim nao abriu na caixa $SandboxB." }
+                Start-Sleep -Seconds 2
+                $client = Get-Process valheim -ErrorAction SilentlyContinue | Where-Object { $before -notcontains $_.Id } | Select-Object -First 1
+            }
+        }
+        else {
+            $client = Start-Process -FilePath "$ClientDir\valheim.exe" -ArgumentList $argLine -WorkingDirectory $ClientDir -PassThru
+        }
         $processes += $client
         $until = (Get-Date).AddMinutes(10)
         while (-not (Test-Path "$Root\sync\spawned-$role")) {

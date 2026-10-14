@@ -17,6 +17,9 @@ namespace NpcValheim.Integration
     /// to a Registrar, the button opens the form directly -- even with Guilds' own
     /// allowGuildCreation turned off, so the server can switch that off and leave the NPC as
     /// the only way in.
+    ///
+    /// With [Guildas] SomentePeloNpc on (the default), the whole window is the Registrar's:
+    /// Guilds' own key opens nothing, and the Registrar's "Abrir guilda" button is the way in.
     /// </summary>
     internal static class GuildsBridge
     {
@@ -26,8 +29,15 @@ namespace NpcValheim.Integration
         private static bool _resolved;
         private static MethodInfo _getOwnGuild;
         private static MethodInfo _switchUI;
+        private static MethodInfo _uiIsActive;
+        private static MethodInfo _hideUI;
         private static FieldInfo _createGuildUI;
+        private static FieldInfo _noGuildUI;
+        private static FieldInfo _managementUI;
         private static Func<object, string> _guildName;
+
+        /// <summary>The server wants the guild window to open only at the Registrar.</summary>
+        internal static bool WindowNpcOnly => Plugin.GuildWindowNpcOnly == null || Plugin.GuildWindowNpcOnly.Value;
 
         internal static bool IsAvailable
         {
@@ -71,6 +81,38 @@ namespace NpcValheim.Integration
                 Plugin.Log.LogWarning("NpcValheim: could not open the Guilds creation form: " + ex.Message);
                 return false;
             }
+        }
+
+        /// <summary>Opens Guilds' own window as its key would: the guild's management page for a
+        /// member, the join/found page for someone without one.</summary>
+        internal static bool OpenGuildWindow()
+        {
+            if (!IsAvailable || _noGuildUI == null || _managementUI == null) return false;
+            try
+            {
+                var page = (OwnGuildName() == null ? _noGuildUI : _managementUI).GetValue(null) as GameObject;
+                if (page == null) return false;
+                _switchUI.Invoke(null, new object[] { page, true });
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log.LogWarning("NpcValheim: could not open the Guilds window: " + ex.Message);
+                return false;
+            }
+        }
+
+        private static bool GuildWindowOpen()
+        {
+            if (_uiIsActive == null) return false;
+            try { return (bool)_uiIsActive.Invoke(null, Array.Empty<object>()); }
+            catch { return false; }
+        }
+
+        private static void HideGuildWindow()
+        {
+            try { _hideUI?.Invoke(null, Array.Empty<object>()); }
+            catch (Exception ex) { Plugin.Log.LogWarning("NpcValheim: could not close the Guilds window: " + ex.Message); }
         }
 
         /// <summary>The founding price, from the server's [Guildas] section (ServerSync). An
@@ -128,7 +170,11 @@ namespace NpcValheim.Integration
 
                 _getOwnGuild = api.GetMethod("GetOwnGuild", anyStatic, null, Type.EmptyTypes, null);
                 _switchUI = ui.GetMethod("SwitchUI", anyStatic, null, new[] { typeof(GameObject), typeof(bool) }, null);
+                _uiIsActive = ui.GetMethod("UIIsActive", anyStatic, null, Type.EmptyTypes, null);
+                _hideUI = ui.GetMethod("HideUI", anyStatic, null, Type.EmptyTypes, null);
                 _createGuildUI = ui.GetField("CreateGuildUI", anyStatic);
+                _noGuildUI = ui.GetField("NoGuildUI", anyStatic);
+                _managementUI = ui.GetField("GuildManagementUI", anyStatic);
 
                 // In Guilds 1.1.x Guild.Name is a public field, not a property.
                 Type guildType = _getOwnGuild?.ReturnType;
@@ -138,11 +184,55 @@ namespace NpcValheim.Integration
                 else if (nameProperty != null) _guildName = g => nameProperty.GetValue(g) as string;
 
                 Plugin.Log.LogInfo($"NpcValheim: Guilds bridge (GetOwnGuild={_getOwnGuild != null}, " +
-                                   $"SwitchUI={_switchUI != null}, CreateGuildUI={_createGuildUI != null}).");
+                                   $"SwitchUI={_switchUI != null}, CreateGuildUI={_createGuildUI != null}, " +
+                                   $"window={_noGuildUI != null && _managementUI != null && _uiIsActive != null && _hideUI != null}).");
             }
             catch (Exception ex)
             {
                 Plugin.Log.LogWarning("NpcValheim: could not bind the Guilds API: " + ex.Message);
+            }
+        }
+
+        /// <summary>
+        /// Guilds' key, shut when [Guildas] SomentePeloNpc is on. Interface.Update is where
+        /// Guilds reads its key and also where it closes the window on Esc, so the method keeps
+        /// running: a window that was closed before it and is open after it was opened by the
+        /// key, and is closed again on the same frame, before it is ever drawn. The Registrar
+        /// opens the window from its own button, outside this method, so it is untouched.
+        /// </summary>
+        [HarmonyPatch]
+        private static class GuildKeyPatch
+        {
+            private static float _nextNotice;
+
+            private static MethodBase TargetMethod() =>
+                GuildsType("Guilds.Interface")?.GetMethod("Update", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
+
+            private static bool Prepare() => TargetMethod() != null;
+
+            private static void Prefix(out bool __state)
+            {
+                Resolve();
+                __state = GuildWindowOpen();
+            }
+
+            private static void Postfix(bool __state)
+            {
+                try
+                {
+                    if (__state || !WindowNpcOnly) return;
+                    Resolve();
+                    if (!GuildWindowOpen()) return;
+                    HideGuildWindow();
+                    if (Time.unscaledTime < _nextNotice) return;
+                    _nextNotice = Time.unscaledTime + 2f;
+                    Player.m_localPlayer?.Message(MessageHud.MessageType.Center,
+                        "A janela de guildas abre no Registrador de Guildas.", 0, null);
+                }
+                catch (Exception ex)
+                {
+                    Plugin.Log.LogWarning("NpcValheim: guild key gate failed: " + ex.Message);
+                }
             }
         }
 

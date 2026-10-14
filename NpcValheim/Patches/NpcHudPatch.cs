@@ -1,24 +1,52 @@
 using HarmonyLib;
+using UnityEngine;
 using NpcValheim.Npc;
 
 namespace NpcValheim.Patches
 {
     /// <summary>
-    /// Keeps the vanilla enemy health bar off our NPCs. They are Player clones, so the game
-    /// happily draws the same green bar it draws over a wolf -- which is both wrong (they are
-    /// not fighting anything) and in the way of the nameplate and quest marker we draw there.
+    /// The name over an NPC is the game's own: EnemyHud draws it with the plate it uses for
+    /// other players (same font, outline, size on screen and 10 m range), because the NPCs are
+    /// Player clones and it already treats them as players.
     ///
-    /// TestShow is the single gate EnemyHud uses to decide whether a character deserves a
-    /// hud, so refusing there also cleans up any bar that was already showing.
+    /// Two things are taken off that plate. The health bar -- an NPC is not fighting anything,
+    /// and a green bar over a shopkeeper reads as a target. And the head height: the player
+    /// plate sits over the player rig's head, which a creature body or an admin-scaled NPC
+    /// does not have where the rig thinks, so the plate goes to the NPC's NameplateHeight.
+    ///
+    /// The quest marker (! and ?) is not the game's and is still drawn by NpcNameplate.
     /// </summary>
-    [HarmonyPatch(typeof(EnemyHud), nameof(EnemyHud.TestShow))]
-    internal static class EnemyHud_TestShow_Patch
+    [HarmonyPatch(typeof(EnemyHud))]
+    internal static class NpcHudPatch
     {
-        [HarmonyPostfix]
-        private static void Postfix(Character c, ref bool __result)
+        [HarmonyPatch(nameof(EnemyHud.ShowHud)), HarmonyPostfix]
+        private static void ShowHud(EnemyHud __instance, Character c)
         {
-            if (__result && c != null && c.GetComponent<NpcMarker>() != null)
-                __result = false;
+            if (c == null || c.GetComponent<NpcMarker>() == null) return;
+            if (!__instance.m_huds.TryGetValue(c, out var hud) || hud?.m_gui == null) return;
+            var health = hud.m_gui.transform.Find("Health");
+            if (health != null) health.gameObject.SetActive(false);
+        }
+
+        [HarmonyPatch(nameof(EnemyHud.UpdateHuds)), HarmonyPostfix]
+        private static void UpdateHuds(EnemyHud __instance)
+        {
+            var camera = Utils.GetMainCamera();
+            if (camera == null) return;
+            foreach (var pair in __instance.m_huds)
+            {
+                var character = pair.Key;
+                var hud = pair.Value;
+                if (character == null || hud?.m_gui == null || !hud.m_gui.activeSelf) continue;
+                var npc = character.GetComponent<NpcBase>();
+                if (npc == null) continue;
+
+                float scale = Mathf.Max(0.01f, character.transform.localScale.y);
+                Vector3 top = character.transform.position + Vector3.up * (npc.NameplateHeight * scale);
+                Vector3 screen = camera.WorldToScreenPointScaled(top);
+                if (screen.z > 0f) hud.m_gui.transform.position = screen;
+                else hud.m_gui.SetActive(false);
+            }
         }
     }
 }

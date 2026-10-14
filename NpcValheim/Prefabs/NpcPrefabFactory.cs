@@ -76,6 +76,8 @@ namespace NpcValheim.Prefabs
             RegisterNpcType(scene, source, "NpcValheim_ArenaVendor", typeof(ArenaVendorNpc), "Intendente da Arena", "arena-vendor.png");
             RegisterNpcType(scene, source, "NpcValheim_GuildRegistrar", typeof(GuildRegistrarNpc), "Registrador de Guildas", "guild-registrar.png");
             RegisterNpcType(scene, source, "NpcValheim_MountTrainer", typeof(MountTrainerNpc), "Mestre das Montarias", "mounts.png");
+            RegisterNpcType(scene, source, "NpcValheim_BountyHunter", typeof(BountyHunterNpc), BountyHunterNpc.DisplayName, "bounty.png");
+            RegisterNpcType(scene, source, "NpcValheim_WarJudge", typeof(WarJudgeNpc), WarJudgeNpc.DisplayName, "war-judge.png");
         }
 
         /// <summary>

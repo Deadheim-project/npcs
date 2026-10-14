@@ -477,20 +477,50 @@ class Program
 
         var mountProblems = new List<string>();
         var shipped = ParseMountOffers(DefaultMountOffers, mountProblems);
-        Check("the default offers are whole", shipped.Count == 8 && mountProblems.Count == 0,
+        Check("the default offers are whole", shipped.Count == 10 && mountProblems.Count == 0,
               shipped.Count + " / " + string.Join(" / ", mountProblems));
         Check("the default sells the first level for Coins and the capybara for Deadcoins",
-              shipped.Count == 8 &&
+              shipped.Count == 10 &&
               OfferField(shipped[0], "Kind") == "Skill" && OfferField(shipped[0], "Rank") == "1" &&
               OfferField(shipped[0], "Currency") == "Coins" &&
-              OfferField(shipped[3], "Kind") == "Mount" && OfferField(shipped[3], "Id") == "capivara" &&
-              OfferField(shipped[3], "Currency") == "Deadcoins");
+              OfferField(shipped[4], "Kind") == "Mount" && OfferField(shipped[4], "Id") == "capivara" &&
+              OfferField(shipped[4], "Currency") == "Deadcoins");
         Check("the previous javali setting resolves to the current capivara id",
               ResolveMountId("javali", "capivara", "neck") == "capivara");
         Check("current mount ids remain unchanged",
               ResolveMountId("neck", "capivara", "neck") == "neck");
         Check("unknown mount ids remain unavailable",
               ResolveMountId("javali", "neck") == null && ResolveMountId("unknown", "capivara") == null);
+
+        // ---- NPC dialogue: one packed ZDO string, written by the server, read by every client ----
+        var dialogueType = ModType("NpcDialogue");
+        Func<DialogueSettings, string> dlgPack = d =>
+            (string)dialogueType.GetMethod("Pack", AnyStatic).Invoke(null, new object[] { d });
+        Func<string, DialogueSettings> dlgUnpack = s =>
+            (DialogueSettings)dialogueType.GetMethod("Unpack", AnyStatic).Invoke(null, new object[] { s });
+        var dlgSpoken = new DialogueSettings
+        {
+            Greet = new List<string> { "Olá, {jogador}!", "  ", "Bem-vindo" },
+            Talk = new List<string> { "linha\ncom quebra" },
+            Bye = new List<string>(),
+            GreetEmote = "wave",
+            TalkEmote = "dance",
+            ByeEmote = "bow",
+        };
+        var dlgBack = dlgUnpack(dlgPack(dlgSpoken));
+        Check("dialogue survives the ZDO round trip",
+              dlgBack.Greet.SequenceEqual(new[] { "Olá, {jogador}!", "Bem-vindo" }) && dlgBack.Bye.Count == 0 &&
+              dlgBack.GreetEmote == "wave" && dlgBack.ByeEmote == "bow",
+              string.Join(" | ", dlgBack.Greet));
+        Check("a phrase cannot break the packing", dlgBack.Talk.Count == 1 && dlgBack.Talk[0] == "linha com quebra",
+              string.Join(" | ", dlgBack.Talk));
+        Check("a looping or unknown emote is dropped", dlgBack.TalkEmote == "", dlgBack.TalkEmote);
+        Check("an empty or foreign dialogue string reads as silence",
+              dlgUnpack("").Greet.Count == 0 && dlgUnpack("9\u001fx").GreetEmote == "");
+        var dlgMany = new DialogueSettings { Greet = Enumerable.Range(0, 40).Select(i => new string('a', 400)).ToList() };
+        var dlgCapped = dlgUnpack(dlgPack(dlgMany));
+        Check("phrases are capped in number and length",
+              dlgCapped.Greet.Count == 12 && dlgCapped.Greet.All(p => p.Length == 160), dlgCapped.Greet.Count.ToString());
 
         Check("a free level is refused", ParseMountOffers("skill=1;price=0", null).Count == 0);
         Check("a negative price is refused", ParseMountOffers("mount=javali;price=-5;currency=deadcoins", null).Count == 0);

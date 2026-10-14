@@ -48,6 +48,8 @@ namespace NpcValheim.Npc
             "NpcValheim_ArenaVendor",
             "NpcValheim_GuildRegistrar",
             "NpcValheim_MountTrainer",
+            "NpcValheim_BountyHunter",
+            "NpcValheim_WarJudge",
         };
 
         private static readonly HashSet<ZDOID> ProcessedStubs = new HashSet<ZDOID>();
