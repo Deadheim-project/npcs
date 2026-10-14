@@ -153,6 +153,12 @@ namespace NpcValheim.UI
                     AddTab("Treinamento", new MountTrainerView(MountOfferKind.Skill), npc, player);
                     AddTab("Montarias", new MountTrainerView(MountOfferKind.Mount), npc, player);
                     break;
+                // The buffs are bought once in a while and the lessons skill by skill, so the
+                // two lists do not share a screen.
+                case TrainerNpc _:
+                    AddTab("Estudo", new TrainerView(lessons: false), npc, player);
+                    AddTab("Aulas", new TrainerView(lessons: true), npc, player);
+                    break;
                 // A marketplace NPC decides for itself which side of the economy it runs. The
                 // auction house and the merchant are different NPCs now, so nobody has to work
                 // out who they are trading with from which tab happens to be open.

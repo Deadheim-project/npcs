@@ -598,6 +598,55 @@ com a própria lista e recusa se mudou. Sem o mod Montarias o NPC continua coloc
 não tem nada à venda. A integração é por reflexão (`Integration/MontariasApi.cs`), como a do
 EpicMMO: nenhum dos dois mods precisa do outro para compilar ou carregar.
 
+## Treinador (estudo, proteção e aulas)
+
+NPC colocável **Treinador** (`TrainerNpc`, prefab `NpcValheim_Trainer`). Vende, por moedas
+(Coins) e por Deadcoins, três coisas, em duas abas:
+
+- **Estudo** (aba *Estudo*): +`StudyBonus` de XP de skill (padrão +50%) por `StudyMinutes` minutos
+  de jogo (60), só nas skills abaixo de `StudyMaxSkill` (50). Multiplica o ganho que já passou pelo
+  `SkillMultiplier` do Deadheim e pelo multiplicador de PvE/PvP: com `SkillMultiplier` 0.5 o ganho
+  vai a 0.75 do vanilla. O tempo só corre com o jogo aberto; comprar com um ativo soma o tempo.
+- **Proteção** (aba *Estudo*): corta `ProtectionFactor` (0.5) da perda de skill da próxima morte em
+  que vale. Com `ProtectionPveOnly` (padrão), só morte PvE (monstro, queda, afogamento); morte para
+  jogador não a gasta. **A pena de PK nunca é reduzida.** Morte que não tira skill (arena,
+  castelo, janela "sem perda" do vanilla) também não a gasta. Uma por vez.
+- **Aula** (aba *Aulas*): +1 nível numa skill escolhida, até o teto do jogador:
+  `LessonCaps` = `none:15|gd_king:25|Bonemass:35|Dragon:45|GoblinKing:50` (vale o maior passe de
+  chefe que ele tem, do Mestre dos Passes) e nunca acima de `LessonMaxLevel` (50).
+  `LessonsPerWeek` aulas por personagem por semana (5; 0 = sem limite). A semana vira na
+  segunda-feira, pelo relógio do servidor.
+
+**Preços** (`[Trainer] Prices`, mesmo formato das outras listas): `item=study`, `item=protection`
+e uma `item=lesson;levels=<de>-<até>` por faixa de **nível alvo** (o nível depois da aula), cada
+um com `gold=<Coins>;deadcoins=<Deadcoins>`. Preço 0 = não vende naquela moeda. O padrão é uma
+proposta (~20 moedas por Deadcoin, como a tabela do Mestre das Montarias):
+
+| Item | Coins | Deadcoins |
+|---|---|---|
+| Estudo | 1000 | 50 |
+| Proteção | 1000 | 50 |
+| Aula para o nível 1-15 | 300 | 15 |
+| Aula para 16-25 | 600 | 30 |
+| Aula para 26-35 | 1000 | 50 |
+| Aula para 36-45 | 1600 | 80 |
+| Aula para 46-50 | 2400 | 120 |
+
+**Quem decide o quê.** O servidor confere o preço, desconta os Deadcoins (mesmo saldo e mesmo
+`log.txt` da Loja Deadcoins), lê os passes (`bosspass.txt`) para o teto e conta as aulas da semana
+em `treinador.txt` (na pasta do mod, ao lado do `bosspass.txt`; uma linha por aula, apagar a linha
+devolve a aula ao limite). Depois manda a compra com os números dele, e o **cliente** aplica,
+porque skill e morte rodam no cliente: o estudo e a proteção pelo Deadheim
+(`Deadheim.TreinadorApi`, ligado por reflexão em `Integration/DeadheimTrainerApi.cs`), a aula aqui
+mesmo (`TrainerLessons`, que nunca passa do nível alvo vendido). Os buffs aparecem na barra de
+efeitos e ficam salvos no personagem. Se o cliente não conseguir aplicar (sem personagem no mundo,
+Deadheim antigo, skill que já passou do alvo), devolve a compra e o servidor estorna os Deadcoins e
+a aula daquela compra, uma vez. **Moedas** ficam na bolsa, como no Mestre das Montarias: o cliente
+paga depois de aplicar, então um cliente modificado pode não pagar.
+
+Sem um Deadheim com a `TreinadorApi`, o NPC continua dando aulas e diz que os buffs pedem um
+Deadheim atualizado.
+
 ## Interface: Unity UI com os assets do próprio Valheim
 
 O painel era IMGUI (`OnGUI`) e agora é Unity UI (uGUI), construído em

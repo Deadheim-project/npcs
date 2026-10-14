@@ -71,6 +71,15 @@ namespace NpcValheim
         internal static ConfigEntry<string> BossPassBosses;
         internal static ConfigEntry<float> BossPassKillRadius;
         internal static ConfigEntry<string> MountTrainerOffers;
+        internal static ConfigEntry<float> TrainerStudyBonus;
+        internal static ConfigEntry<int> TrainerStudyMinutes;
+        internal static ConfigEntry<int> TrainerStudyMaxSkill;
+        internal static ConfigEntry<float> TrainerProtectionFactor;
+        internal static ConfigEntry<bool> TrainerProtectionPveOnly;
+        internal static ConfigEntry<string> TrainerLessonCaps;
+        internal static ConfigEntry<int> TrainerLessonMaxLevel;
+        internal static ConfigEntry<int> TrainerLessonsPerWeek;
+        internal static ConfigEntry<string> TrainerPrices;
         internal static ConfigEntry<UnityEngine.KeyCode> QuestJournalKey;
         internal static ConfigEntry<UnityEngine.KeyCode> VipShopKey;
         internal static ConfigEntry<bool> ShowQuestButton;
@@ -169,6 +178,37 @@ namespace NpcValheim
             if (System.Array.IndexOf(Npc.MountCatalog.OldDefaultOffers, MountTrainerOffers.Value) >= 0)
                 MountTrainerOffers.Value = Npc.MountCatalog.DefaultOffers;
 
+            // The Treinador. Every number is the server's: synchronized for display only, and
+            // the server reads its own copy on every purchase and sends the buff's numbers with
+            // the grant. The buffs themselves run in Deadheim (Deadheim.TreinadorApi).
+            const string trainer = "Trainer";
+            TrainerStudyBonus = Config.Bind(trainer, "StudyBonus", 0.5f,
+                "Estudo: XP de skill a mais enquanto dura (0.5 = +50%). Multiplica o ganho que ja passou pelo SkillMultiplier " +
+                "do Deadheim e pelo de PvE/PvP: com SkillMultiplier 0.5 o ganho vai a 0.75 do vanilla. 0 desliga a venda.");
+            TrainerStudyMinutes = Config.Bind(trainer, "StudyMinutes", 60,
+                "Estudo: minutos de jogo que dura (so corre com o jogo aberto). Comprar com um ativo soma o tempo.");
+            TrainerStudyMaxSkill = Config.Bind(trainer, "StudyMaxSkill", 50,
+                "Estudo: so vale nas skills abaixo deste nivel.");
+            TrainerProtectionFactor = Config.Bind(trainer, "ProtectionFactor", 0.5f,
+                "Protecao: fracao da perda de skill que ela corta na proxima morte em que vale (0.5 = metade). 0 desliga a venda. " +
+                "A pena de PK nunca e reduzida, e morte que nao tira skill (arena, castelo) nao gasta a protecao.");
+            TrainerProtectionPveOnly = Config.Bind(trainer, "ProtectionPveOnly", true,
+                "Protecao: so em morte PvE (monstro, queda, afogamento). Desligado, vale tambem em morte para jogador sem PK.");
+            TrainerLessonCaps = Config.Bind(trainer, "LessonCaps", Npc.TrainerCatalog.DefaultCaps,
+                "Aula: ate que nivel o Treinador ensina, pelo passe de chefe do jogador (o do Mestre dos Passes): " +
+                "<boss>:<nivel> separados por |, e none:<nivel> para quem nao tem passe nenhum. Vale o maior a que o jogador tem direito. " +
+                "Sem none, quem nao tem passe nao tem aula.");
+            TrainerLessonMaxLevel = Config.Bind(trainer, "LessonMaxLevel", 50,
+                "Aula: teto absoluto. Nenhum passe faz a aula passar deste nivel.");
+            TrainerLessonsPerWeek = Config.Bind(trainer, "LessonsPerWeek", 5,
+                "Aula: quantas por personagem por semana (segunda a domingo, relogio do servidor). 0 = sem limite. " +
+                "As aulas dadas ficam em treinador.txt, na pasta do mod ao lado do bosspass.txt.");
+            TrainerPrices = Config.Bind(trainer, "Prices", Npc.TrainerCatalog.DefaultPrices,
+                "Precos: item=study ou item=protection, e item=lesson;levels=<de>-<ate> por faixa de nivel alvo (o nivel depois da aula), " +
+                "cada um com gold=<Coins>;deadcoins=<Deadcoins>, entradas separadas por |. Preco 0 = nao vende naquela moeda. " +
+                "Deadcoins saem do saldo do servidor; Coins ficam na bolsa do jogador e o cliente paga depois de receber, " +
+                "como no Mestre das Montarias (um cliente modificado pode nao pagar).");
+
             // Server-authoritative entries. The Quests/VIP keys and HUD positions are left out
             // on purpose: they are each player's own preferences.
             ConfigSync.AddConfigEntry(TeleportCostItem).SynchronizedConfig = true;
@@ -189,6 +229,15 @@ namespace NpcValheim
             Testing.TestWorldConfig.Bind(Config, ConfigSync);
 
             ConfigSync.AddConfigEntry(MountTrainerOffers).SynchronizedConfig = true;
+            ConfigSync.AddConfigEntry(TrainerStudyBonus).SynchronizedConfig = true;
+            ConfigSync.AddConfigEntry(TrainerStudyMinutes).SynchronizedConfig = true;
+            ConfigSync.AddConfigEntry(TrainerStudyMaxSkill).SynchronizedConfig = true;
+            ConfigSync.AddConfigEntry(TrainerProtectionFactor).SynchronizedConfig = true;
+            ConfigSync.AddConfigEntry(TrainerProtectionPveOnly).SynchronizedConfig = true;
+            ConfigSync.AddConfigEntry(TrainerLessonCaps).SynchronizedConfig = true;
+            ConfigSync.AddConfigEntry(TrainerLessonMaxLevel).SynchronizedConfig = true;
+            ConfigSync.AddConfigEntry(TrainerLessonsPerWeek).SynchronizedConfig = true;
+            ConfigSync.AddConfigEntry(TrainerPrices).SynchronizedConfig = true;
 
             // Everything above is read where it is used (a new teleporter, a new listing, the
             // HUD every frame), so a reload takes effect on its own. The HUD offsets are the

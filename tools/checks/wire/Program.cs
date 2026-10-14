@@ -239,6 +239,72 @@ class Program
         return false;
     }
 
+    // ---- Treinador: the catalog, the ledger and the grant are internal, reached by name ----
+
+    static readonly Type TrainerCatalogType = ModType("TrainerCatalog");
+    static readonly Type TrainerLedgerType = ModType("TrainerLedger");
+    static readonly Type TrainerType = ModType("Trainer");
+    static readonly Type TrainerLessonsType = ModType("TrainerLessons");
+
+    static string TrainerConst(string name) =>
+        (string)TrainerCatalogType.GetField(name, AnyStatic).GetRawConstantValue();
+
+    static TrainerPrices ParseTrainerPrices(string raw, List<string> problems) =>
+        (TrainerPrices)TrainerCatalogType.GetMethod("ParsePrices", AnyStatic).Invoke(null, new object[] { raw, problems });
+
+    static List<TrainerCap> ParseTrainerCaps(string raw, List<string> problems) =>
+        (List<TrainerCap>)TrainerCatalogType.GetMethod("ParseCaps", AnyStatic).Invoke(null, new object[] { raw, problems });
+
+    static int CapFor(List<TrainerCap> caps, int maxLevel, out string from, params string[] passes)
+    {
+        var args = new object[] { caps, new HashSet<string>(passes, StringComparer.Ordinal), maxLevel, null };
+        int cap = (int)TrainerCatalogType.GetMethod("CapFor", AnyStatic).Invoke(null, args);
+        from = (string)args[3];
+        return cap;
+    }
+
+    static string LessonRefusal(TrainerPrices prices, int level, int cap, int used, int perWeek, out int target,
+        out TrainerLessonBand band)
+    {
+        var args = new object[] { prices, level, cap, used, perWeek, 0, null };
+        var refusal = (string)TrainerCatalogType.GetMethod("LessonRefusal", AnyStatic).Invoke(null, args);
+        target = (int)args[5];
+        band = (TrainerLessonBand)args[6];
+        return refusal;
+    }
+
+    static string WeekOf(DateTime day) =>
+        (string)TrainerLedgerType.GetMethod("WeekOf", AnyStatic).Invoke(null, new object[] { day });
+
+    static string LessonLine(long playerId, string week, string skill, int target, string name, string token) =>
+        (string)TrainerLedgerType.GetMethod("FormatLine", AnyStatic).Invoke(null, new object[]
+        {
+            playerId, week, skill, target, "deadcoins:15", new DateTime(2026, 10, 14, 12, 0, 0), name, token,
+        });
+
+    static List<TrainerLessonRecord> ParseLessons(string[] lines, List<string> problems) =>
+        (List<TrainerLessonRecord>)TrainerLedgerType.GetMethod("Parse", AnyStatic).Invoke(null, new object[] { lines, problems });
+
+    static int CountWeek(List<TrainerLessonRecord> lessons, long playerId, string week) =>
+        (int)TrainerLedgerType.GetMethod("CountWeek", AnyStatic, null,
+                new[] { typeof(IEnumerable<TrainerLessonRecord>), typeof(long), typeof(string) }, null)
+            .Invoke(null, new object[] { lessons, playerId, week });
+
+    static string PackGrant(TrainerGrant grant) =>
+        (string)typeof(TrainerGrant).GetMethod("Pack", AnyMember).Invoke(grant, null);
+
+    static TrainerGrant UnpackGrant(string payload)
+    {
+        var args = new object[] { payload, null };
+        return (bool)typeof(TrainerGrant).GetMethod("TryUnpack", AnyStatic).Invoke(null, args) ? (TrainerGrant)args[1] : null;
+    }
+
+    static string TrainerBuyPayload(string item, string method, int price, string skill, int level) =>
+        (string)TrainerType.GetMethod("BuyPayload", AnyStatic).Invoke(null, new object[] { item, method, price, skill, level });
+
+    static bool TryParseSkill(string name) =>
+        (bool)TrainerLessonsType.GetMethod("TryParseSkill", AnyStatic).Invoke(null, new object[] { name, null });
+
     /// <summary>Whether this NPC type answers server-decided requests itself, rather than
     /// inheriting NpcBase's refusal.</summary>
     static bool HandlesOnServer(Type npc, string dispatcher) =>
@@ -420,6 +486,8 @@ class Program
               HandlesOnServer(typeof(BossPassNpc), "DispatchServiceAction"));
         Check("the Mestre das Montarias decides purchases on the server channel",
               HandlesOnServer(typeof(MountTrainerNpc), "DispatchServiceAction"));
+        Check("the Treinador decides purchases on the server channel",
+              HandlesOnServer(typeof(TrainerNpc), "DispatchServiceAction"));
 
         System.Console.WriteLine();
         System.Console.WriteLine("== Deadcoins counter ==");
@@ -754,6 +822,167 @@ class Program
         Check("buying from the counter can no longer pay coins back",
               !BodyReaches(Merchant, "RPC_BuyFromNpc", "Refund", "RPC_Paid") &&
               !BodyReaches(Merchant, "RPC_BuyFromNpc", "GiveCoins", null));
+
+        System.Console.WriteLine();
+        System.Console.WriteLine("== Treinador: config ==");
+
+        var settingsNow = (TrainerSettings)typeof(TrainerSettings).GetMethod("Current", AnyStatic).Invoke(null, null);
+        Check("without a cfg the numbers are the approved ones (+50% 60 min below 50, -50% PvE only, cap 50, 5 a week)",
+              settingsNow.StudyBonus == 0.5f && settingsNow.StudyMinutes == 60 && settingsNow.StudyMaxSkill == 50 &&
+              settingsNow.ProtectionFactor == 0.5f && settingsNow.ProtectionPveOnly && settingsNow.LessonMaxLevel == 50 &&
+              settingsNow.LessonsPerWeek == 5);
+        Check("the default caps are the approved ladder",
+              TrainerConst("DefaultCaps") == "none:15|gd_king:25|Bonemass:35|Dragon:45|GoblinKing:50", TrainerConst("DefaultCaps"));
+
+        var trainerProblems = new List<string>();
+        var trainerPrices = ParseTrainerPrices(TrainerConst("DefaultPrices"), trainerProblems);
+        Check("the default price list parses without a complaint", trainerProblems.Count == 0, string.Join(" / ", trainerProblems));
+        Check("study and protection are sold in both currencies",
+              trainerPrices.Study != null && trainerPrices.Study.Gold > 0 && trainerPrices.Study.Deadcoins > 0 &&
+              trainerPrices.Protection != null && trainerPrices.Protection.Gold > 0 && trainerPrices.Protection.Deadcoins > 0);
+        bool contiguous = trainerPrices.Lessons.Count > 0 && trainerPrices.Lessons[0].From == 1 &&
+                          trainerPrices.Lessons[trainerPrices.Lessons.Count - 1].To == 50;
+        for (int i = 1; i < trainerPrices.Lessons.Count; i++)
+            contiguous &= trainerPrices.Lessons[i].From == trainerPrices.Lessons[i - 1].To + 1;
+        Check("the default lessons price every target level from 1 to 50, no gap",
+              contiguous, string.Join(",", trainerPrices.Lessons.Select(b => b.From + "-" + b.To)));
+        Check("the bands follow the pass ladder (15, 25, 35, 45, 50)",
+              string.Join(",", trainerPrices.Lessons.Select(b => b.To)) == "15,25,35,45,50");
+        Check("a lesson costs more the higher it goes",
+              trainerPrices.Lessons.Zip(trainerPrices.Lessons.Skip(1), (a, b) => b.Gold > a.Gold && b.Deadcoins > a.Deadcoins).All(x => x));
+        Check("a lesson is priced by its target level",
+              trainerPrices.LessonTo(15)?.To == 15 && trainerPrices.LessonTo(16)?.From == 16 && trainerPrices.LessonTo(51) == null &&
+              trainerPrices.LessonTo(0) == null);
+
+        var badPrices = new List<string>();
+        var parsedBad = ParseTrainerPrices(
+            "item=study;gold=-1;deadcoins=5|item=protection;gold=0;deadcoins=0|item=potion;gold=5|" +
+            "item=lesson;levels=10-5;gold=5|item=lesson;levels=0-3;gold=5|item=lesson;gold=5|item=lesson;levels=1-101;gold=5|" +
+            "item=lesson;levels=7;gold=70;deadcoins=0|item=lesson;levels=5-8;gold=1|item=study;gold=9;deadcoins=9|item=study;gold=1",
+            badPrices);
+        Check("a negative price is refused", parsedBad.Study == null || parsedBad.Study.Gold == 9);
+        Check("a thing with no price is not sold", parsedBad.Protection == null);
+        Check("an unknown item, a backwards band and a band outside 1-100 are refused",
+              parsedBad.Lessons.Count == 1, string.Join(",", parsedBad.Lessons.Select(b => b.From + "-" + b.To)));
+        Check("a single level is a band of one, sold only in the currency with a price",
+              parsedBad.Lessons.Count == 1 && parsedBad.Lessons[0].From == 7 && parsedBad.Lessons[0].To == 7 &&
+              parsedBad.Lessons[0].Gold == 70 && parsedBad.Lessons[0].Deadcoins == 0);
+        Check("an overlapping band loses to the first", parsedBad.LessonTo(8) == null);
+        Check("a repeated study keeps its first good price", parsedBad.Study != null && parsedBad.Study.Gold == 9);
+        Check("every bad entry is named in the log", badPrices.Count == 9, string.Join(" / ", badPrices));
+        Check("an empty price list sells nothing",
+              ParseTrainerPrices("", null).Study == null && ParseTrainerPrices("", null).Lessons.Count == 0);
+
+        System.Console.WriteLine();
+        System.Console.WriteLine("== Treinador: teto da aula pelo passe ==");
+
+        var capProblems = new List<string>();
+        var caps = ParseTrainerCaps(TrainerConst("DefaultCaps"), capProblems);
+        Check("the default caps parse whole", caps.Count == 5 && capProblems.Count == 0, string.Join(" / ", capProblems));
+        Check("without a pass lessons go to 15", CapFor(caps, 50, out string capFrom) == 15 && capFrom == null);
+        Check("the Elder's pass opens 25", CapFor(caps, 50, out capFrom, "gd_king") == 25 && capFrom == "gd_king");
+        Check("a bought Bonemass pass opens 35 without the Elder's", CapFor(caps, 50, out capFrom, "Bonemass") == 35 && capFrom == "Bonemass");
+        Check("the best pass wins", CapFor(caps, 50, out capFrom, "gd_king", "GoblinKing", "Dragon") == 50 && capFrom == "GoblinKing");
+        Check("a pass with no step of its own changes nothing", CapFor(caps, 50, out capFrom, "SeekerQueen") == 15);
+        Check("LessonMaxLevel is the ceiling whatever the pass", CapFor(caps, 40, out capFrom, "GoblinKing") == 40);
+        Check("without a none step, no pass means no lessons", CapFor(ParseTrainerCaps("gd_king:25", null), 50, out capFrom) == 0);
+        var badCaps = new List<string>();
+        var parsedCaps = ParseTrainerCaps("none:abc|gd king:20|Dragon:101|NONE:10|none:30|Bonemass:-1|:5|Dragon:44", badCaps);
+        Check("bad steps are refused and named, the first none wins",
+              parsedCaps.Count == 2 && parsedCaps[0].Boss == null && parsedCaps[0].Level == 10 && parsedCaps[1].Level == 44 &&
+              badCaps.Count == 6, string.Join(" / ", badCaps));
+
+        Check("a lesson inside the cap is sold, priced by its target",
+              LessonRefusal(trainerPrices, 14, 15, 0, 5, out int lessonTarget, out var lessonBand) == null &&
+              lessonTarget == 15 && lessonBand != null && lessonBand.To == 15);
+        Check("a lesson past the cap is refused", LessonRefusal(trainerPrices, 15, 15, 0, 5, out _, out lessonBand) != null && lessonBand == null);
+        Check("the fifth lesson of the week is the last",
+              LessonRefusal(trainerPrices, 3, 15, 4, 5, out _, out _) == null &&
+              LessonRefusal(trainerPrices, 3, 15, 5, 5, out _, out _) != null);
+        Check("LessonsPerWeek 0 is no limit", LessonRefusal(trainerPrices, 3, 15, 999, 0, out _, out _) == null);
+        Check("a target with no price is refused", LessonRefusal(trainerPrices, 50, 60, 0, 5, out _, out _) != null);
+        Check("a level the game cannot have is refused",
+              LessonRefusal(trainerPrices, -1, 15, 0, 5, out _, out _) != null &&
+              LessonRefusal(trainerPrices, 100, 100, 0, 5, out _, out _) != null);
+        Check("a cap of 0 says a boss pass opens the lessons",
+              (LessonRefusal(trainerPrices, 0, 0, 0, 5, out _, out _) ?? "").Contains("passe"));
+
+        System.Console.WriteLine();
+        System.Console.WriteLine("== Treinador: aulas da semana ==");
+
+        Check("a week opens on Monday", WeekOf(new DateTime(2026, 10, 14, 23, 59, 0)) == "2026-10-12" &&
+                                        WeekOf(new DateTime(2026, 10, 12, 0, 0, 1)) == "2026-10-12");
+        Check("Sunday is still the same week", WeekOf(new DateTime(2026, 10, 18, 23, 59, 59)) == "2026-10-12");
+        Check("the next Monday is a new week", WeekOf(new DateTime(2026, 10, 19, 0, 0, 0)) == "2026-10-19");
+        Check("a week can start in the previous year", WeekOf(new DateTime(2027, 1, 1)) == "2026-12-28");
+
+        string lessonLine = LessonLine(76561, "2026-10-12", "Swords", 15, "Rag;nar", "abc123");
+        Check("a lesson line has its eight fields, whatever the name", lessonLine.Split(';').Length == 8, lessonLine);
+        var lessonProblems = new List<string>();
+        var lessons = ParseLessons(new[]
+        {
+            "# comentario",
+            lessonLine,
+            LessonLine(76561, "2026-10-12", "Axes", 7, "Ragnar", "def456"),
+            LessonLine(76561, "2026-10-05", "Axes", 6, "Ragnar", "old"),
+            LessonLine(42, "2026-10-12", "Bows", 3, "Bjorn", "bjorn1"),
+            "76561;2026-10-12",
+            "abc;2026-10-12;Swords",
+            "0;2026-10-12",
+            "77;",
+        }, lessonProblems);
+        Check("a written lesson reads back", lessons.Any(l => l.Token == "abc123" && l.Skill == "Swords" && l.Target == 15));
+        Check("the week counts this character's lessons of this week only",
+              CountWeek(lessons, 76561, "2026-10-12") == 3 && CountWeek(lessons, 42, "2026-10-12") == 1 &&
+              CountWeek(lessons, 76561, "2026-10-19") == 0);
+        Check("a hand-added two-field line counts", lessons.Count(l => l.PlayerId == 76561 && l.Token == "") == 1);
+        Check("lines that are not lessons are skipped and named", lessonProblems.Count == 3, string.Join(" / ", lessonProblems));
+
+        System.Console.WriteLine();
+        System.Console.WriteLine("== Treinador: o que viaja ==");
+
+        Check("a lesson request names the skill and the level shown",
+              TrainerBuyPayload("lesson", "deadcoins", 15, "Swords", 14) == "lesson\ndeadcoins\n15\nSwords\n14");
+        Check("a buff request has the same five fields",
+              TrainerBuyPayload("study", "gold", 1000, null, 0) == "study\ngold\n1000\n\n");
+        var grant = new TrainerGrant
+        {
+            Token = "tok", Item = "protection", Method = "gold", Price = 1000, Balance = -1, Skill = "", Target = 0,
+            Bonus = 0.5f, Minutes = 60, MaxSkill = 50, Factor = 0.35f, PveOnly = false,
+        };
+        string packedGrant = PackGrant(grant);
+        var grantBack = UnpackGrant(packedGrant);
+        Check("a grant reads back whole",
+              grantBack != null && grantBack.Token == "tok" && grantBack.Item == "protection" && grantBack.Method == "gold" &&
+              grantBack.Price == 1000 && grantBack.Balance == -1 && grantBack.Bonus == 0.5f && grantBack.Minutes == 60 &&
+              grantBack.MaxSkill == 50 && grantBack.Factor == 0.35f && !grantBack.PveOnly, packedGrant.Replace('\n', '|'));
+        var lessonGrant = UnpackGrant(PackGrant(new TrainerGrant { Token = "t2", Item = "lesson", Method = "deadcoins", Price = 15, Balance = 85, Skill = "Swords", Target = 15 }));
+        Check("a lesson grant carries the skill, the target and the balance",
+              lessonGrant != null && lessonGrant.Skill == "Swords" && lessonGrant.Target == 15 && lessonGrant.Balance == 85);
+        var parts = packedGrant.Split('\n');
+        Check("a grant with a field missing is refused", UnpackGrant(string.Join("\n", parts.Take(11))) == null);
+        Check("a grant with a broken number is refused",
+              UnpackGrant(packedGrant.Replace("\n1000\n", "\nmil\n")) == null);
+        Check("a grant without its purchase token is refused", UnpackGrant("\n" + string.Join("\n", parts.Skip(1))) == null);
+        Check("a grant whose PvE flag is not 0 or 1 is refused",
+              UnpackGrant(string.Join("\n", parts.Take(11)) + "\n2") == null);
+
+        Check("a skill is named exactly as the game spells it", TryParseSkill("Swords") && TryParseSkill("WoodCutting"));
+        Check("no other spelling is a skill",
+              !TryParseSkill("swords") && !TryParseSkill("1") && !TryParseSkill("Swords, Knives") && !TryParseSkill("") &&
+              !TryParseSkill(null) && !TryParseSkill(" Swords"));
+        Check("None and All are not skills to teach", !TryParseSkill("None") && !TryParseSkill("All"));
+
+        // The rule the release check enforces by compiling against the game's own assembly:
+        // Skills.GetSkill is private there, so the lesson reaches it by reflection only.
+        // Control on the same game type: a Player member does not resolve outside the game
+        // (its fields need Unity modules this harness does not carry), a Skills one does.
+        Check("the reader sees a call to a Skills method, GetSkillList in RawLevel (control)",
+              BodyReaches(TrainerLessonsType, "RawLevel", "GetSkillList", null));
+        Check("the lesson never calls the private Skills.GetSkill directly",
+              !BodyReaches(TrainerLessonsType, "Apply", "GetSkill", null));
+        Check("a refused undo cannot refund: the server only pays back what it has a purchase for",
+              BodyReaches(TrainerType, "RPC_Undo", "TryGetValue", null));
 
         System.Console.WriteLine();
         System.Console.WriteLine(failed == 0 ? $"ALL {passed} CHECKS PASSED" : $"{failed} FAILED, {passed} passed");
