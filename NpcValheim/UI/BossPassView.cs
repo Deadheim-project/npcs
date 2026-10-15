@@ -131,11 +131,17 @@ namespace NpcValheim.UI
                     Iconify(gold, MarketplaceNpc.CoinPrefabName, 26f);
                     gold.onClick.AddListener(() => Pay(counter, entry, BossPass.MethodGold));
                 }
-                if (entry.Deadcoins > 0)
+                if (entry.Deadcoins > 0 && BossPass.LocalDeadcoinsUnlocked(entry.Boss))
                 {
                     var deadcoins = ValheimUi.CreateButton(row, $"{entry.Deadcoins} Deadcoins", 170f, 44f, 14);
                     ValheimUi.SetWidth(deadcoins.gameObject, 170f);
                     deadcoins.onClick.AddListener(() => Pay(counter, entry, BossPass.MethodDeadcoins));
+                }
+                else if (entry.Deadcoins > 0)
+                {
+                    var locked = ValheimUi.CreateLabel(row, "Deadcoins: ainda não liberado", 13, ValheimUi.Muted,
+                        TextAlignmentOptions.Right);
+                    ValheimUi.SetWidth(locked.gameObject, 170f);
                 }
             }
         }
@@ -152,9 +158,12 @@ namespace NpcValheim.UI
                 case BossPassLedger.KindDeadcoins:
                     return $"<color={Green}>Passe comprado com Deadcoins</color>";
                 case null:
-                    return entry.Gold > 0 || entry.Deadcoins > 0
+                    bool deadcoinsOffered = entry.Deadcoins > 0 && BossPass.LocalDeadcoinsUnlocked(entry.Boss);
+                    return entry.Gold > 0 || deadcoinsOffered
                         ? $"Sem passe: derrote {entry.Name} ou pague uma vez"
-                        : $"Sem passe: este só se ganha derrotando {entry.Name}";
+                        : entry.Deadcoins > 0
+                            ? $"Sem passe: derrote {entry.Name} (Deadcoins só depois da 1ª derrota aqui)"
+                            : $"Sem passe: este só se ganha derrotando {entry.Name}";
                 default:
                     return $"<color={Green}>Passe concedido por um admin</color>";
             }

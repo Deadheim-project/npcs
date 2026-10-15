@@ -322,6 +322,38 @@ uma leitura do IL de `RPC_BuyFromNpc` provando que não sobrou nenhum pagamento
 de moedas nele; no `content`, os reembolsos do leilão contra o LiteDB de
 verdade, incluindo a alegação de 2 bilhões.
 
+### Mercador de bioma: Deadcoins e limite semanal (A3)
+
+Cada item da **lista de venda** do Mercador (o que ele vende, não o que compra)
+pode ter, além do preço em Coins, um **preço em Deadcoins** e um **limite
+semanal por jogador** — tudo opcional e por item.
+
+- **Admin:** na aba Admin, abaixo do balcão de Coins, a linha *Deadcoins/un* +
+  *Limite/semana* + **Definir (venda)** edita só esses dois campos de um item
+  (preservando o preço em Coins); **Ele vende** continua editando só o preço em
+  Coins (preservando Deadcoins e o limite). Preço 0 nos dois = item sai do
+  balcão.
+- **Compra em Deadcoins:** inteiramente no **servidor** — mesmo saldo e mesmo
+  `log.txt` da Loja Deadcoins — com **estorno** se o registro do limite semanal
+  não puder ser gravado (a compra nunca cobra sem entregar nem entrega sem
+  cobrar). O cadeado de passe de boss vale para as duas moedas igual.
+- **Limite semanal:** contado **por item**, somado entre todos os Mercadores
+  que o vendem (não dá para contornar andando para outro balcão), em
+  `mercado-semanal.txt` (pasta do mod, ao lado do `bosspass.txt`); a semana usa
+  o mesmo relógio do Treinador (`TrainerLedger.WeekOf`, segunda-feira). Vale
+  tanto para Coins quanto para Deadcoins: comprar em Coins também soma à
+  mesma conta. Sem limite = sem a linha, ou `0`.
+- **Modelos de NPC:** `Content/templates/kg-traderbronze.yaml` (Floresta
+  Negra/bronze, sem passe), `kg-traderswamp.yaml` (Pântano, `gd_king`),
+  `kg-ferreirogelo.yaml` (Montanha, `Bonemass`), `kg-ferreiroplanicie.yaml`
+  (Planície, `Dragon`), `kg-ferreiromist.yaml` (Mistlands, `GoblinKing`) e
+  `kg-ferreiroash.yaml` (Ashlands, `SeekerQueen`) ganharam `requiredBoss`, a
+  Garantia de Refino (`GarantiaRefino`, 1000 Coins ou 30 Deadcoins, limite
+  10/semana) e o Portal Token (3000 Coins); os que já vendiam um minério
+  (Cobre/Estanho no bronze, Prata na montanha, Flametal em Ashlands) ganharam
+  também preço em Deadcoins e limite semanal nesse minério. Tudo proposta —
+  o admin ajusta no jogo. Não há modelo para o Norte Profundo (Fader) ainda.
+
 ## Loja Deadcoins (substitui o mod DonationShop)
 
 NPC colocável **Loja Deadcoins** (`DeadcoinShopNpc`, prefab
@@ -334,7 +366,21 @@ quando esta versão entrar.
   valor do servidor como está. Entrada com quantidade ou preço não positivo, ou
   com item que o jogo não conhece, é ignorada e aparece no log. A primeira
   entrada do default antigo (`prefabs=Blueberriesamount=50;...`) nunca foi
-  válida e é justamente o caso que o log aponta.
+  válida e é justamente o caso que o log aponta. Padrão decidido em 14/10/2026
+  (catálogo Deadcoins): Portal Token (250), Ficha Fundador (200), Ficha
+  Barbeiro (60), Ficha Halloween (400), Ficha Temporada (500), Ficha Batizar
+  (800), Ficha Brasão (1000) — as fichas são itens do Deadheim; se o Deadheim
+  ainda não os criou, a entrada é pulada sem erro, como era com o `ResetToken`.
+  Minério, pregos, olho, núcleo e Coins saíram daqui: quem ainda os vende por
+  Deadcoins é um Mercador de bioma (ver *Mercador que também compra*, abaixo).
+- **Janela de venda (A1):** uma entrada pode somar `from=<aaaa-mm-dd>` e/ou
+  `to=<aaaa-mm-dd>` (ambas as datas incluídas); fora da janela o item some da
+  loja e a compra é recusada, conferido no **relógio do servidor**. Sem `from`
+  ou sem `to`, aquele lado é sem limite. Uma data malformada, ou `from` depois
+  de `to`, descarta a entrada e aparece no log. Editar quantidade/preço pela
+  aba Itens (admin) preserva a janela já configurada; ela só muda editando o
+  cfg à mão. No padrão, a Ficha Halloween tem janela 24/10 a 07/11 (proposta);
+  a Ficha Fundador ainda não tem data (a abertura foi adiada).
 - **Saldos:** continuam em `BepInEx/config/DonationShop/<nome>-<conta>.json`,
   um número por arquivo. Os saldos que já existem passam sem migração, e doação
   continua sendo creditada editando esses arquivos. O arquivo (com `0`) aparece
@@ -458,18 +504,30 @@ morto em outro lugar ou um passe dado à mão no arquivo aparecem com ele aberto
 - `Bosses`: mesmo formato da `[DeadcoinShop] Items`:
   `boss=<prefab>;name=<nome>;shop=<nome da loja>;gold=<Coins>;deadcoins=<Deadcoins>`,
   separados por `|`. Preço 0 = aquela forma de pagar não é oferecida. Padrão
-  (Eikthyr fora de propósito, 100 Deadcoins = R$1):
+  decidido em 14/10/2026 (Eikthyr fora de propósito, 100 Deadcoins = R$1):
+  **todo `gold` é 0** — o passe só sai matando o boss ou por Deadcoins, nunca
+  mais por Coins (um admin pode religar Coins num boss pondo `gold` > 0 à mão):
 
   | Boss (prefab) | Abre | Coins | Deadcoins |
   |---|---|---|---|
-  | Ancião (`gd_king`) | Loja do Pântano | 1000 | 500 |
-  | Bonemass | Loja da Montanha | 3000 | 1000 |
-  | Moder (`Dragon`) | Loja da Planície | 5000 | 2500 |
-  | Yagluth (`GoblinKing`) | Loja de Mistlands | 10000 | 5000 |
-  | Rainha (`SeekerQueen`) | Loja de Ashlands | 15000 | 10000 |
-  | Fader | Loja do Norte Profundo | 25000 | 20000 |
+  | Ancião (`gd_king`) | Loja do Pântano | 0 | 500 |
+  | Bonemass | Loja da Montanha | 0 | 1000 |
+  | Moder (`Dragon`) | Loja da Planície | 0 | 2500 |
+  | Yagluth (`GoblinKing`) | Loja de Mistlands | 0 | 5000 |
+  | Rainha (`SeekerQueen`) | Loja de Ashlands | 0 | 10000 |
+  | Fader | Loja do Norte Profundo | 0 | 20000 |
 
 - `KillRadius`: metros, padrão 60.
+- `DeadcoinsAfterFirstKill` (A2, padrão **ligado**): o preço em Deadcoins de um
+  boss só aparece e só é aceito depois que esse boss morreu **neste servidor**
+  pela primeira vez, por qualquer jogador — antes disso o passe só sai matando
+  (ou por Coins, se o admin tiver posto `gold` > 0). A marca da 1ª morte fica
+  em `bossfirstkill.txt` (ver abaixo), **não** no `bosspass.txt`: uma linha ali
+  seria lida como passe de algum personagem pelo teto das aulas do Treinador
+  (`BossPassLedger.PassesOf`), e uma linha com id 0 é rejeitada e loga aviso a
+  cada releitura. Ao ligar a trava pela primeira vez num servidor que já tinha
+  mortes registradas, o arquivo nasce semeado dos bosses que já têm passe
+  "em combate" no `bosspass.txt`, para não trancar de novo quem já venceu.
 
 Um mercador que exige um boss que saiu da config continua **trancado** (e diz isso
 na tela). Quem destranca é a aba Admin, de propósito.
@@ -486,6 +544,13 @@ aparecer duas vezes, vale a primeira linha.
 
 O requisito também entra no YAML do NPC (`marketplace.requiredBoss`). Um modelo que
 não fala do requisito deixa o NPC como está; `requiredBoss: ''` destranca.
+
+### Onde fica a marca da 1ª morte
+
+`bossfirstkill.txt`, na mesma pasta do `bosspass.txt`, uma linha por boss já morto
+**no servidor** (sem id de personagem — é uma marca do servidor, não de alguém):
+`<boss>;<quando>`. Apagar a linha tranca aquele boss para Deadcoins de novo; o
+servidor relê o arquivo quando ele muda.
 
 ## Arena (cópia da arena do WoW 3.3.5)
 
@@ -576,12 +641,23 @@ montaria. O que é cada nível (nome, bônus de velocidade) e cada montaria (nom
 nível exigido) vem do mod **Montarias**; aqui fica só o que está à venda e por quanto.
 
 - **Lista:** `[MountTrainer] Offers` no cfg do NpcValheim, por exemplo
-  `skill=1;price=500;currency=coins|mount=capivara;price=300;currency=deadcoins`.
-  `skill=N` é o nível N da habilidade e `mount=<id>` é uma montaria do Montarias. A moeda é
-  escolhida **por item** (`coins` ou `deadcoins`), porque depende do que se vende. Entrada
-  com preço não positivo, moeda desconhecida, nível que não existe ou montaria que o
-  Montarias não conhece é ignorada e aparece no log. O ID antigo `javali` continua sendo
-  aceito e convertido para `capivara` nas configurações existentes.
+  `skill=1;price=500;currency=coins|mount=boar;price=1000;currency=coins|mount=boar;price=300;currency=deadcoins`.
+  `skill=N` é o nível N da habilidade e `mount=<id>` é uma montaria do Montarias.
+  **A4 (14/10/2026):** um mesmo nível/montaria pode ter **as duas moedas** —
+  uma entrada `currency=coins` e outra `currency=deadcoins` com o mesmo
+  `skill=`/`mount=` se juntam numa só oferta com os dois preços (a tela mostra
+  os dois botões); repetir a **mesma** moeda para o mesmo item é que continua
+  sendo recusado como duplicata. Entrada com preço não positivo, moeda
+  desconhecida, nível que não existe ou montaria que o Montarias não conhece é
+  ignorada e aparece no log. O ID antigo `javali` continua sendo aceito e
+  convertido para `capivara` nas configurações existentes.
+  Padrão decidido em 14/10/2026: Aprendiz 500 Coins; Experiente 2500 Coins;
+  Mestre 10000 Coins **ou** 500 Deadcoins; Voadora 20000 Coins **ou** 1000
+  Deadcoins; Javali (`boar`) 1000 Coins **ou** 300 Deadcoins; Capivara/Neck/
+  Cervo/Eikthyr só 300 Deadcoins (sem mudança); Moder 10000 Coins **ou** 600
+  Deadcoins. Um servidor com o padrão antigo (só Deadcoins em Mestre, Voadora
+  e Javali) migra para este sozinho, como já acontecia nas trocas anteriores
+  de padrão (`OldDefaultOffers`).
 - **Ordem do WoW:** um nível só pode ser aprendido em cima do anterior.
 - **Quem guarda o quê:** o que o jogador sabe e possui é o registro do Montarias **no
   servidor** (`BepInEx/config/ValheimMontarias/cavaleiros/<personagem>-<conta>.txt`).

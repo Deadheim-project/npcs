@@ -1,10 +1,15 @@
 # Importado do KG Marketplace: Traders/TraderProfiles.cfg [FerreiroMist]
 # Sem 'name': aplicar este modelo troca a lista de precos e deixa o
 # nome do NPC como esta.
+#
+# Mercador de bioma (A3, 14/10/2026): Mistlands, trancado pelo passe de Yagluth (GoblinKing),
+# igual à Loja de Mistlands do Mestre dos Passes. Preços em Deadcoins, limite semanal e
+# Garantia/Portal Token são proposta; o admin pode ajustar tudo no jogo (Admin > Balcão).
 name: ""
 forType: Marketplace
 marketplace:
   taxPercent: 0
+  requiredBoss: "GoblinKing"
   buys: []
   sells:
     - itemName: "JuteBlue"
@@ -19,3 +24,9 @@ marketplace:
       price: 60
     - itemName: "ScaleHide"
       price: 50
+    - itemName: "GarantiaRefino"
+      price: 1000
+      deadcoins: 30
+      weeklyLimit: 10
+    - itemName: "PortalToken"
+      price: 3000

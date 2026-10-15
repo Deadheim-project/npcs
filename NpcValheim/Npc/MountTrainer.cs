@@ -10,18 +10,23 @@ namespace NpcValheim.Npc
 
     internal enum MountCurrency { Coins, Deadcoins }
 
-    /// <summary>One line of the Mestre das Montarias: a level of the riding skill or a mount,
-    /// its price, and which currency pays for it.</summary>
+    /// <summary>
+    /// One line of the Mestre das Montarias: a level of the riding skill or a mount, and its
+    /// price in each currency (A4). 0 in either field means it is not sold that way -- same
+    /// shape as a boss pass (BossPassEntry): both currencies can be offered on the same entry,
+    /// so a mount can be earned faster for Deadcoins without ever being free in Coins.
+    /// </summary>
     internal sealed class MountOffer
     {
         public MountOfferKind Kind;
         /// <summary>The level as text for a skill, the Montarias mount id for a mount.</summary>
         public string Id;
         public int Rank;
-        public int Price;
-        public MountCurrency Currency;
 
-        public string CurrencyName => Currency == MountCurrency.Deadcoins ? "Deadcoins" : "Coins";
+        /// <summary>Coins for this level/mount, or 0 when it cannot be bought with Coins.</summary>
+        public int Gold;
+        /// <summary>Deadcoins for this level/mount, or 0 when it cannot be bought with Deadcoins.</summary>
+        public int Deadcoins;
 
         public string Title => Kind == MountOfferKind.Skill
             ? MontariasApi.RankName(Rank)
@@ -30,28 +35,37 @@ namespace NpcValheim.Npc
 
     /// <summary>
     /// The price list of the Mestre das Montarias, read from [MountTrainer] Offers:
-    /// "skill=1;price=500;currency=coins|mount=javali;price=300;currency=deadcoins|...".
+    /// "skill=1;price=500;currency=coins|mount=boar;price=300;currency=deadcoins|...".
     ///
-    /// The currency is chosen per entry because it depends on what is sold: the first levels of
-    /// the skill are something to earn in game, an exclusive mount is something to donate for.
-    /// What a level or a mount is (name, speed, required level) comes from Montarias; this list
-    /// only says which of them are for sale and at what price.
+    /// A4: two entries for the same skill=/mount= (one per currency) are two prices for the
+    /// one thing, not two different things -- Parse merges them into a single MountOffer, the
+    /// way BossPass.Bosses has always let one boss's pass be bought in either currency. What a
+    /// level or a mount is (name, speed, required level) comes from Montarias; this list only
+    /// says which of them are for sale and at what price.
     /// </summary>
     internal static class MountCatalog
     {
+        /// <summary>
+        /// Decided 14/10/2026 (memória vip-doacoes.md): Mestre, Voadora and the Javali (the
+        /// Boar mount) now sell for Coins too, alongside the Deadcoins price they already had;
+        /// Aprendiz and Experiente stay Coins-only, and Capivara/Neck/Cervo/Eikthyr stay
+        /// Deadcoins-only, same as before.
+        /// </summary>
         internal const string DefaultOffers =
             "skill=1;price=500;currency=coins|skill=2;price=2500;currency=coins|" +
-            "skill=3;price=500;currency=deadcoins|skill=4;price=1000;currency=deadcoins|" +
+            "skill=3;price=10000;currency=coins|skill=3;price=500;currency=deadcoins|" +
+            "skill=4;price=20000;currency=coins|skill=4;price=1000;currency=deadcoins|" +
             "mount=capivara;price=300;currency=deadcoins|" +
             "mount=neck;price=300;currency=deadcoins|mount=deer;price=300;currency=deadcoins|" +
-            "mount=boar;price=300;currency=deadcoins|mount=eikthyr;price=300;currency=deadcoins|" +
-            "mount=moder;price=600;currency=deadcoins";
+            "mount=boar;price=1000;currency=coins|mount=boar;price=300;currency=deadcoins|" +
+            "mount=eikthyr;price=300;currency=deadcoins|" +
+            "mount=moder;price=10000;currency=coins|mount=moder;price=600;currency=deadcoins";
 
         /// <summary>Defaults this mod shipped before; a config still holding one of them was
         /// never edited and is moved to <see cref="DefaultOffers"/>. Until 0.1.67 only the
         /// capybara was for sale, so the Neck, Deer, Boar and Eikthyr of Montarias 0.3.x never
         /// reached the counter; until 0.1.70 there was no level 4 (Montaria Voadora) nor the
-        /// Moder.</summary>
+        /// Moder; until A4 (14/10/2026) Mestre, Voadora and the Boar had no Coins price.</summary>
         internal static readonly string[] OldDefaultOffers =
         {
             "skill=1;price=500;currency=coins|skill=2;price=2500;currency=coins|" +
@@ -62,16 +76,27 @@ namespace NpcValheim.Npc
             "skill=3;price=500;currency=deadcoins|mount=javali;price=300;currency=deadcoins",
             "skill=1;price=500;currency=coins|skill=2;price=2500;currency=coins|" +
             "skill=3;price=500;currency=deadcoins|mount=capivara;price=300;currency=deadcoins",
+            "skill=1;price=500;currency=coins|skill=2;price=2500;currency=coins|" +
+            "skill=3;price=500;currency=deadcoins|skill=4;price=1000;currency=deadcoins|" +
+            "mount=capivara;price=300;currency=deadcoins|" +
+            "mount=neck;price=300;currency=deadcoins|mount=deer;price=300;currency=deadcoins|" +
+            "mount=boar;price=300;currency=deadcoins|mount=eikthyr;price=300;currency=deadcoins|" +
+            "mount=moder;price=600;currency=deadcoins",
         };
 
-        /// <summary>Every well-formed entry, in the order written. A non-positive price is
-        /// refused, not clamped: it would hand the thing out for free.</summary>
+        /// <summary>
+        /// Every well-formed entry, merged by skill/mount id (A4: a second entry for the same
+        /// id adds its currency's price to the first instead of being rejected as a duplicate).
+        /// A non-positive price is refused, not clamped: it would hand the thing out for free.
+        /// A third entry repeating a currency already set on that id is the only thing still
+        /// rejected as a duplicate.
+        /// </summary>
         internal static List<MountOffer> Parse(string raw, List<string> problems)
         {
             var offers = new List<MountOffer>();
             if (string.IsNullOrWhiteSpace(raw)) return offers;
 
-            var seen = new HashSet<string>(StringComparer.Ordinal);
+            var byKey = new Dictionary<string, MountOffer>(StringComparer.Ordinal);
             foreach (var entry in raw.Split('|'))
             {
                 var text = entry.Trim();
@@ -104,47 +129,70 @@ namespace NpcValheim.Npc
                     continue;
                 }
 
-                MountCurrency paidWith;
+                bool paidWithDeadcoins;
                 if (string.IsNullOrEmpty(currency) || currency.Equals("coins", StringComparison.OrdinalIgnoreCase))
-                    paidWith = MountCurrency.Coins;
+                    paidWithDeadcoins = false;
                 else if (currency.Equals("deadcoins", StringComparison.OrdinalIgnoreCase))
-                    paidWith = MountCurrency.Deadcoins;
+                    paidWithDeadcoins = true;
                 else
                 {
                     problems?.Add($"\"{text}\": unknown currency '{currency}' (coins or deadcoins)");
                     continue;
                 }
 
-                var offer = new MountOffer { Price = price, Currency = paidWith };
+                MountOfferKind kind;
+                string id;
+                int rank = 0;
                 if (skill != null)
                 {
-                    if (!int.TryParse(skill, NumberStyles.Integer, CultureInfo.InvariantCulture, out int rank) || rank < 1)
+                    if (!int.TryParse(skill, NumberStyles.Integer, CultureInfo.InvariantCulture, out rank) || rank < 1)
                     {
                         problems?.Add($"\"{text}\": skill must be a level from 1 up");
                         continue;
                     }
-                    offer.Kind = MountOfferKind.Skill;
-                    offer.Rank = rank;
-                    offer.Id = rank.ToString(CultureInfo.InvariantCulture);
+                    kind = MountOfferKind.Skill;
+                    id = rank.ToString(CultureInfo.InvariantCulture);
                 }
                 else
                 {
-                    offer.Kind = MountOfferKind.Mount;
-                    offer.Id = mount;
+                    kind = MountOfferKind.Mount;
+                    id = mount;
                 }
 
-                if (!seen.Add(offer.Kind + ":" + offer.Id))
+                string offerKey = kind + ":" + id;
+                if (!byKey.TryGetValue(offerKey, out var offer))
                 {
-                    problems?.Add($"{offer.Kind} {offer.Id} is listed more than once; the first entry wins");
-                    continue;
+                    offer = new MountOffer { Kind = kind, Id = id, Rank = rank };
+                    byKey[offerKey] = offer;
+                    offers.Add(offer);
                 }
-                offers.Add(offer);
+
+                if (paidWithDeadcoins)
+                {
+                    if (offer.Deadcoins > 0)
+                    {
+                        problems?.Add($"{kind} {id} already has a Deadcoins price; the first entry wins");
+                        continue;
+                    }
+                    offer.Deadcoins = price;
+                }
+                else
+                {
+                    if (offer.Gold > 0)
+                    {
+                        problems?.Add($"{kind} {id} already has a Coins price; the first entry wins");
+                        continue;
+                    }
+                    offer.Gold = price;
+                }
             }
             return offers;
         }
 
         /// <summary>The offers Montarias knows: a level that exists, a mount it has. Anything
-        /// else stays off the counter, so nobody pays for what cannot be granted.</summary>
+        /// else stays off the counter, so nobody pays for what cannot be granted. Two entries
+        /// whose mount id resolves to the same current one (an old alias and the current id,
+        /// say) are merged rather than the second being dropped, so neither currency is lost.</summary>
         internal static List<MountOffer> Available(string raw, List<string> problems)
         {
             var result = new List<MountOffer>();
@@ -156,7 +204,7 @@ namespace NpcValheim.Npc
 
             int ranks = MontariasApi.RankCount();
             var mounts = new HashSet<string>(MontariasApi.MountIds(), StringComparer.Ordinal);
-            var seen = new HashSet<string>(StringComparer.Ordinal);
+            var byKey = new Dictionary<string, MountOffer>(StringComparer.Ordinal);
             foreach (var offer in Parse(raw, problems))
             {
                 if (offer.Kind == MountOfferKind.Skill && offer.Rank > ranks)
@@ -177,11 +225,14 @@ namespace NpcValheim.Npc
                     offer.Id = currentId;
                 }
 
-                if (!seen.Add(offer.Kind + ":" + offer.Id))
+                string key = offer.Kind + ":" + offer.Id;
+                if (byKey.TryGetValue(key, out var merged))
                 {
-                    problems?.Add($"{offer.Kind} {offer.Id} is listed more than once after resolving mount ids; the first entry wins");
+                    if (offer.Gold > 0 && merged.Gold <= 0) merged.Gold = offer.Gold;
+                    if (offer.Deadcoins > 0 && merged.Deadcoins <= 0) merged.Deadcoins = offer.Deadcoins;
                     continue;
                 }
+                byKey[key] = offer;
                 result.Add(offer);
             }
             return result;
@@ -254,11 +305,14 @@ namespace NpcValheim.Npc
 
         // ---- client -> server ----
 
-        internal static bool RequestBuy(MountTrainerNpc at, MountOffer offer)
+        /// <summary>A4: the buyer names which of the offer's prices it wants -- an offer can
+        /// have both now, so the server has to be told which one was clicked.</summary>
+        internal static bool RequestBuy(MountTrainerNpc at, MountOffer offer, MountCurrency method)
         {
             if (at == null || offer == null) return false;
+            int price = method == MountCurrency.Deadcoins ? offer.Deadcoins : offer.Gold;
             string payload = offer.Kind + "\n" + offer.Id + "\n" +
-                             offer.Price.ToString(CultureInfo.InvariantCulture) + "\n" + offer.Currency;
+                             price.ToString(CultureInfo.InvariantCulture) + "\n" + method;
             return at.RequestService(ActionBuy, payload);
         }
 
@@ -309,10 +363,20 @@ namespace NpcValheim.Npc
                 Refuse(sender, $"{kind} '{parts[1]}' is not on the list", "Isto não está à venda.");
                 return;
             }
-            if (shownPrice != offer.Price || shownCurrency != offer.Currency)
+
+            bool deadcoins = shownCurrency == MountCurrency.Deadcoins;
+            int price = deadcoins ? offer.Deadcoins : offer.Gold;
+            string currencyName = deadcoins ? "Deadcoins" : "Coins";
+            if (price <= 0)
             {
-                Refuse(sender, $"the buyer saw {shownPrice} {shownCurrency}, the price is {offer.Price} {offer.Currency}",
-                    $"O preço de {offer.Title} agora é {offer.Price} {offer.CurrencyName}. Confira e compre de novo.");
+                Refuse(sender, $"{offer.Kind} {offer.Id} is not sold for {shownCurrency}",
+                    $"{offer.Title} não é vendido por {currencyName}.");
+                return;
+            }
+            if (shownPrice != price)
+            {
+                Refuse(sender, $"the buyer saw {shownPrice} {shownCurrency}, the price is {price} {shownCurrency}",
+                    $"O preço de {offer.Title} agora é {price} {currencyName}. Confira e compre de novo.");
                 return;
             }
 
@@ -345,7 +409,7 @@ namespace NpcValheim.Npc
             string ledger = null;
             int balance = -1, after = -1;
             string who = $"peer {sender}";
-            if (offer.Currency == MountCurrency.Deadcoins)
+            if (deadcoins)
             {
                 if (!DeadcoinLedger.TryResolveAccount(sender, out ledger, out who))
                 {
@@ -360,14 +424,14 @@ namespace NpcValheim.Npc
                             "Seu saldo de Deadcoins está ilegível no servidor. Fale com um admin.");
                         return;
                     }
-                    if (balance < offer.Price)
+                    if (balance < price)
                     {
                         DeadcoinShop.SendBalance(sender, balance);
-                        Refuse(sender, $"{who} has {balance}, the price is {offer.Price}",
-                            $"Você não tem Deadcoins suficientes: saldo {balance}, custa {offer.Price}.");
+                        Refuse(sender, $"{who} has {balance}, the price is {price}",
+                            $"Você não tem Deadcoins suficientes: saldo {balance}, custa {price}.");
                         return;
                     }
-                    after = balance - offer.Price;
+                    after = balance - price;
                     DeadcoinLedger.Write(ledger, after);
                 }
                 catch (Exception e)
@@ -378,7 +442,7 @@ namespace NpcValheim.Npc
                 }
             }
 
-            string why = $"compra no Mestre das Montarias ({offer.Price} {offer.CurrencyName})";
+            string why = $"compra no Mestre das Montarias ({price} {currencyName})";
             string refusal = offer.Kind == MountOfferKind.Skill
                 ? MontariasApi.ServerGrantRank(sender, offer.Rank, why)
                 : MontariasApi.ServerGrantMount(sender, offer.Id, why);
@@ -389,7 +453,7 @@ namespace NpcValheim.Npc
                     try { DeadcoinLedger.Write(ledger, balance); }
                     catch (Exception e)
                     {
-                        Plugin.Log.LogError($"NpcValheim: REFUND FAILED -- {who} was charged {offer.Price} Deadcoins " +
+                        Plugin.Log.LogError($"NpcValheim: REFUND FAILED -- {who} was charged {price} Deadcoins " +
                                             $"for {offer.Kind} {offer.Id} that was not granted ({balance} -> {after}): {e.Message}");
                     }
                 }
@@ -397,15 +461,15 @@ namespace NpcValheim.Npc
                 return;
             }
 
-            SendDone(sender, offer, after);
-            Plugin.Log.LogInfo($"NpcValheim: {who} bought {offer.Kind} {offer.Id} for {offer.Price} {offer.CurrencyName} at {where}" +
+            SendDone(sender, offer, deadcoins ? MountCurrency.Deadcoins : MountCurrency.Coins, price, after);
+            Plugin.Log.LogInfo($"NpcValheim: {who} bought {offer.Kind} {offer.Id} for {price} {currencyName} at {where}" +
                                (ledger != null ? $" ({balance} -> {after})" : ""));
             if (ledger != null)
             {
                 try
                 {
                     DeadcoinLedger.AppendLogLine($"{who} bought {offer.Kind} {offer.Id} at the Mestre das Montarias " +
-                                                 $"for {offer.Price} Deadcoins (balance {balance} -> {after})");
+                                                 $"for {price} Deadcoins (balance {balance} -> {after})");
                 }
                 catch (Exception e) { Plugin.Log.LogWarning($"NpcValheim: Deadcoins purchase log not written: {e.Message}"); }
             }
@@ -419,10 +483,10 @@ namespace NpcValheim.Npc
 
         // ---- server -> client ----
 
-        private static void SendDone(long peer, MountOffer offer, int deadcoins) =>
-            Send(peer, "done", offer.Kind + "\n" + offer.Id + "\n" + offer.Currency + "\n" +
-                               offer.Price.ToString(CultureInfo.InvariantCulture) + "\n" +
-                               deadcoins.ToString(CultureInfo.InvariantCulture));
+        private static void SendDone(long peer, MountOffer offer, MountCurrency method, int price, int deadcoinsAfter) =>
+            Send(peer, "done", offer.Kind + "\n" + offer.Id + "\n" + method + "\n" +
+                               price.ToString(CultureInfo.InvariantCulture) + "\n" +
+                               deadcoinsAfter.ToString(CultureInfo.InvariantCulture));
 
         private static void Send(long peer, string kind, string payload) =>
             ZRoutedRpc.instance?.InvokeRoutedRPC(peer, RpcResponse, new object[] { kind, payload ?? "" });

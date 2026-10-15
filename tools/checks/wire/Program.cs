@@ -95,6 +95,9 @@ class Program
         return result;
     }
 
+    static bool OnSaleOn(DeadcoinOffer offer, System.DateTime day) =>
+        (bool)Catalog.GetMethod("OnSaleOn", BindingFlags.NonPublic | BindingFlags.Static).Invoke(null, new object[] { offer, day });
+
     static readonly Type MountCatalogType = typeof(QuestGiverNpc).Assembly.GetType("NpcValheim.Npc.MountCatalog");
 
     static string DefaultMountOffers =>
@@ -505,7 +508,7 @@ class Program
               old.Count == 15 && old[0].Prefab == "Raspberry" && old[0].Amount == 50 && old[0].Price == 150);
 
         var repaired = ParseOffers(DefaultDeadcoinItems, null);
-        Check("the new default is whole", repaired.Count == 16 && repaired[0].Prefab == "Blueberries",
+        Check("the new default is whole", repaired.Count == 7 && repaired[0].Prefab == "PortalToken",
               "got " + repaired.Count);
 
         // What the old server believed from the client, now refused in the list itself.
@@ -524,21 +527,46 @@ class Program
         Check("an empty list is empty, not an error", ParseOffers("", null).Count == 0);
 
         // What the counter's admin page writes, read back the way the counter reads it.
-        var changed = SetDeadcoinOffer(DefaultDeadcoinItems, new DeadcoinOffer { Prefab = "Stone", Amount = 75, Price = 90 });
+        var changed = SetDeadcoinOffer(DefaultDeadcoinItems, new DeadcoinOffer { Prefab = "FichaBarbeiro", Amount = 1, Price = 90 });
         var rereadCounter = ParseOffers(changed, null);
         Check("saving an item changes it in place",
-              rereadCounter.Count == 16 && rereadCounter[5].Prefab == "Stone" && rereadCounter[5].Amount == 75 && rereadCounter[5].Price == 90,
+              rereadCounter.Count == 7 && rereadCounter[2].Prefab == "FichaBarbeiro" && rereadCounter[2].Amount == 1 && rereadCounter[2].Price == 90,
               changed);
         changed = SetDeadcoinOffer(" Prefab = Wood ; AMOUNT = 5 ; price = 10 |broken", new DeadcoinOffer { Prefab = "Wood", Amount = 6, Price = 11 });
         Check("a hand-written entry is matched, and an unreadable one is left alone",
               changed == "prefab=Wood;amount=6;price=11|broken", changed);
         changed = SetDeadcoinOffer("", new DeadcoinOffer { Prefab = "DeadToken", Amount = 1, Price = 750 });
         Check("an item is added to an empty list", changed == "prefab=DeadToken;amount=1;price=750", changed);
-        changed = RemoveDeadcoinOffer(DefaultDeadcoinItems, "Coins", out bool counterRemoved);
+        changed = RemoveDeadcoinOffer(DefaultDeadcoinItems, "FichaBatizar", out bool counterRemoved);
         Check("removing an item keeps the others",
-              counterRemoved && ParseOffers(changed, null).Count == 15 && ParseOffers(changed, null).TrueForAll(o => o.Prefab != "Coins"));
-        RemoveDeadcoinOffer(DefaultDeadcoinItems, "coins", out counterRemoved);
+              counterRemoved && ParseOffers(changed, null).Count == 6 && ParseOffers(changed, null).TrueForAll(o => o.Prefab != "FichaBatizar"));
+        RemoveDeadcoinOffer(DefaultDeadcoinItems, "fichabatizar", out counterRemoved);
         Check("prefabs compare exactly, as purchases look them up", !counterRemoved);
+
+        System.Console.WriteLine();
+        System.Console.WriteLine("== Deadcoins counter: sale windows (A1) ==");
+
+        var windowed = ParseOffers("prefab=FichaHalloween;amount=1;price=400;from=2026-10-24;to=2026-11-07", null);
+        string FormatOffer(DeadcoinOffer o) => (string)Catalog.GetMethod("Format", AnyStatic).Invoke(null, new object[] { o });
+        Check("a window parses into From/To",
+              windowed.Count == 1 && FormatOffer(windowed[0]) == "prefab=FichaHalloween;amount=1;price=400;from=2026-10-24;to=2026-11-07",
+              windowed.Count > 0 ? FormatOffer(windowed[0]) : "none");
+        var halloween = repaired.Find(o => o.Prefab == "FichaHalloween");
+        Check("the shipped Halloween ficha carries its window",
+              halloween != null && FormatOffer(halloween).Contains("from=2026-10-24") && FormatOffer(halloween).Contains("to=2026-11-07"));
+        Check("from after to is refused",
+              ParseOffers("prefab=Wood;amount=1;price=10;from=2026-11-07;to=2026-10-24", null).Count == 0);
+        Check("a malformed date is refused",
+              ParseOffers("prefab=Wood;amount=1;price=10;from=24-10-2026", null).Count == 0);
+        Check("no window at all is always on sale",
+              OnSaleOn(ParseOffers("prefab=Wood;amount=1;price=10", null)[0], new System.DateTime(2026, 1, 1)));
+        var fromTo = ParseOffers("prefab=Wood;amount=1;price=10;from=2026-10-24;to=2026-11-07", null)[0];
+        Check("before the window is not on sale", !OnSaleOn(fromTo, new System.DateTime(2026, 10, 23)));
+        Check("the first day of the window is on sale", OnSaleOn(fromTo, new System.DateTime(2026, 10, 24)));
+        Check("the last day of the window is on sale", OnSaleOn(fromTo, new System.DateTime(2026, 11, 7)));
+        Check("after the window is not on sale", !OnSaleOn(fromTo, new System.DateTime(2026, 11, 8)));
+        Check("Format round-trips a window", Catalog.GetMethod("Format", AnyStatic)
+                  .Invoke(null, new object[] { fromTo }).ToString() == "prefab=Wood;amount=1;price=10;from=2026-10-24;to=2026-11-07");
 
         System.Console.WriteLine();
         System.Console.WriteLine("== Mestre das Montarias ==");
@@ -550,9 +578,18 @@ class Program
         Check("the default sells the first level for Coins and the capybara for Deadcoins",
               shipped.Count == 10 &&
               OfferField(shipped[0], "Kind") == "Skill" && OfferField(shipped[0], "Rank") == "1" &&
-              OfferField(shipped[0], "Currency") == "Coins" &&
+              OfferField(shipped[0], "Gold") == "500" && OfferField(shipped[0], "Deadcoins") == "0" &&
               OfferField(shipped[4], "Kind") == "Mount" && OfferField(shipped[4], "Id") == "capivara" &&
-              OfferField(shipped[4], "Currency") == "Deadcoins");
+              OfferField(shipped[4], "Gold") == "0" && OfferField(shipped[4], "Deadcoins") == "300");
+        Check("A4: Mestre and Voadora sell for both currencies, Aprendiz and Experiente stay Coins-only",
+              OfferField(shipped[2], "Id") == "3" && OfferField(shipped[2], "Gold") == "10000" && OfferField(shipped[2], "Deadcoins") == "500" &&
+              OfferField(shipped[3], "Id") == "4" && OfferField(shipped[3], "Gold") == "20000" && OfferField(shipped[3], "Deadcoins") == "1000" &&
+              OfferField(shipped[1], "Deadcoins") == "0");
+        var boar = shipped.Cast<object>().FirstOrDefault(o => OfferField(o, "Id") == "boar");
+        var moderOffer = shipped.Cast<object>().FirstOrDefault(o => OfferField(o, "Id") == "moder");
+        Check("A4: the Boar sells for both currencies, the Moder too",
+              boar != null && OfferField(boar, "Gold") == "1000" && OfferField(boar, "Deadcoins") == "300" &&
+              moderOffer != null && OfferField(moderOffer, "Gold") == "10000" && OfferField(moderOffer, "Deadcoins") == "600");
         Check("the previous javali setting resolves to the current capivara id",
               ResolveMountId("javali", "capivara", "neck") == "capivara");
         Check("current mount ids remain unchanged",
@@ -600,14 +637,21 @@ class Program
               ParseMountOffers("skill=1;price=10;currency=ouro", null).Count == 0);
 
         var noCurrency = ParseMountOffers("skill=1;price=10", null);
-        Check("no currency means Coins", noCurrency.Count == 1 && OfferField(noCurrency[0], "Currency") == "Coins");
+        Check("no currency means Coins",
+              noCurrency.Count == 1 && OfferField(noCurrency[0], "Gold") == "10" && OfferField(noCurrency[0], "Deadcoins") == "0");
         var anyCase = ParseMountOffers(" Mount = javali ; PRICE = 5 ; currency = DeadCoins |", null);
         Check("spacing and case do not matter",
               anyCase.Count == 1 && OfferField(anyCase[0], "Id") == "javali" &&
-              OfferField(anyCase[0], "Currency") == "Deadcoins" && OfferField(anyCase[0], "Price") == "5");
-        var repeatedOffer = ParseMountOffers("mount=javali;price=5;currency=deadcoins|mount=javali;price=1;currency=coins", null);
-        Check("a repeated offer keeps its first price",
-              repeatedOffer.Count == 1 && OfferField(repeatedOffer[0], "Price") == "5");
+              OfferField(anyCase[0], "Deadcoins") == "5" && OfferField(anyCase[0], "Gold") == "0");
+
+        // A4: two entries for the same id in different currencies are one offer with both
+        // prices, not a duplicate -- same rule a boss pass has always had for Gold/Deadcoins.
+        var merged = ParseMountOffers("mount=javali;price=5;currency=deadcoins|mount=javali;price=1000;currency=coins", null);
+        Check("A4: a mount priced in both currencies merges into one offer",
+              merged.Count == 1 && OfferField(merged[0], "Deadcoins") == "5" && OfferField(merged[0], "Gold") == "1000");
+        var repeatedOffer = ParseMountOffers("mount=javali;price=5;currency=deadcoins|mount=javali;price=1;currency=deadcoins", null);
+        Check("a repeated offer in the same currency keeps its first price",
+              repeatedOffer.Count == 1 && OfferField(repeatedOffer[0], "Deadcoins") == "5");
 
         System.Console.WriteLine();
         System.Console.WriteLine("== Deadcoins balance files ==");
@@ -649,14 +693,16 @@ class Program
               string.Join(",", bosses.Select(b => b.Boss)) == "gd_king,Bonemass,Dragon,GoblinKing,SeekerQueen,Fader",
               string.Join(",", bosses.Select(b => b.Boss)));
         Check("and parses without a complaint", bossProblems.Count == 0, string.Join(" / ", bossProblems));
-        Check("the swamp pass is 1000 Coins or 500 Deadcoins (R$5 at 100 per real)",
-              bosses.Count > 0 && bosses[0].Gold == 1000 && bosses[0].Deadcoins == 500 &&
+        // A2 (14/10/2026): every default is gold=0 -- a pass comes only from killing the boss
+        // or from Deadcoins now, never from Coins.
+        Check("the swamp pass is Deadcoins-only at 500 (R$5 at 100 per real)",
+              bosses.Count > 0 && bosses[0].Gold == 0 && bosses[0].Deadcoins == 500 &&
               bosses[0].Shop == "Loja do Pântano");
-        Check("the Deep North pass is 25000 Coins or 20000 Deadcoins (R$200)",
-              bosses.Count == 6 && bosses[5].Gold == 25000 && bosses[5].Deadcoins == 20000);
-        Check("the price ladder matches the table, boss by boss",
+        Check("the Deep North pass is Deadcoins-only at 20000 (R$200)",
+              bosses.Count == 6 && bosses[5].Gold == 0 && bosses[5].Deadcoins == 20000);
+        Check("the price ladder matches the table, boss by boss, gold=0 throughout",
               string.Join(",", bosses.Select(b => b.Gold + "/" + b.Deadcoins)) ==
-              "1000/500,3000/1000,5000/2500,10000/5000,15000/10000,25000/20000");
+              "0/500,0/1000,0/2500,0/5000,0/10000,0/20000");
 
         Check("a negative price is refused", ParseBosses("boss=Bonemass;gold=-1;deadcoins=10", null).Count == 0);
         Check("a non-numeric price is refused", ParseBosses("boss=Bonemass;gold=muito", null).Count == 0);

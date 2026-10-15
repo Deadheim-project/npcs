@@ -42,6 +42,8 @@ namespace NpcValheim.UI
 
         private TMP_InputField _buyItem;
         private TMP_InputField _buyPrice;
+        private TMP_InputField _sellDeadcoins;
+        private TMP_InputField _sellWeeklyLimit;
         private TMP_InputField _questName;
         private TMP_InputField _questTarget;
         private TMP_InputField _questAmount;
@@ -243,15 +245,29 @@ namespace NpcValheim.UI
                     addBuy.onClick.AddListener(() => SetPrice(market, selling: false));
                     addSell.onClick.AddListener(() => SetPrice(market, selling: true));
 
+                    // Deadcoins and the weekly limit (A3) are sell-only and edited separately
+                    // from the Coins price above: this keeps "Ele vende" a plain gold edit, and
+                    // leaves whichever of these an admin does not touch exactly as it was (see
+                    // RequestSetSellExtra / RequestSetPrice, which each preserve the other's data).
+                    var sellExtraRow = Row(column, 40f);
+                    ValheimUi.CreateLabel(sellExtraRow, "Deadcoins/un", 14, ValheimUi.Muted, TextAlignmentOptions.Left);
+                    _sellDeadcoins = ValheimUi.CreateInputField(sellExtraRow, "0", 70f, 38f);
+                    ValheimUi.CreateLabel(sellExtraRow, "Limite/semana", 14, ValheimUi.Muted, TextAlignmentOptions.Left);
+                    _sellWeeklyLimit = ValheimUi.CreateInputField(sellExtraRow, "0", 70f, 38f);
+                    var setSellExtra = ValheimUi.CreateButton(sellExtraRow, "Definir (venda)", 150f, 38f, 14);
+                    Flexible(setSellExtra.gameObject);
+                    setSellExtra.onClick.AddListener(() => SetSellExtra(market));
+
                     // Typing the exact prefab name meant knowing it beforehand -- and on a modded
                     // server that is hundreds of names nobody has memorised. The same box now
                     // searches, matching either the prefab name or the name the player reads, and
                     // picking a result fills it in.
-                    Dim(column, "Digite para buscar; clique num resultado para preencher.");
+                    Dim(column, "Digite o item acima para buscar; clique num resultado para preencher. " +
+                                "\"Ele vende\" só muda o preço em moedas; \"Definir (venda)\" só muda Deadcoins/limite.");
                     var searchArea = ValheimUi.CreateRect("SearchArea", column);
-                    // 110 rather than 150: the boss lock row above took the difference, and the
-                    // column was already full.
-                    ValheimUi.SetHeight(searchArea.gameObject, 110f);
+                    // 70 rather than 150: the boss lock and Deadcoins rows above took the
+                    // difference, and the column was already full.
+                    ValheimUi.SetHeight(searchArea.gameObject, 70f);
                     _itemResults = ValheimUi.CreateScrollList(searchArea, spacing: 2f);
                 }
             }
@@ -403,6 +419,32 @@ namespace NpcValheim.UI
             // "não compra nada" right after being told it does.
             market.RequestSetPrice(Player, item, price, selling);
             _buyItem.text = "";
+            _buySignature = null;
+        }
+
+        /// <summary>A3: Deadcoins price and/or weekly limit for a sell item, leaving its Coins
+        /// price exactly as it was (see MarketplaceNpc.RPC_SetSellExtra).</summary>
+        private void SetSellExtra(MarketplaceNpc market)
+        {
+            string item = _buyItem.text?.Trim() ?? "";
+            if (string.IsNullOrEmpty(item)) { Say("Informe o nome do prefab do item."); return; }
+            if (ObjectDB.instance?.GetItemPrefab(item) == null)
+            {
+                Say($"Item '{item}' nao existe. Use o nome do prefab (ex.: Wood).");
+                return;
+            }
+            if (!int.TryParse(_sellDeadcoins.text, out int deadcoins) || deadcoins < 0)
+            {
+                Say("Deadcoins/un invalido.");
+                return;
+            }
+            if (!int.TryParse(_sellWeeklyLimit.text, out int weeklyLimit) || weeklyLimit < 0)
+            {
+                Say("Limite semanal invalido.");
+                return;
+            }
+
+            market.RequestSetSellExtra(Player, item, deadcoins, weeklyLimit);
             _buySignature = null;
         }
 
@@ -636,9 +678,9 @@ namespace NpcValheim.UI
             if (_buys == null || !(Npc is MarketplaceNpc market)) return;
 
             var buys = market.GetBuyPrices();
-            var sells = market.GetSellPrices();
+            var sells = market.GetSellOffers();
             var signature = string.Join("|", buys.Select(kv => $"B{kv.Key}:{kv.Value}")) + "/" +
-                            string.Join("|", sells.Select(kv => $"S{kv.Key}:{kv.Value}"));
+                            string.Join("|", sells.Select(kv => $"S{kv.Key}:{kv.Value.Gold}:{kv.Value.Deadcoins}:{kv.Value.WeeklyLimit}"));
             if (signature == _buySignature) return;
             _buySignature = signature;
 
@@ -651,8 +693,47 @@ namespace NpcValheim.UI
                 return;
             }
 
-            AddPriceRows(market, sells, selling: true);
+            AddSellRows(market, sells);
             AddPriceRows(market, buys, selling: false);
+        }
+
+        /// <summary>A3: one row per sell item, both prices and the weekly limit together, with
+        /// a remove button for each half (Coins goes through RequestSetPrice, Deadcoins and
+        /// the limit through RequestSetSellExtra -- each leaves the other alone).</summary>
+        private void AddSellRows(MarketplaceNpc market, Dictionary<string, SellOffer> offers)
+        {
+            foreach (var kv in offers)
+            {
+                var item = kv.Key;
+                var offer = kv.Value;
+                var row = Row(_buys, 44f);
+                _buyRows.Add(row.gameObject);
+
+                ValheimUi.CreateItemIcon(row, item, 34f);
+                string gold = offer.Gold > 0 ? $"{offer.Gold} moedas/un" : "";
+                string dc = offer.Deadcoins > 0 ? $"{offer.Deadcoins} Deadcoins/un" : "";
+                string price = gold.Length > 0 && dc.Length > 0 ? $"{gold} · {dc}" : gold + dc;
+                string weekly = offer.WeeklyLimit > 0 ? $" · limite {offer.WeeklyLimit}/semana" : "";
+                var label = ValheimUi.CreateLabel(row,
+                    ItemNames.Display(item) + "\n<size=11><color=#9a9188>vende: " + price + weekly + "</color></size>",
+                    15, ValheimUi.Orange, TextAlignmentOptions.Left);
+                Flexible(label.gameObject);
+
+                var removeGold = ValheimUi.CreateButton(row, "Sem moedas", 100f, 34f, 13);
+                removeGold.onClick.AddListener(() =>
+                {
+                    market.RequestSetPrice(Player, item, 0, selling: true);
+                    Say($"{ItemNames.Display(item)}: preço em moedas removido.");
+                    _buySignature = null;
+                });
+                var removeDc = ValheimUi.CreateButton(row, "Sem Deadcoins", 120f, 34f, 13);
+                removeDc.onClick.AddListener(() =>
+                {
+                    market.RequestSetSellExtra(Player, item, 0, offer.WeeklyLimit);
+                    Say($"{ItemNames.Display(item)}: preço em Deadcoins removido.");
+                    _buySignature = null;
+                });
+            }
         }
 
         private void AddPriceRows(MarketplaceNpc market, Dictionary<string, int> prices, bool selling)

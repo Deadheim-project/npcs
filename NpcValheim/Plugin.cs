@@ -20,7 +20,7 @@ namespace NpcValheim
     {
         public const string Guid = "com.npcvalheim.mod";
         public const string Name = "NpcValheim";
-        public const string Version = "0.1.72";
+        public const string Version = "0.1.73";
 
         internal static ManualLogSource Log;
         private Harmony _harmony;
@@ -70,6 +70,7 @@ namespace NpcValheim
         internal static ConfigEntry<string> DeadcoinShopItems;
         internal static ConfigEntry<string> BossPassBosses;
         internal static ConfigEntry<float> BossPassKillRadius;
+        internal static ConfigEntry<bool> BossPassDeadcoinsAfterFirstKill;
         internal static ConfigEntry<string> MountTrainerOffers;
         internal static ConfigEntry<float> TrainerStudyBonus;
         internal static ConfigEntry<int> TrainerStudyMinutes;
@@ -143,7 +144,10 @@ namespace NpcValheim
             // its own copy on every purchase and never takes a price from the client.
             DeadcoinShopItems = Config.Bind("DeadcoinShop", "Items", Npc.DeadcoinCatalog.DefaultItems,
                 "What the Deadcoins NPC sells: prefab=<item>;amount=<units per purchase>;price=<Deadcoins>, " +
-                "entries separated by |. Entries with a non-positive amount or price, or an unknown item, are skipped and named in the log. Admins can also edit it at the NPC, tab Itens (admin). " +
+                "entries separated by |. An entry may add from=<yyyy-MM-dd> and/or to=<yyyy-MM-dd> for a sale window " +
+                "(both dates included); outside it the item is hidden and a purchase is refused, checked on the server's own clock. " +
+                "Entries with a non-positive amount or price, an unknown item, or a bad date are skipped and named in the log. " +
+                "Admins can also edit amount/price at the NPC, tab Itens (admin) -- a window set here survives that edit. " +
                 "Balances live in BepInEx/config/DonationShop/<player>-<account>.json, as they did with DonationShop.");
 
             // Same shape as DeadcoinShop.Items, for the same reason: one line an admin can read
@@ -157,6 +161,13 @@ namespace NpcValheim
             BossPassKillRadius = Config.Bind("BossPass", "KillRadius", 60f,
                 "Metres from the boss, measured on the ground, within which a player counts as present at its death. " +
                 "Players who hit the boss count regardless of distance.");
+            BossPassDeadcoinsAfterFirstKill = Config.Bind("BossPass", "DeadcoinsAfterFirstKill", true,
+                "Liga: o preço em Deadcoins de um chefe só aparece e só é aceito depois que esse chefe morreu " +
+                "neste servidor pela primeira vez (por qualquer jogador). Antes disso o passe só sai matando o " +
+                "chefe, ou por Coins se o admin puser gold>0 em [BossPass] Bosses. A marca da 1ª morte fica em " +
+                "bossfirstkill.txt, na pasta do mod ao lado de bosspass.txt -- separada dela porque uma linha ali " +
+                "seria lida como passe de personagem pelo teto das aulas do Treinador. Desliga: Deadcoins sempre " +
+                "liberado, como antes desta trava.");
 
             GuildCostItem = Config.Bind("Guildas", "CostItem", "Coins",
                 "Prefab name of the item charged to found a guild at the Guild Registrar");
@@ -218,6 +229,7 @@ namespace NpcValheim
             ConfigSync.AddConfigEntry(DeadcoinShopItems).SynchronizedConfig = true;
             ConfigSync.AddConfigEntry(BossPassBosses).SynchronizedConfig = true;
             ConfigSync.AddConfigEntry(BossPassKillRadius).SynchronizedConfig = true;
+            ConfigSync.AddConfigEntry(BossPassDeadcoinsAfterFirstKill).SynchronizedConfig = true;
             ConfigSync.AddConfigEntry(GuildCostItem).SynchronizedConfig = true;
             ConfigSync.AddConfigEntry(GuildCostAmount).SynchronizedConfig = true;
             ConfigSync.AddConfigEntry(GuildWindowNpcOnly).SynchronizedConfig = true;

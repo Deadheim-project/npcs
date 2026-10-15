@@ -292,5 +292,14 @@ namespace NpcValheim.Persistence
     {
         public string ItemName { get; set; } = "";
         public int Price { get; set; } = 0;
+
+        /// <summary>Sell side only (A3): Deadcoins price per unit, or 0 for not sold that way.
+        /// Ignored for a buy-list entry.</summary>
+        public int Deadcoins { get; set; } = 0;
+
+        /// <summary>Sell side only: units of this item one player may buy per calendar week
+        /// (Monday to Monday, server clock) across every Mercador, 0 for no limit. Counted
+        /// regardless of which currency paid for them.</summary>
+        public int WeeklyLimit { get; set; } = 0;
     }
 }

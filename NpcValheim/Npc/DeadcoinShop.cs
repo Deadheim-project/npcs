@@ -9,12 +9,15 @@ using UnityEngine;
 namespace NpcValheim.Npc
 {
     /// <summary>One line of the Deadcoins counter: which item, how many per purchase, and
-    /// what it costs.</summary>
+    /// what it costs. <see cref="From"/>/<see cref="To"/> are an optional sale window (both
+    /// dates included); null means no limit on that side.</summary>
     public sealed class DeadcoinOffer
     {
         public string Prefab;
         public int Amount;
         public int Price;
+        public DateTime? From;
+        public DateTime? To;
     }
 
     /// <summary>
@@ -28,16 +31,30 @@ namespace NpcValheim.Npc
     /// </summary>
     internal static class DeadcoinCatalog
     {
-        /// <summary>The old DonationShop default, with its first entry repaired.</summary>
+        /// <summary>
+        /// The catalog decided on 14/10/2026 (memória vip-doacoes.md): só o Portal Token e as
+        /// fichas de serviço/evento do Deadheim. Minério, pregos, olho, núcleo e Coins saíram
+        /// daqui -- quem ainda os vende por Deadcoins é um Mercador de bioma (ver A3). As
+        /// fichas (FichaFundador, FichaBarbeiro, FichaHalloween, FichaTemporada, FichaBatizar,
+        /// FichaBrasao) são itens do Deadheim; um prefab que o ObjectDB ainda não conhece é
+        /// pulado por <see cref="Available"/>, não um erro de config.
+        ///
+        /// FichaFundador não tem janela ainda: a abertura foi adiada e a data não foi refeita.
+        /// FichaHalloween usa a janela proposta (24/10 a 07/11); ajuste aqui quando o usuário
+        /// decidir a data real.
+        /// </summary>
         internal const string DefaultItems =
-            "prefab=Blueberries;amount=50;price=150|prefab=Raspberry;amount=50;price=150|" +
-            "prefab=Thistle;amount=50;price=200|prefab=Cloudberry;amount=50;price=100|" +
-            "prefab=Wood;amount=50;price=100|prefab=Stone;amount=50;price=100|" +
-            "prefab=RoundLog;amount=50;price=100|prefab=FineWood;amount=50;price=150|" +
-            "prefab=IronNails;amount=10;price=110|prefab=IronOre;amount=50;price=700|" +
-            "prefab=SilverOre;amount=50;price=1000|prefab=GreydwarfEye;amount=500;price=250|" +
-            "prefab=SurtlingCore;amount=100;price=100|prefab=DeadToken;amount=1;price=750|" +
-            "prefab=ResetToken;amount=1;price=250|prefab=Coins;amount=1000;price=500";
+            "prefab=PortalToken;amount=1;price=250|" +
+            "prefab=FichaFundador;amount=1;price=200|" +
+            "prefab=FichaBarbeiro;amount=1;price=60|" +
+            "prefab=FichaHalloween;amount=1;price=400;from=2026-10-24;to=2026-11-07|" +
+            "prefab=FichaTemporada;amount=1;price=500|" +
+            "prefab=FichaBatizar;amount=1;price=800|" +
+            "prefab=FichaBrasao;amount=1;price=1000";
+
+        /// <summary>"yyyy-MM-dd", the only shape a from=/to= date is accepted in -- plain
+        /// enough to read in a log line and to write by hand in the cfg.</summary>
+        private const string DateFormat = "yyyy-MM-dd";
 
         /// <summary>
         /// Every well-formed entry, in the order written. Pure text -- whether the item exists
@@ -58,7 +75,7 @@ namespace NpcValheim.Npc
                 var text = entry.Trim();
                 if (text.Length == 0) continue;
 
-                string prefab = null;
+                string prefab = null, fromText = null, toText = null;
                 bool hasAmount = false, hasPrice = false;
                 int amount = 0, price = 0;
                 foreach (var field in text.Split(';'))
@@ -74,6 +91,10 @@ namespace NpcValheim.Npc
                         hasAmount = int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out amount);
                     else if (key.Equals("price", StringComparison.OrdinalIgnoreCase))
                         hasPrice = int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out price);
+                    else if (key.Equals("from", StringComparison.OrdinalIgnoreCase))
+                        fromText = value;
+                    else if (key.Equals("to", StringComparison.OrdinalIgnoreCase))
+                        toText = value;
                 }
 
                 if (string.IsNullOrEmpty(prefab) || !hasAmount || !hasPrice)
@@ -86,25 +107,66 @@ namespace NpcValheim.Npc
                     problems?.Add($"{prefab}: amount and price must be positive (amount={amount}, price={price})");
                     continue;
                 }
+                if (!TryParseDate(fromText, out DateTime? from) || !TryParseDate(toText, out DateTime? to))
+                {
+                    problems?.Add($"{prefab}: from/to must be a date ({DateFormat})");
+                    continue;
+                }
+                if (from != null && to != null && from > to)
+                {
+                    problems?.Add($"{prefab}: from ({fromText}) is after to ({toText})");
+                    continue;
+                }
                 if (!seen.Add(prefab))
                 {
                     problems?.Add($"{prefab} is listed more than once; the first entry wins");
                     continue;
                 }
 
-                offers.Add(new DeadcoinOffer { Prefab = prefab, Amount = amount, Price = price });
+                offers.Add(new DeadcoinOffer { Prefab = prefab, Amount = amount, Price = price, From = from, To = to });
             }
             return offers;
         }
 
-        /// <summary>The offers that can actually be handed over on this machine: a real item,
-        /// in an amount one delivery can carry. Anything else is left off the counter, so the
-        /// server never charges for something the buyer's client would fail to create.</summary>
-        internal static List<DeadcoinOffer> Available(string raw, List<string> problems)
+        /// <summary>null for an empty field (no limit on that side), the parsed date for a
+        /// well-formed one, or a failure for anything else.</summary>
+        private static bool TryParseDate(string text, out DateTime? value)
         {
+            value = null;
+            if (string.IsNullOrWhiteSpace(text)) return true;
+            if (!DateTime.TryParseExact(text.Trim(), DateFormat, CultureInfo.InvariantCulture,
+                    DateTimeStyles.None, out DateTime parsed)) return false;
+            value = parsed.Date;
+            return true;
+        }
+
+        /// <summary>Whether `offer` is on sale on `day` (both ends of the window included).
+        /// No window at all is always on sale. Dates compare by day only, on whichever clock
+        /// the caller passes -- the server's for a purchase, since that is the one that
+        /// decides.</summary>
+        internal static bool OnSaleOn(DeadcoinOffer offer, DateTime day)
+        {
+            if (offer == null) return false;
+            var date = day.Date;
+            if (offer.From != null && date < offer.From.Value) return false;
+            if (offer.To != null && date > offer.To.Value) return false;
+            return true;
+        }
+
+        /// <summary>The offers that can actually be handed over on this machine, right now: a
+        /// real item, in an amount one delivery can carry, inside its sale window if it has
+        /// one. Anything else is left off the counter, so the server never charges for
+        /// something the buyer's client would fail to create or that is not on sale today.
+        /// Being outside the window is not logged as a problem -- it is the config working as
+        /// written, not a mistake in it.</summary>
+        internal static List<DeadcoinOffer> Available(string raw, List<string> problems, DateTime? now = null)
+        {
+            var today = (now ?? DateTime.Now);
             var result = new List<DeadcoinOffer>();
             foreach (var offer in Parse(raw, problems))
             {
+                if (!OnSaleOn(offer, today)) continue;
+
                 int max = ItemSpawner.MaxDeliverableAmount(offer.Prefab);
                 if (max <= 0)
                 {
@@ -122,8 +184,14 @@ namespace NpcValheim.Npc
         }
 
         /// <summary>One offer as an Items entry, the way <see cref="Parse"/> reads it back.</summary>
-        internal static string Format(DeadcoinOffer offer) =>
-            string.Format(CultureInfo.InvariantCulture, "prefab={0};amount={1};price={2}", offer.Prefab, offer.Amount, offer.Price);
+        internal static string Format(DeadcoinOffer offer)
+        {
+            string text = string.Format(CultureInfo.InvariantCulture, "prefab={0};amount={1};price={2}",
+                offer.Prefab, offer.Amount, offer.Price);
+            if (offer.From != null) text += ";from=" + offer.From.Value.ToString(DateFormat, CultureInfo.InvariantCulture);
+            if (offer.To != null) text += ";to=" + offer.To.Value.ToString(DateFormat, CultureInfo.InvariantCulture);
+            return text;
+        }
 
         private static string Key(string entry) => CfgList.Field(entry, "prefab");
 
@@ -710,10 +778,21 @@ namespace NpcValheim.Npc
                 return;
             }
 
-            var offer = new DeadcoinOffer { Prefab = prefab, Amount = amount, Price = price };
+            // This form only edits amount and price; a sale window set by hand in the cfg
+            // (or by a future form) survives an edit here instead of being wiped by it.
+            var existing = DeadcoinCatalog.Parse(Plugin.DeadcoinShopItems.Value ?? "", null)
+                .Find(o => string.Equals(o.Prefab, prefab, StringComparison.Ordinal));
+            var offer = new DeadcoinOffer
+            {
+                Prefab = prefab, Amount = amount, Price = price,
+                From = existing?.From, To = existing?.To,
+            };
             Plugin.DeadcoinShopItems.Value = DeadcoinCatalog.SetOffer(Plugin.DeadcoinShopItems.Value, offer);
             Plugin.Log.LogInfo($"NpcValheim: admin {adminName} set the Deadcoins offer {DeadcoinCatalog.Format(offer)} at {where}");
-            ServiceNpcAuthority.SendStatus(admin, $"À venda: {amount}x {ItemNames.Display(prefab)} por {price} Deadcoins.");
+            ServiceNpcAuthority.SendStatus(admin, $"À venda: {amount}x {ItemNames.Display(prefab)} por {price} Deadcoins." +
+                (offer.From != null || offer.To != null
+                    ? $" Janela mantida: {offer.From?.ToString("yyyy-MM-dd") ?? "sem início"} a {offer.To?.ToString("yyyy-MM-dd") ?? "sem fim"}."
+                    : ""));
         }
 
         /// <summary>An admin taking an item off the counter.</summary>

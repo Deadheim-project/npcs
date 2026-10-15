@@ -1,17 +1,32 @@
 # Importado do KG Marketplace: Traders/TraderProfiles.cfg [TraderBronze]
 # Sem 'name': aplicar este modelo troca a lista de precos e deixa o
 # nome do NPC como esta.
+#
+# Mercador de bioma (A3, 14/10/2026): Floresta Negra / bronze, a loja inicial -- sem passe de
+# chefe (Eikthyr não tranca nada, ver [BossPass] Bosses). Preços em Deadcoins, limite semanal e
+# Garantia/Portal Token são proposta; o admin pode ajustar tudo no jogo (Admin > Balcão).
 name: ""
 forType: Marketplace
 marketplace:
   taxPercent: 0
+  requiredBoss: ""
   buys: []
   sells:
     - itemName: "Bronze"
       price: 67
     - itemName: "CopperOre"
       price: 17
+      deadcoins: 10
+      weeklyLimit: 2
     - itemName: "TinOre"
       price: 17
+      deadcoins: 10
+      weeklyLimit: 2
     - itemName: "DeadToken"
       price: 2500
+    - itemName: "GarantiaRefino"
+      price: 1000
+      deadcoins: 30
+      weeklyLimit: 10
+    - itemName: "PortalToken"
+      price: 3000

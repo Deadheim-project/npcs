@@ -20,6 +20,20 @@ namespace NpcValheim.Npc
     /// ZNetView RPCs only support up to 3 extra parameters, so multi-value payloads are
     /// packed into a single "a;b;c" string (see Pack/Unpack helpers below).
     /// </summary>
+    /// <summary>
+    /// One item on a Mercador's sell list (A3): what it costs in each currency, and how many
+    /// units one player may buy per week. 0 in a currency means it is not sold that way; 0 in
+    /// WeeklyLimit means no cap. The cap is counted by <see cref="MarketWeeklyLedger"/>, per
+    /// item name across every Mercador, regardless of which currency paid for a purchase.
+    /// </summary>
+    public sealed class SellOffer
+    {
+        public string ItemName;
+        public int Gold;
+        public int Deadcoins;
+        public int WeeklyLimit;
+    }
+
     public class MarketplaceNpc : NpcBase
     {
         private const string KeyTaxPercent = "npcv_mk_tax";
@@ -186,6 +200,7 @@ namespace NpcValheim.Npc
             Nview.Register("RPC_Paid", (Action<long, int, string>)RPC_Paid);
             Nview.Register("RPC_DeliverItem", (Action<long, string, int>)RPC_DeliverItem);
             Nview.Register("RPC_ReturnItem", (Action<long, string, string>)RPC_ReturnItem);
+            Nview.Register("RPC_DeadcoinsUpdate", (Action<long, int>)RPC_DeadcoinsUpdate);
         }
 
         // ---- the merchant's own shop: two price lists, both admin-defined ----
@@ -200,11 +215,30 @@ namespace NpcValheim.Npc
         /// <summary>Prefab name -> coins the merchant pays the player per unit.</summary>
         public Dictionary<string, int> GetBuyPrices() => GetPriceTable(KeyBuyPrices);
 
-        /// <summary>Prefab name -> coins the merchant charges the player per unit.</summary>
-        public Dictionary<string, int> GetSellPrices() => GetPriceTable(KeySellPrices);
+        /// <summary>Prefab name -> coins the merchant charges the player per unit. Gold only,
+        /// for callers that predate A3 (the Deadcoins price and weekly limit are on
+        /// <see cref="GetSellOffers"/>).</summary>
+        public Dictionary<string, int> GetSellPrices()
+        {
+            var result = new Dictionary<string, int>();
+            foreach (var kv in GetSellOffers())
+                if (kv.Value.Gold > 0) result[kv.Key] = kv.Value.Gold;
+            return result;
+        }
+
+        /// <summary>Prefab name -> the full sell offer (gold, Deadcoins, weekly limit; A3).</summary>
+        public Dictionary<string, SellOffer> GetSellOffers()
+        {
+            if (Nview == null || !Nview.IsValid()) return new Dictionary<string, SellOffer>();
+            return ParseSellTable(Nview.GetZDO().GetString(KeySellPrices, ""));
+        }
 
         public int GetBuyPrice(string itemName) => LookUp(GetBuyPrices(), itemName);
         public int GetSellPrice(string itemName) => LookUp(GetSellPrices(), itemName);
+
+        /// <summary>This item's sell offer, or null when the merchant does not sell it.</summary>
+        public SellOffer GetSellOffer(string itemName) =>
+            !string.IsNullOrEmpty(itemName) && GetSellOffers().TryGetValue(itemName, out var offer) ? offer : null;
 
         private static int LookUp(Dictionary<string, int> table, string itemName) =>
             !string.IsNullOrEmpty(itemName) && table.TryGetValue(itemName, out int price) ? price : 0;
@@ -229,6 +263,51 @@ namespace NpcValheim.Npc
             return result;
         }
 
+        /// <summary>
+        /// "item;gold;deadcoins;weeklyLimit" per line (A3) -- the sell side's own format, richer
+        /// than the buy side's "item;price" because a sale can be priced in either currency and
+        /// capped per week. gold=0 means not sold for Coins; deadcoins=0 means not sold for
+        /// Deadcoins; weeklyLimit=0 means no cap. An entry with both prices at 0 is dropped,
+        /// same rule as every other price list here: nothing is ever free by omission.
+        /// </summary>
+        private static Dictionary<string, SellOffer> ParseSellTable(string packed)
+        {
+            var result = new Dictionary<string, SellOffer>(StringComparer.Ordinal);
+            if (string.IsNullOrEmpty(packed)) return result;
+
+            foreach (var line in packed.Split('\n'))
+            {
+                if (line.Length == 0) continue;
+                var p = line.Split(';');
+                if (p.Length != 4) continue;
+                string item = p[0];
+                if (string.IsNullOrEmpty(item)) continue;
+                if (!int.TryParse(p[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out int gold) || gold < 0) continue;
+                if (!int.TryParse(p[2], NumberStyles.Integer, CultureInfo.InvariantCulture, out int deadcoins) || deadcoins < 0) continue;
+                if (!int.TryParse(p[3], NumberStyles.Integer, CultureInfo.InvariantCulture, out int weeklyLimit) || weeklyLimit < 0) continue;
+                if (gold <= 0 && deadcoins <= 0) continue;
+
+                result[item] = new SellOffer { ItemName = item, Gold = gold, Deadcoins = deadcoins, WeeklyLimit = weeklyLimit };
+            }
+            return result;
+        }
+
+        private static string FormatSellTable(Dictionary<string, SellOffer> offers)
+        {
+            var sb = new StringBuilder();
+            foreach (var kv in offers)
+            {
+                var o = kv.Value;
+                if (string.IsNullOrEmpty(o.ItemName) || o.ItemName.IndexOf(';') >= 0) continue;
+                if (o.Gold <= 0 && o.Deadcoins <= 0) continue;
+                if (sb.Length > 0) sb.Append('\n');
+                sb.Append(o.ItemName).Append(';').Append(o.Gold.ToString(CultureInfo.InvariantCulture)).Append(';')
+                  .Append(o.Deadcoins.ToString(CultureInfo.InvariantCulture)).Append(';')
+                  .Append(o.WeeklyLimit.ToString(CultureInfo.InvariantCulture));
+            }
+            return sb.ToString();
+        }
+
         /// <summary>Admin sets a price. 0 removes the entry. `selling` picks which side of
         /// the counter it applies to.</summary>
         public void RequestSetPrice(Player requester, string itemName, int price, bool selling)
@@ -246,6 +325,21 @@ namespace NpcValheim.Npc
             InvokeAuthoritativeRpc("RPC_SetPrice", (selling ? "S:" : "B:") + (itemName ?? ""), price);
         }
 
+        /// <summary>Admin, sell side only (A3): the Deadcoins price and/or the weekly limit,
+        /// leaving the Coins price exactly as it was. 0 in either field means "not sold that
+        /// way" / "no cap", same as everywhere else; an item with no Coins price and no
+        /// Deadcoins price left after this is taken off the list entirely.</summary>
+        public void RequestSetSellExtra(Player requester, string itemName, int deadcoins, int weeklyLimit)
+        {
+            if (Nview == null || !Nview.IsValid() || !CanLocalPlayerAdminister())
+            {
+                Player.m_localPlayer?.Message(MessageHud.MessageType.Center,
+                    "Seu cliente não considera você admin", 0, null);
+                return;
+            }
+            InvokeAuthoritativeRpc("RPC_SetSellExtra", itemName ?? "", deadcoins + ";" + weeklyLimit);
+        }
+
         /// <summary>Routes admin-only shop mutations through the authenticated global RPC,
         /// same as every other admin edit in NpcBase -- these two used to go through the plain
         /// ZNetView RPC instead, which silently drops the request whenever this NPC's ZDO
@@ -258,6 +352,9 @@ namespace NpcValheim.Npc
             {
                 case "RPC_SetPrice" when arguments.Length == 2 && arguments[0] is string tagged && arguments[1] is int price:
                     RPC_SetPrice(sender, tagged, price);
+                    return true;
+                case "RPC_SetSellExtra" when arguments.Length == 2 && arguments[0] is string extraItem && arguments[1] is string extraPacked:
+                    RPC_SetSellExtra(sender, extraItem, extraPacked);
                     return true;
                 case "RPC_ConfigureTax" when arguments.Length == 1 && arguments[0] is int taxPercent:
                     RPC_ConfigureTax(sender, taxPercent);
@@ -332,6 +429,15 @@ namespace NpcValheim.Npc
         public bool RequestBossPass(string method, int shownPrice) =>
             InvokeServiceAction(BossPass.ActionBuy, BossPass.BuyPayload(method, shownPrice));
 
+        /// <summary>Client, A3: how much of this week's limit each weekly-capped sell item has
+        /// used, for this character.</summary>
+        public bool RequestSellWeeklyStatus() => InvokeServiceAction(MarketDeadcoinSale.ActionStatus, "");
+
+        /// <summary>Client, A3: buy `amount` of `itemName` from this counter's sell list for
+        /// Deadcoins, at the total price shown.</summary>
+        public bool RequestBuyDeadcoins(string itemName, int amount, int shownPrice) =>
+            InvokeServiceAction(MarketDeadcoinSale.ActionBuy, MarketDeadcoinSale.BuyPayload(itemName, amount, shownPrice));
+
         internal override bool DispatchServiceAction(long sender, string action, string payload)
         {
             switch (action)
@@ -342,14 +448,23 @@ namespace NpcValheim.Npc
                 case BossPass.ActionBuy:
                     BossPass.ServePurchase(sender, HasShop ? RequiredBoss : "", $"'{GetHoverName()}'", payload ?? "");
                     return true;
+                case MarketDeadcoinSale.ActionStatus:
+                    MarketDeadcoinSale.ServeStatus(sender, this);
+                    return true;
+                case MarketDeadcoinSale.ActionBuy:
+                    MarketDeadcoinSale.ServeBuy(sender, this, payload ?? "", $"'{GetHoverName()}'");
+                    return true;
                 default:
                     return base.DispatchServiceAction(sender, action, payload);
             }
         }
 
-        /// <summary>The server's check, run inside both halves of the counter. False when this
-        /// character has no pass for a locked counter; `refusal` then says so in Portuguese.</summary>
-        private bool CounterOpenFor(long playerId, out string refusal) =>
+        /// <summary>The server's check, run inside every way of trading at the counter (Coins,
+        /// Deadcoins, buying and selling). False when this character has no pass for a locked
+        /// counter; `refusal` then says so in Portuguese. Internal rather than private: A3's
+        /// Deadcoins purchase (MarketDeadcoinSale) runs outside this class and has to pass the
+        /// same gate Coins does.</summary>
+        internal bool CounterOpenFor(long playerId, out string refusal) =>
             BossPass.CanTrade(playerId, HasShop ? RequiredBoss : "", out refusal);
 
         /// <summary>
@@ -397,24 +512,120 @@ namespace NpcValheim.Npc
                 return;
             }
 
-            string key = selling ? KeySellPrices : KeyBuyPrices;
-            var prices = GetPriceTable(key);
-            if (price <= 0) prices.Remove(itemName);
-            else if (prices.Count < 60 || prices.ContainsKey(itemName)) prices[itemName] = Mathf.Min(price, 1000000);
+            if (selling)
+            {
+                // Gold only: this form predates A3 and keeps editing just the Coins price. A
+                // Deadcoins price or a weekly limit already on the item survives the edit (see
+                // RPC_SetSellExtra, which edits those without touching Gold the same way).
+                var offers = GetSellOffers();
+                var existingOffer = offers.TryGetValue(itemName, out var found) ? found : null;
+                if (price <= 0)
+                {
+                    if (existingOffer != null && (existingOffer.Deadcoins > 0 || existingOffer.WeeklyLimit > 0))
+                        offers[itemName] = new SellOffer
+                        {
+                            ItemName = itemName, Gold = 0,
+                            Deadcoins = existingOffer.Deadcoins, WeeklyLimit = existingOffer.WeeklyLimit,
+                        };
+                    else
+                        offers.Remove(itemName);
+                }
+                else if (offers.Count < 60 || existingOffer != null)
+                {
+                    offers[itemName] = new SellOffer
+                    {
+                        ItemName = itemName, Gold = Mathf.Min(price, 1000000),
+                        Deadcoins = existingOffer?.Deadcoins ?? 0, WeeklyLimit = existingOffer?.WeeklyLimit ?? 0,
+                    };
+                }
+                else
+                {
+                    // keeps the packed ZDO string bounded
+                    ServiceNpcAuthority.SendStatus(sender, "Este lado do balcão já tem 60 itens.");
+                    return;
+                }
+                SaveSellTable(offers);
+            }
             else
             {
-                // keeps the packed ZDO string bounded
-                ServiceNpcAuthority.SendStatus(sender, "Este lado do balcão já tem 60 itens.");
-                return;
+                var prices = GetPriceTable(KeyBuyPrices);
+                if (price <= 0) prices.Remove(itemName);
+                else if (prices.Count < 60 || prices.ContainsKey(itemName)) prices[itemName] = Mathf.Min(price, 1000000);
+                else
+                {
+                    ServiceNpcAuthority.SendStatus(sender, "Este lado do balcão já tem 60 itens.");
+                    return;
+                }
+                SavePriceTable(KeyBuyPrices, prices);
             }
-
-            SavePriceTable(key, prices);
 
             string side = selling ? "vende" : "compra";
             Plugin.Log.LogInfo($"NpcValheim: '{GetHoverName()}' {side} {itemName} por {price} (peer {sender})");
             ServiceNpcAuthority.SendStatus(sender, price > 0
                 ? $"O NPC {side} {ItemNames.Display(itemName)} por {price}/un."
                 : $"{ItemNames.Display(itemName)} removido do balcão.");
+        }
+
+        /// <summary>Admin, sell side only (A3): the Deadcoins price and/or the weekly limit,
+        /// leaving the Coins price exactly as RPC_SetPrice left it.</summary>
+        private void RPC_SetSellExtra(long sender, string itemName, string packed)
+        {
+            Plugin.Log.LogInfo($"NpcValheim: 'shop-set-sell-extra' from peer {sender} on '{GetHoverName()}': \"{itemName}\" = {packed}");
+            if (!CanAdminister(sender)) return;
+            if (!NpcRequestGuard.AllowRate(sender, "shop-set-sell-extra", 10, 2f))
+            {
+                ServiceNpcAuthority.SendStatus(sender, "Muitos pedidos seguidos. Espere um instante.");
+                return;
+            }
+
+            itemName = (itemName ?? "").Trim();
+            if (ObjectDB.instance?.GetItemPrefab(itemName) == null)
+            {
+                ServiceNpcAuthority.SendStatus(sender, $"O servidor não conhece o item '{itemName}'.");
+                return;
+            }
+
+            var parts = (packed ?? "").Split(';');
+            if (parts.Length != 2 ||
+                !int.TryParse(parts[0], NumberStyles.Integer, CultureInfo.InvariantCulture, out int deadcoins) ||
+                !int.TryParse(parts[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out int weeklyLimit) ||
+                deadcoins < 0 || weeklyLimit < 0)
+            {
+                ServiceNpcAuthority.SendStatus(sender, "Pedido malformado.");
+                return;
+            }
+
+            var offers = GetSellOffers();
+            var existing = offers.TryGetValue(itemName, out var found) ? found : null;
+            int gold = existing?.Gold ?? 0;
+
+            if (gold <= 0 && deadcoins <= 0)
+            {
+                if (existing != null) offers.Remove(itemName);
+                SaveSellTable(offers);
+                ServiceNpcAuthority.SendStatus(sender,
+                    $"{ItemNames.Display(itemName)} removido do balcão (sem preço em moedas nem em Deadcoins).");
+                return;
+            }
+            if (offers.Count >= 60 && existing == null)
+            {
+                ServiceNpcAuthority.SendStatus(sender, "Este lado do balcão já tem 60 itens.");
+                return;
+            }
+
+            offers[itemName] = new SellOffer
+            {
+                ItemName = itemName, Gold = gold, Deadcoins = Mathf.Min(deadcoins, 1000000),
+                WeeklyLimit = Mathf.Min(weeklyLimit, 1000000),
+            };
+            SaveSellTable(offers);
+
+            Plugin.Log.LogInfo($"NpcValheim: '{GetHoverName()}' vende {itemName} por {deadcoins} Deadcoins, " +
+                               $"limite semanal {weeklyLimit} (peer {sender})");
+            ServiceNpcAuthority.SendStatus(sender, deadcoins > 0
+                ? $"{ItemNames.Display(itemName)}: {deadcoins} Deadcoins/un" +
+                  (weeklyLimit > 0 ? $", limite {weeklyLimit}/semana." : ", sem limite semanal.")
+                : $"{ItemNames.Display(itemName)}: Deadcoins desligado" + (weeklyLimit > 0 ? $", limite {weeklyLimit}/semana." : "."));
         }
 
         private void SavePriceTable(string key, Dictionary<string, int> prices)
@@ -427,18 +638,26 @@ namespace NpcValheim.Npc
                 sb.Append(kv.Key).Append(';').Append(kv.Value.ToString(CultureInfo.InvariantCulture));
             }
             string packed = sb.ToString();
-            // The prices being replaced were on display until this instant; a buyer who read
-            // one of them is still owed it (see RPC_BuyFromNpc).
-            if (key == KeySellPrices) RememberShownSells(Nview.GetZDO().GetString(key, ""));
             Nview.GetZDO().Set(key, packed);
 
             // The write is only authoritative once the server remembers it; otherwise the
             // guard above would restore the value this call just replaced.
-            if (ZNet.instance != null && ZNet.instance.IsServer())
-            {
-                if (key == KeyBuyPrices) _authoritativeBuys = packed;
-                else if (key == KeySellPrices) _authoritativeSells = packed;
-            }
+            if (ZNet.instance != null && ZNet.instance.IsServer()) _authoritativeBuys = packed;
+
+            PersistProfileSnapshot();
+        }
+
+        /// <summary>Same role as <see cref="SavePriceTable"/>, for the sell side's richer rows
+        /// (A3: gold, Deadcoins and a weekly limit per item).</summary>
+        private void SaveSellTable(Dictionary<string, SellOffer> offers)
+        {
+            string packed = FormatSellTable(offers);
+            // The prices being replaced were on display until this instant; a buyer who read
+            // one of them is still owed it (see RPC_BuyFromNpc).
+            RememberShownSells(Nview.GetZDO().GetString(KeySellPrices, ""));
+            Nview.GetZDO().Set(KeySellPrices, packed);
+
+            if (ZNet.instance != null && ZNet.instance.IsServer()) _authoritativeSells = packed;
 
             PersistProfileSnapshot();
         }
@@ -519,6 +738,43 @@ namespace NpcValheim.Npc
                     "the counter was locked moments ago");
             }
 
+            // A3: the item's own weekly cap, shared with the Deadcoins path (MarketDeadcoinSale)
+            // and counted regardless of currency. No refund on refusal, same as every other
+            // reason this RPC can fail -- `paid` is the client's own claim, not a real coin the
+            // server can see, and the panel already hides a maxed-out item's button so an
+            // honest client should not reach here at all.
+            var offer = GetSellOffer(itemName);
+            if (offer != null && offer.WeeklyLimit > 0)
+            {
+                string week = TrainerLedger.WeekOf(DateTime.Now);
+                int usedThisWeek;
+                try { usedThisWeek = MarketWeeklyLedger.CountWeek(playerId, week, itemName); }
+                catch (Exception e)
+                {
+                    Plugin.Log.LogError($"NpcValheim: could not read {MarketWeeklyLedger.FileName}: {e.Message}");
+                    ServiceNpcAuthority.SendStatus(sender, "O servidor não conseguiu ler o limite semanal. Tente de novo.");
+                    BroadcastMarketDataTo(sender);
+                    return;
+                }
+                if (usedThisWeek + amount > offer.WeeklyLimit)
+                {
+                    Plugin.Log.LogWarning($"NpcValheim: refused {amount}x {itemName} to {playerId}: " +
+                                          $"{usedThisWeek}+{amount} > {offer.WeeklyLimit} this week (nothing paid back)");
+                    ServiceNpcAuthority.SendStatus(sender,
+                        $"Limite semanal de {ItemNames.Display(itemName)}: você já comprou {usedThisWeek} de {offer.WeeklyLimit} esta semana.");
+                    BroadcastMarketDataTo(sender);
+                    return;
+                }
+                try { MarketWeeklyLedger.Record(playerId, GameApi.GetPlayerName(sender), week, itemName, amount, $"gold:{PayoutFor(unitPrice, amount)}", Guid.NewGuid().ToString("N")); }
+                catch (Exception e)
+                {
+                    // Coins already left the buyer's bag (the client removed them before this
+                    // RPC was sent) and cannot be returned on this path -- logged so an admin
+                    // can credit the player by hand, same tradeoff as every other gold refusal.
+                    Plugin.Log.LogError($"NpcValheim: weekly record for {playerId} ({itemName}) not written: {e.Message}; the sale proceeds anyway");
+                }
+            }
+
             // Handed to the buyer rather than dropped at the merchant's feet. Goods on the
             // ground are goods somebody else can pick up, and they are easy to walk away from
             // without noticing.
@@ -538,8 +794,15 @@ namespace NpcValheim.Npc
 
         private readonly ShownPrices _shownSells = new ShownPrices();
 
-        private void RememberShownSells(string packed) =>
-            _shownSells.Remember(ParsePriceTable(packed), Time.unscaledTime + ShownPriceSeconds);
+        /// <summary>Only the Coins half of a sell table (A3): this cache is for the gold
+        /// purchase's grace period, and Deadcoins purchases never go through it.</summary>
+        private void RememberShownSells(string packed)
+        {
+            var gold = new Dictionary<string, int>();
+            foreach (var kv in ParseSellTable(packed))
+                if (kv.Value.Gold > 0) gold[kv.Key] = kv.Value.Gold;
+            _shownSells.Remember(gold, Time.unscaledTime + ShownPriceSeconds);
+        }
 
         /// <summary>Every price for this item a client could be paying right now, besides
         /// the one on the ZDO: the server's last own write (the ZDO can drift away from it,
@@ -548,8 +811,8 @@ namespace NpcValheim.Npc
         {
             var shown = _shownSells.For(itemName, Time.unscaledTime);
             if (_authoritativeSells != null &&
-                ParsePriceTable(_authoritativeSells).TryGetValue(itemName ?? "", out int kept))
-                shown.Add(kept);
+                ParseSellTable(_authoritativeSells).TryGetValue(itemName ?? "", out var kept) && kept.Gold > 0)
+                shown.Add(kept.Gold);
             return shown;
         }
 
@@ -623,6 +886,31 @@ namespace NpcValheim.Npc
 
             GiveCoins(player, amount);
             player.Message(MessageHud.MessageType.TopLeft, $"{reason}: +{amount} moedas", 0, null);
+        }
+
+        // ---- Deadcoins (A3): a server-authoritative purchase off the same sell list ----
+
+        /// <summary>
+        /// Server: charges, delivers and logs a Deadcoins purchase of this merchant's own sell
+        /// list, called only from <see cref="MarketDeadcoinSale.ServeBuy"/> once it has charged
+        /// the buyer's Deadcoins ledger. Delivery reuses the same channel and the same client
+        /// handler as a Coins purchase (RPC_DeliverItem): there is no quote-then-pay gap here
+        /// for this NPC to unload in before the answer arrives, unlike the boss pass's Coins
+        /// flow, so the instance RPC is as good as a global one would be.
+        /// </summary>
+        internal void DeliverDeadcoinsPurchase(long sender, string itemName, int amount, int deadcoinsAfter)
+        {
+            Nview.InvokeRPC(sender, "RPC_DeliverItem", itemName, amount);
+            Nview.InvokeRPC(sender, "RPC_DeadcoinsUpdate", deadcoinsAfter);
+        }
+
+        /// <summary>Client side: the Deadcoins balance after a purchase here. Folded into the
+        /// one shared cache (DeadcoinShop.Balance) that every other Deadcoins panel (F7, the
+        /// boss pass, the Treinador, the Mestre das Montarias) already reads.</summary>
+        private void RPC_DeadcoinsUpdate(long sender, int balance)
+        {
+            if (!NpcRequestGuard.IsResponseFromOwner(Nview, sender)) return;
+            DeadcoinShop.NoteBalance(balance);
         }
 
         /// <summary>Sell straight to the merchant for instant coins. `packed` = "quality;amount".
@@ -1012,8 +1300,12 @@ namespace NpcValheim.Npc
             };
             foreach (var kv in GetBuyPrices())
                 profile.Marketplace.Buys.Add(new ShopPrice { ItemName = kv.Key, Price = kv.Value });
-            foreach (var kv in GetSellPrices())
-                profile.Marketplace.Sells.Add(new ShopPrice { ItemName = kv.Key, Price = kv.Value });
+            foreach (var kv in GetSellOffers())
+                profile.Marketplace.Sells.Add(new ShopPrice
+                {
+                    ItemName = kv.Key, Price = kv.Value.Gold,
+                    Deadcoins = kv.Value.Deadcoins, WeeklyLimit = kv.Value.WeeklyLimit,
+                });
             return profile;
         }
 
@@ -1025,8 +1317,8 @@ namespace NpcValheim.Npc
             // Same rule as the teleporter's destinations: a template that carries a price
             // list replaces the merchant's; one without leaves it alone, so applying a
             // look-only template to a working shop doesn't wipe its prices.
-            ApplyPriceTable(KeyBuyPrices, profile.Marketplace.Buys);
-            ApplyPriceTable(KeySellPrices, profile.Marketplace.Sells);
+            ApplyBuyPriceTable(profile.Marketplace.Buys);
+            ApplySellPriceTable(profile.Marketplace.Sells);
 
             // Null means the template did not mention the lock, which leaves it as it is, the
             // same patch rule as the price lists. A boss the config does not list is applied
@@ -1047,14 +1339,36 @@ namespace NpcValheim.Npc
             }
         }
 
-        private void ApplyPriceTable(string key, List<ShopPrice> entries)
+        private void ApplyBuyPriceTable(List<ShopPrice> entries)
         {
             if (entries == null || entries.Count == 0) return;
             var prices = new Dictionary<string, int>();
             foreach (var entry in entries)
                 if (entry != null && !string.IsNullOrEmpty(entry.ItemName) && entry.Price > 0)
                     prices[entry.ItemName] = entry.Price;
-            SavePriceTable(key, prices);
+            SavePriceTable(KeyBuyPrices, prices);
+        }
+
+        /// <summary>A3: a template's sell list carries gold, Deadcoins and the weekly limit
+        /// together, same patch rule as <see cref="ApplyBuyPriceTable"/> -- an entry with
+        /// neither price is dropped rather than applied as a free item.</summary>
+        private void ApplySellPriceTable(List<ShopPrice> entries)
+        {
+            if (entries == null || entries.Count == 0) return;
+            var offers = new Dictionary<string, SellOffer>(StringComparer.Ordinal);
+            foreach (var entry in entries)
+            {
+                if (entry == null || string.IsNullOrEmpty(entry.ItemName)) continue;
+                if (entry.Price <= 0 && entry.Deadcoins <= 0) continue;
+                offers[entry.ItemName] = new SellOffer
+                {
+                    ItemName = entry.ItemName,
+                    Gold = Mathf.Max(0, entry.Price),
+                    Deadcoins = Mathf.Max(0, entry.Deadcoins),
+                    WeeklyLimit = Mathf.Max(0, entry.WeeklyLimit),
+                };
+            }
+            SaveSellTable(offers);
         }
     }
 

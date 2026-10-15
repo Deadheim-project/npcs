@@ -1,14 +1,21 @@
 # Importado do KG Marketplace: Traders/TraderProfiles.cfg [FerreiroGelo]
 # Sem 'name': aplicar este modelo troca a lista de precos e deixa o
 # nome do NPC como esta.
+#
+# Mercador de bioma (A3, 14/10/2026): Montanha, trancado pelo passe de Bonemass, igual à Loja
+# da Montanha do Mestre dos Passes. Preços em Deadcoins, limite semanal e Garantia/Portal Token
+# são proposta; o admin pode ajustar tudo no jogo (Admin > Balcão).
 name: ""
 forType: Marketplace
 marketplace:
   taxPercent: 0
+  requiredBoss: "Bonemass"
   buys: []
   sells:
     - itemName: "SilverOre"
       price: 300
+      deadcoins: 150
+      weeklyLimit: 2
     - itemName: "Obsidian"
       price: 20
     - itemName: "Crystal"
@@ -23,3 +30,9 @@ marketplace:
       price: 70
     - itemName: "JuteRed"
       price: 100
+    - itemName: "GarantiaRefino"
+      price: 1000
+      deadcoins: 30
+      weeklyLimit: 10
+    - itemName: "PortalToken"
+      price: 3000

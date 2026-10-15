@@ -1,10 +1,18 @@
 # Importado do KG Marketplace: Traders/TraderProfiles.cfg [ferreiroash]
 # Sem 'name': aplicar este modelo troca a lista de precos e deixa o
 # nome do NPC como esta.
+#
+# Mercador de bioma (A3, 14/10/2026): Ashlands, trancado pelo passe da Rainha (SeekerQueen),
+# igual à Loja de Ashlands do Mestre dos Passes. Preços em Deadcoins, limite semanal e
+# Garantia/Portal Token são proposta; o admin pode ajustar tudo no jogo (Admin > Balcão).
+#
+# Sem modelo equivalente ainda para o Norte Profundo (Fader): nenhum template importado do KG
+# cobre esse bioma.
 name: ""
 forType: Marketplace
 marketplace:
   taxPercent: 0
+  requiredBoss: "SeekerQueen"
   buys: []
   sells:
     - itemName: "Blackwood"
@@ -13,5 +21,13 @@ marketplace:
       price: 150
     - itemName: "FlametalOreNew"
       price: 400
+      deadcoins: 200
+      weeklyLimit: 2
     - itemName: "Grausten"
       price: 6
+    - itemName: "GarantiaRefino"
+      price: 1000
+      deadcoins: 30
+      weeklyLimit: 10
+    - itemName: "PortalToken"
+      price: 3000

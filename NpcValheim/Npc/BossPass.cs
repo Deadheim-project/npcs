@@ -32,15 +32,22 @@ namespace NpcValheim.Npc
     /// </summary>
     internal static class BossPassCatalog
     {
-        /// <summary>The server's table, Eikthyr left out on purpose: his shop is the starting
-        /// one. 100 Deadcoins = R$1, the rate the Deadcoins counter already uses.</summary>
+        /// <summary>
+        /// The server's table, Eikthyr left out on purpose: his shop is the starting one.
+        /// Decided 14/10/2026 (memória vip-doacoes.md): gold=0 on every entry -- a pass now
+        /// comes only from killing the boss or from Deadcoins, never from Coins -- and the
+        /// Deadcoins price itself is withheld until that boss has died on this server at
+        /// least once (see <see cref="BossFirstKillLedger"/> and [BossPass]
+        /// DeadcoinsAfterFirstKill). 100 Deadcoins = R$1, the rate the Deadcoins counter
+        /// already uses.
+        /// </summary>
         internal const string DefaultBosses =
-            "boss=gd_king;name=Ancião;shop=Loja do Pântano;gold=1000;deadcoins=500|" +
-            "boss=Bonemass;name=Bonemass;shop=Loja da Montanha;gold=3000;deadcoins=1000|" +
-            "boss=Dragon;name=Moder;shop=Loja da Planície;gold=5000;deadcoins=2500|" +
-            "boss=GoblinKing;name=Yagluth;shop=Loja de Mistlands;gold=10000;deadcoins=5000|" +
-            "boss=SeekerQueen;name=Rainha;shop=Loja de Ashlands;gold=15000;deadcoins=10000|" +
-            "boss=Fader;name=Fader;shop=Loja do Norte Profundo;gold=25000;deadcoins=20000";
+            "boss=gd_king;name=Ancião;shop=Loja do Pântano;gold=0;deadcoins=500|" +
+            "boss=Bonemass;name=Bonemass;shop=Loja da Montanha;gold=0;deadcoins=1000|" +
+            "boss=Dragon;name=Moder;shop=Loja da Planície;gold=0;deadcoins=2500|" +
+            "boss=GoblinKing;name=Yagluth;shop=Loja de Mistlands;gold=0;deadcoins=5000|" +
+            "boss=SeekerQueen;name=Rainha;shop=Loja de Ashlands;gold=0;deadcoins=10000|" +
+            "boss=Fader;name=Fader;shop=Loja do Norte Profundo;gold=0;deadcoins=20000";
 
         /// <summary>
         /// Every well-formed entry, in the order written. Pure text, so the wire check can run
@@ -344,6 +351,162 @@ namespace NpcValheim.Npc
 
         private static string Clean(string text) =>
             (text ?? "").Replace(';', ',').Replace('\n', ' ').Replace('\r', ' ').Trim();
+
+        /// <summary>Every boss with at least one "kill" pass on record, across every
+        /// character. Used only to seed <see cref="BossFirstKillLedger"/> the first time it
+        /// runs on a server that already had fights before this gate existed.</summary>
+        internal static HashSet<string> BossesWonByKill()
+        {
+            Refresh();
+            var result = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var held in Passes.Values)
+                foreach (var pass in held)
+                    if (KindOf(pass.Value) == KindKill) result.Add(pass.Key);
+            return result;
+        }
+    }
+
+    /// <summary>
+    /// Whether a boss has died on this server at least once, ever -- server-wide, not per
+    /// character. One text file, bossfirstkill.txt, next to bosspass.txt:
+    ///
+    ///   &lt;boss&gt;;&lt;when&gt;
+    ///
+    /// Separate from bosspass.txt on purpose: that file's lines are passes, read by
+    /// BossPassLedger.PassesOf, which the Treinador's lesson cap (TrainerCatalog.CapFor) reads
+    /// as "which boss passes does this character hold" -- a line with no character id would be
+    /// rejected by its parser (and re-logged as a warning on every reread), and one with a
+    /// placeholder id would read as a real player's pass. This ledger answers a different
+    /// question ("has anyone, ever, beaten this boss here") and has no character id to give.
+    /// </summary>
+    internal static class BossFirstKillLedger
+    {
+        internal const string FileName = "bossfirstkill.txt";
+
+        private const string Header =
+            "# Chefes já derrotados neste servidor, pelo menos uma vez (NpcValheim). Uma linha por chefe:\n" +
+            "# <boss>;<quando>\n" +
+            "# Controla so quando [BossPass] DeadcoinsAfterFirstKill esta ligado: antes da primeira\n" +
+            "# morte aqui, o passe desse chefe nao e oferecido nem aceito por Deadcoins (so matando\n" +
+            "# ou, se o admin puser gold>0 em [BossPass] Bosses, por moedas). Apagar uma linha\n" +
+            "# tranca esse chefe de novo para Deadcoins.\n";
+
+        internal static string FilePath => Path.Combine(NpcStoragePaths.DatabaseDirectory, FileName);
+
+        private static readonly HashSet<string> Killed = new HashSet<string>(StringComparer.Ordinal);
+        private static string _loadedPath;
+        private static DateTime _loadedStamp;
+        private static long _loadedLength = -1;
+
+        /// <summary>The bosses a file lists. Lines that are not "<boss>;..." are skipped and
+        /// named, same as every other ledger here.</summary>
+        internal static HashSet<string> Parse(IEnumerable<string> lines, List<string> problems)
+        {
+            var result = new HashSet<string>(StringComparer.Ordinal);
+            if (lines == null) return result;
+
+            int number = 0;
+            foreach (var raw in lines)
+            {
+                number++;
+                var line = (raw ?? "").Trim();
+                if (line.Length == 0 || line[0] == '#') continue;
+
+                var fields = line.Split(';');
+                string boss = fields.Length > 0 ? fields[0].Trim() : "";
+                if (boss.Length == 0 || !BossPassCatalog.IsCleanId(boss))
+                {
+                    problems?.Add($"line {number} is not \"<boss>;...\": \"{line}\"");
+                    continue;
+                }
+                result.Add(boss);
+            }
+            return result;
+        }
+
+        internal static bool HasDied(string boss)
+        {
+            if (string.IsNullOrEmpty(boss)) return false;
+            Refresh();
+            return Killed.Contains(boss);
+        }
+
+        /// <summary>Marks a boss as having died here, if it has not already. Called from
+        /// <see cref="BossKillWatcher"/> on every confirmed kill -- cheap and idempotent, so it
+        /// does not need its own gate on whether DeadcoinsAfterFirstKill is even on.</summary>
+        internal static bool Record(string boss)
+        {
+            if (string.IsNullOrEmpty(boss) || !BossPassCatalog.IsCleanId(boss)) return false;
+            if (HasDied(boss)) return false;
+
+            var path = FilePath;
+            Directory.CreateDirectory(Path.GetDirectoryName(path));
+            if (!File.Exists(path)) File.WriteAllText(path, Header);
+            File.AppendAllText(path, boss + ";" + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture) +
+                                      Environment.NewLine);
+
+            Killed.Add(boss);
+            Remember(path);
+            return true;
+        }
+
+        /// <summary>
+        /// Creates the file the first time it is asked for, from the bosses that already have
+        /// a "kill" pass on record (BossPassLedger.BossesWonByKill) -- a server turning this
+        /// gate on should not suddenly re-lock Deadcoins for a boss its players have already
+        /// beaten. Idempotent: does nothing once the file exists, seeded or not.
+        /// </summary>
+        internal static void EnsureSeeded(IEnumerable<string> alreadyKilledBosses)
+        {
+            if (File.Exists(FilePath)) return;
+
+            Directory.CreateDirectory(Path.GetDirectoryName(FilePath));
+            File.WriteAllText(FilePath, Header);
+            Killed.Clear();
+            _loadedLength = -1;
+
+            int seeded = 0;
+            foreach (var boss in alreadyKilledBosses ?? Enumerable.Empty<string>())
+                if (Record(boss)) seeded++;
+            if (seeded > 0)
+                Plugin.Log.LogInfo($"NpcValheim: {FileName} seeded with {seeded} boss(es) already won by kill");
+        }
+
+        private static void Refresh()
+        {
+            var path = FilePath;
+            if (!File.Exists(path))
+            {
+                if (_loadedLength != -1 || !string.Equals(path, _loadedPath, StringComparison.Ordinal))
+                {
+                    Killed.Clear();
+                    _loadedPath = path;
+                    _loadedLength = -1;
+                }
+                return;
+            }
+
+            var info = new FileInfo(path);
+            if (string.Equals(path, _loadedPath, StringComparison.Ordinal) &&
+                info.LastWriteTimeUtc == _loadedStamp && info.Length == _loadedLength) return;
+
+            var problems = new List<string>();
+            var parsed = Parse(File.ReadAllLines(path), problems);
+            Killed.Clear();
+            foreach (var boss in parsed) Killed.Add(boss);
+            Remember(path);
+
+            foreach (var problem in problems)
+                Plugin.Log.LogWarning($"NpcValheim: {FileName} -- {problem}");
+        }
+
+        private static void Remember(string path)
+        {
+            var info = new FileInfo(path);
+            _loadedPath = path;
+            _loadedStamp = info.LastWriteTimeUtc;
+            _loadedLength = info.Length;
+        }
     }
 
     /// <summary>
@@ -398,6 +561,11 @@ namespace NpcValheim.Npc
 
         /// <summary>This character's passes, boss -> how it was won (BossPassLedger.Kind*).</summary>
         private static readonly Dictionary<string, string> OwnPasses = new Dictionary<string, string>(StringComparer.Ordinal);
+
+        /// <summary>Bosses whose Deadcoins price the server currently offers (DeadcoinsAfterFirstKill),
+        /// as the last status answer said. Display only -- ServePurchase checks its own copy.</summary>
+        private static readonly HashSet<string> DeadcoinsUnlockedBosses = new HashSet<string>(StringComparer.Ordinal);
+
         private static float _purchaseSentAt = -PurchaseTimeout;
 
         // ---- server state ----
@@ -422,6 +590,7 @@ namespace NpcValheim.Npc
             DeadcoinBalance = -1;
             LastMessage = null;
             OwnPasses.Clear();
+            DeadcoinsUnlockedBosses.Clear();
             Quotes.Clear();
             EndPurchase();
             rpc.Register(RpcResponse, (Action<long, string, string>)RPC_Response);
@@ -448,6 +617,12 @@ namespace NpcValheim.Npc
         /// <summary>How this character won a pass (BossPassLedger.Kind*), or null without it.</summary>
         internal static string LocalPassKind(string boss) =>
             !string.IsNullOrEmpty(boss) && OwnPasses.TryGetValue(boss, out var kind) ? kind : null;
+
+        /// <summary>Whether the server currently offers this boss's pass for Deadcoins, as the
+        /// last status answer said (DeadcoinsAfterFirstKill). Display only -- the server is the
+        /// one that refuses a purchase it has not unlocked (see <see cref="DeadcoinsUnlocked"/>).</summary>
+        internal static bool LocalDeadcoinsUnlocked(string boss) =>
+            !string.IsNullOrEmpty(boss) && DeadcoinsUnlockedBosses.Contains(boss);
 
         /// <summary>Changes whenever the passes the server reported do; a panel listing them
         /// compares this instead of the whole set.</summary>
@@ -542,6 +717,15 @@ namespace NpcValheim.Npc
             return false;
         }
 
+        /// <summary>
+        /// Whether this boss's Deadcoins price is currently offered and will be accepted:
+        /// always, when [BossPass] DeadcoinsAfterFirstKill is off, or once that boss has died
+        /// on this server at least once (BossFirstKillLedger). The gate never touches gold --
+        /// a boss an admin still prices in Coins stays buyable that way regardless.
+        /// </summary>
+        internal static bool DeadcoinsUnlocked(string boss) =>
+            !(Plugin.BossPassDeadcoinsAfterFirstKill?.Value ?? true) || BossFirstKillLedger.HasDied(boss);
+
         // ---- server: status ----
 
         internal static void ServeStatus(long sender)
@@ -569,12 +753,17 @@ namespace NpcValheim.Npc
                 return;
             }
 
-            Send(sender, "status", Int(ReadDeadcoins(sender)) + "\n" + passes);
+            Send(sender, "status", Int(ReadDeadcoins(sender)) + "\n" + passes + "\n" + UnlockedForDeadcoinsCsv());
         }
 
         /// <summary>"boss=kind,boss=kind": boss ids never hold ',' or '=' (IsCleanId).</summary>
         private static string PassList(long playerId) =>
             string.Join(",", BossPassLedger.KindsOf(playerId).Select(p => p.Key + "=" + p.Value));
+
+        /// <summary>Every boss in the catalog whose Deadcoins price is unlocked right now, as a
+        /// comma list for the wire (boss ids never hold ',', see IsCleanId).</summary>
+        private static string UnlockedForDeadcoinsCsv() =>
+            string.Join(",", BossPassCatalog.Current().Where(e => DeadcoinsUnlocked(e.Boss)).Select(e => e.Boss));
 
         /// <summary>The sender's Deadcoins, or -1 when there is no account or file to read.
         /// Display only; the purchase reads the file again.</summary>
@@ -719,6 +908,13 @@ namespace NpcValheim.Npc
             if (entry.Deadcoins <= 0)
             {
                 Refuse(sender, 0, $"{entry.Boss} is not sold for Deadcoins", $"O passe de {entry.Name} não é vendido por Deadcoins.");
+                return;
+            }
+            if (!DeadcoinsUnlocked(entry.Boss))
+            {
+                Refuse(sender, 0, $"{entry.Boss} has not died on this server yet",
+                    $"O passe de {entry.Name} ainda não pode ser comprado com Deadcoins: ninguém derrotou " +
+                    $"{entry.Name} neste servidor ainda. Derrote-o ou pague em moedas, se a loja aceitar.");
                 return;
             }
             if (shownPrice != entry.Deadcoins)
@@ -896,7 +1092,7 @@ namespace NpcValheim.Npc
         {
             try
             {
-                Send(sender, "status", Int(ReadDeadcoins(sender)) + "\n" + PassList(playerId));
+                Send(sender, "status", Int(ReadDeadcoins(sender)) + "\n" + PassList(playerId) + "\n" + UnlockedForDeadcoinsCsv());
             }
             catch
             {
@@ -918,15 +1114,20 @@ namespace NpcValheim.Npc
 
             switch (kind)
             {
-                case "status" when parts.Length == 2 && TryInt(parts[0], out int balance):
+                case "status" when parts.Length == 3 && TryInt(parts[0], out int balance):
                     DeadcoinBalance = balance;
                     OwnPasses.Clear();
-                    foreach (var pass in parts[1].Split(','))
-                    {
-                        int eq = pass.IndexOf('=');
-                        string boss = eq < 0 ? pass : pass.Substring(0, eq);
-                        if (boss.Length > 0) OwnPasses[boss] = eq < 0 ? BossPassLedger.KindAdmin : pass.Substring(eq + 1);
-                    }
+                    if (parts[1].Length > 0)
+                        foreach (var pass in parts[1].Split(','))
+                        {
+                            int eq = pass.IndexOf('=');
+                            string boss = eq < 0 ? pass : pass.Substring(0, eq);
+                            if (boss.Length > 0) OwnPasses[boss] = eq < 0 ? BossPassLedger.KindAdmin : pass.Substring(eq + 1);
+                        }
+                    DeadcoinsUnlockedBosses.Clear();
+                    if (parts[2].Length > 0)
+                        foreach (var boss in parts[2].Split(','))
+                            if (boss.Length > 0) DeadcoinsUnlockedBosses.Add(boss);
                     Known = true;
                     break;
 

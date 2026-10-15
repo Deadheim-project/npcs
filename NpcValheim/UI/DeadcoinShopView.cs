@@ -268,9 +268,15 @@ namespace NpcValheim.UI
                 int max = ItemSpawner.MaxDeliverableAmount(o.Prefab);
                 string fault = max <= 0 ? "  <color=#ee6b57>não é item do jogo: fora da loja</color>"
                     : o.Amount > max ? $"  <color=#ee6b57>mais que uma entrega ({max}): fora da loja</color>" : "";
+                bool onSaleNow = DeadcoinCatalog.OnSaleOn(o, System.DateTime.Now);
+                string window = o.From != null || o.To != null
+                    ? $"  <color={(onSaleNow ? "#9a9188" : "#ee6b57")}>" +
+                      $"janela {o.From?.ToString("yyyy-MM-dd") ?? "sem início"} a {o.To?.ToString("yyyy-MM-dd") ?? "sem fim"}" +
+                      $"{(onSaleNow ? "" : " (fora agora)")}</color>"
+                    : "";
                 var label = ValheimUi.CreateLabel(row,
                     $"{o.Amount}x {ItemNames.Display(o.Prefab)}  <size=12><color=#9a9188>{o.Prefab}</color></size>\n" +
-                    $"<size=12><color=#9a9188>{o.Price} Deadcoins</color>{fault}</size>",
+                    $"<size=12><color=#9a9188>{o.Price} Deadcoins</color>{fault}{window}</size>",
                     15, ValheimUi.Beige, TextAlignmentOptions.Left);
                 Flexible(label.gameObject);
                 var edit = ValheimUi.CreateButton(row, "Editar", 90f, 34f, 14);

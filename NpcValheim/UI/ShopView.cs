@@ -33,6 +33,9 @@ namespace NpcValheim.UI
         private readonly List<GameObject> _sellRows = new List<GameObject>();
         private readonly List<GameObject> _buyRows = new List<GameObject>();
 
+        private const float WeeklyPollSeconds = 5f;
+        private float _nextWeeklyPoll;
+
         // The boss lock (BossPass): shown instead of the counter to a player without the pass.
         private RectTransform _amountRow;
         private RectTransform _sellPane;
@@ -190,13 +193,22 @@ namespace NpcValheim.UI
                 return;
             }
 
-            // Read straight off the player's own inventory. There is no round trip and no
-            // second wallet to disagree with it -- what the panel says is what you are
-            // carrying.
-            _balance.text = $"<color=#9a9188>Na sua bolsa:</color> {MarketplaceNpc.CoinsOf(Player)} moedas";
+            // Read straight off the player's own inventory for Coins -- there is no round trip
+            // and no second wallet to disagree with it. Deadcoins is the server's own cache,
+            // shared with every other Deadcoins panel (F7, boss pass, Treinador, Montarias).
+            string deadcoinsBalance = DeadcoinShop.Balance >= 0 ? DeadcoinShop.Balance.ToString() : "?";
+            _balance.text = $"<color=#9a9188>Na sua bolsa:</color> {MarketplaceNpc.CoinsOf(Player)} moedas" +
+                            $"   <color=#9a9188>Deadcoins:</color> {deadcoinsBalance}";
 
-            var sells = market.GetSellPrices();
-            var sellSignature = string.Join("|", sells.Select(kv => $"{kv.Key}:{kv.Value}"));
+            if (Time.unscaledTime >= _nextWeeklyPoll)
+            {
+                _nextWeeklyPoll = Time.unscaledTime + WeeklyPollSeconds;
+                market.RequestSellWeeklyStatus();
+            }
+
+            var sells = market.GetSellOffers();
+            var sellSignature = string.Join("|", sells.Select(kv =>
+                $"{kv.Key}:{kv.Value.Gold}:{kv.Value.Deadcoins}:{kv.Value.WeeklyLimit}:{MarketDeadcoinSale.WeeklyUsedOf(kv.Key)}"));
             if (sellSignature != _sellSignature)
             {
                 _sellSignature = sellSignature;
@@ -216,7 +228,7 @@ namespace NpcValheim.UI
             _buysEmpty.text = "Este mercador não compra\nnada no momento.";
         }
 
-        private void RebuildSells(MarketplaceNpc market, Dictionary<string, int> sells)
+        private void RebuildSells(MarketplaceNpc market, Dictionary<string, SellOffer> sells)
         {
             foreach (var row in _sellRows) if (row != null) Object.Destroy(row);
             _sellRows.Clear();
@@ -224,39 +236,83 @@ namespace NpcValheim.UI
             foreach (var kv in sells)
             {
                 var item = kv.Key;
-                var price = kv.Value;
+                var offer = kv.Value;
                 var row = Row(_sells, 46f);
                 _sellRows.Add(row.gameObject);
 
                 ValheimUi.CreateItemIcon(row, item, 36f);
+
+                string weeklyText = offer.WeeklyLimit > 0
+                    ? $" <color=#9a9188>· {MarketDeadcoinSale.WeeklyUsedOf(item)}/{offer.WeeklyLimit} esta semana</color>"
+                    : "";
+                string priceText = offer.Gold > 0 && offer.Deadcoins > 0
+                    ? $"{offer.Gold} moedas ou {offer.Deadcoins} Deadcoins/un"
+                    : offer.Gold > 0
+                        ? $"{offer.Gold} moedas/un"
+                        : $"{offer.Deadcoins} Deadcoins/un";
                 var label = ValheimUi.CreateLabel(row,
-                    $"{ItemNames.Display(item)}\n<size=12><color=#9a9188>{price} moedas/un</color></size>",
+                    $"{ItemNames.Display(item)}\n<size=12><color=#9a9188>{priceText}</color>{weeklyText}</size>",
                     15, ValheimUi.Beige, TextAlignmentOptions.Left);
                 Flexible(label.gameObject);
 
-                var buy = ValheimUi.CreateButton(row, "Comprar", 110f, 36f, 14);
-                buy.onClick.AddListener(() =>
+                bool maxedOut = offer.WeeklyLimit > 0 && MarketDeadcoinSale.WeeklyUsedOf(item) >= offer.WeeklyLimit;
+                if (maxedOut)
                 {
-                    if (!TryAmount(out int amount)) return;
+                    var tag = ValheimUi.CreateLabel(row, "Limite da semana atingido", 13, ValheimUi.Muted,
+                        TextAlignmentOptions.Right);
+                    ValheimUi.SetWidth(tag.gameObject, 170f);
+                    continue;
+                }
 
-                    int cost = MarketplaceNpc.PayoutFor(price, amount);
-                    if (cost <= 0) { Say("Quantidade inválida."); return; }
-
-                    // The coins leave the pocket here. The server closes the sale at the price
-                    // this row showed even if an admin changes it meanwhile, and never pays
-                    // coins back on the strength of this number -- see RPC_BuyFromNpc.
-                    if (!MarketplaceNpc.TryPay(Player, cost))
-                    {
-                        Say($"Você tem {MarketplaceNpc.CoinsOf(Player)} moedas; custa {cost}.");
-                        return;
-                    }
-
-                    // The server answers with RPC_DeliverItem, which reports what reached the
-                    // bag and what (if anything) had to go on the floor. Promising the floor
-                    // up front described the old delivery, and described it wrongly.
-                    market.RequestBuyFromNpc(item, amount, cost);
-                });
+                if (offer.Gold > 0)
+                {
+                    var buy = ValheimUi.CreateButton(row, "Comprar", 100f, 36f, 14);
+                    buy.onClick.AddListener(() => BuyGold(market, item, offer));
+                }
+                if (offer.Deadcoins > 0)
+                {
+                    var buyDc = ValheimUi.CreateButton(row, "Deadcoins", 100f, 36f, 14);
+                    buyDc.onClick.AddListener(() => BuyDeadcoins(market, item, offer));
+                }
             }
+        }
+
+        private void BuyGold(MarketplaceNpc market, string item, SellOffer offer)
+        {
+            if (!TryAmount(out int amount)) return;
+
+            int cost = MarketplaceNpc.PayoutFor(offer.Gold, amount);
+            if (cost <= 0) { Say("Quantidade inválida."); return; }
+
+            // The coins leave the pocket here. The server closes the sale at the price this
+            // row showed even if an admin changes it meanwhile, and never pays coins back on
+            // the strength of this number -- see RPC_BuyFromNpc.
+            if (!MarketplaceNpc.TryPay(Player, cost))
+            {
+                Say($"Você tem {MarketplaceNpc.CoinsOf(Player)} moedas; custa {cost}.");
+                return;
+            }
+
+            // The server answers with RPC_DeliverItem, which reports what reached the bag and
+            // what (if anything) had to go on the floor. Promising the floor up front
+            // described the old delivery, and described it wrongly.
+            market.RequestBuyFromNpc(item, amount, cost);
+        }
+
+        private void BuyDeadcoins(MarketplaceNpc market, string item, SellOffer offer)
+        {
+            if (!TryAmount(out int amount)) return;
+
+            int cost = MarketplaceNpc.PayoutFor(offer.Deadcoins, amount);
+            if (cost <= 0) { Say("Quantidade inválida."); return; }
+            if (DeadcoinShop.Balance >= 0 && DeadcoinShop.Balance < cost)
+            {
+                Say($"Você tem {DeadcoinShop.Balance} Deadcoins; custa {cost}.");
+                return;
+            }
+
+            market.RequestBuyDeadcoins(item, amount, cost);
+            Say($"Comprando {amount}x {ItemNames.Display(item)}...");
         }
 
         private void RebuildBuys(MarketplaceNpc market, Dictionary<string, int> buys)
@@ -307,13 +363,14 @@ namespace NpcValheim.UI
 
             var entry = BossPassCatalog.Find(boss);
             float radius = Plugin.BossPassKillRadius?.Value ?? 60f;
-            string signature = $"{boss}|{BossPass.Known}|{entry?.Name}|{entry?.Shop}|{entry?.Gold}|{entry?.Deadcoins}|{radius}";
+            bool deadcoinsUnlocked = BossPass.LocalDeadcoinsUnlocked(boss);
+            string signature = $"{boss}|{BossPass.Known}|{entry?.Name}|{entry?.Shop}|{entry?.Gold}|{entry?.Deadcoins}|{radius}|{deadcoinsUnlocked}";
             if (signature == _lockSignature) return;
             _lockSignature = signature;
 
             bool offered = entry != null && BossPass.Known;
             _payGold.gameObject.SetActive(offered && entry.Gold > 0);
-            _payDeadcoins.gameObject.SetActive(offered && entry.Deadcoins > 0);
+            _payDeadcoins.gameObject.SetActive(offered && entry.Deadcoins > 0 && deadcoinsUnlocked);
 
             if (!BossPass.Known)
             {
@@ -330,14 +387,18 @@ namespace NpcValheim.UI
             }
 
             _lockTitle.text = $"{BossPassCatalog.ShopName(entry)} trancada";
+            bool payable = entry.Gold > 0 || (entry.Deadcoins > 0 && deadcoinsUnlocked);
             _lockBody.text =
                 $"Para comprar e vender aqui você precisa do passe de {entry.Name}.\n\n" +
                 $"Ele é de graça para quem derrotar {entry.Name}: vale acertar um golpe nele ou estar " +
                 $"a até {radius:0} m quando ele morrer.\n\n" +
-                (entry.Gold > 0 || entry.Deadcoins > 0
+                (payable
                     ? "Ou pague uma vez. O passe é deste personagem e abre todo mercador que exige " +
                       $"{entry.Name}."
-                    : "Este passe não está à venda: só derrotando o boss.");
+                    : entry.Deadcoins > 0 && !deadcoinsUnlocked
+                        ? $"O pagamento em Deadcoins só é aceito depois que {entry.Name} morrer uma vez " +
+                          "neste servidor (por qualquer jogador). Por ora, só derrotando."
+                        : "Este passe não está à venda: só derrotando o boss.");
 
             SetLabel(_payGold, $"Pagar {entry.Gold} moedas");
             SetLabel(_payDeadcoins, $"Pagar {entry.Deadcoins} Deadcoins");

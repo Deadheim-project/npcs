@@ -169,6 +169,13 @@ namespace NpcValheim.Npc
             if (!IsServer) return;
             try { EnsureIndex(); }
             catch (Exception e) { Plugin.Log.LogWarning($"NpcValheim: BossPass could not read its boss list: {e.Message}"); }
+
+            // A server upgrading into [BossPass] DeadcoinsAfterFirstKill should not suddenly
+            // re-lock Deadcoins for a boss its players already beat before this gate existed;
+            // seed from the "kill" entries bosspass.txt already has. Idempotent (does nothing
+            // once bossfirstkill.txt exists), so running it on every connection costs nothing.
+            try { BossFirstKillLedger.EnsureSeeded(BossPassLedger.BossesWonByKill()); }
+            catch (Exception e) { Plugin.Log.LogWarning($"NpcValheim: could not seed {BossFirstKillLedger.FileName}: {e.Message}"); }
         }
 
         /// <summary>
@@ -305,6 +312,18 @@ namespace NpcValheim.Npc
             Plugin.Log.LogInfo(
                 $"NpcValheim: {death.Entry.Name} ({death.Entry.Boss}) killed: pass granted to [{string.Join(", ", granted)}]" +
                 (kept.Count > 0 ? $"; already had it or not written: [{string.Join(", ", kept)}]" : ""));
+
+            // Unlocks this boss's Deadcoins price for everyone from now on (DeadcoinsAfterFirstKill),
+            // regardless of whether anyone here was actually granted a pass just now.
+            try
+            {
+                if (BossFirstKillLedger.Record(death.Entry.Boss))
+                    Plugin.Log.LogInfo($"NpcValheim: {death.Entry.Boss} died for the first time on this server -- its Deadcoins price is now offered");
+            }
+            catch (Exception e)
+            {
+                Plugin.Log.LogWarning($"NpcValheim: could not record {death.Entry.Boss}'s first kill: {e.Message}");
+            }
         }
     }
 

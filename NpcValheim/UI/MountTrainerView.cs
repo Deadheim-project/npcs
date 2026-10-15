@@ -137,8 +137,12 @@ namespace NpcValheim.UI
                 string detail = offer.Kind == MountOfferKind.Skill
                     ? $"velocidade das montarias {MontariasApi.RankSpeed(offer.Rank) * 100f:0}%{CastText(MontariasApi.RankCast(offer.Rank))}"
                     : $"exige {MontariasApi.RankName(MontariasApi.MountRequiredRank(offer.Id))}";
+                // A4: an offer can price both currencies; say whichever it actually has.
+                string priceText = offer.Gold > 0 && offer.Deadcoins > 0
+                    ? $"{offer.Gold} Coins ou {offer.Deadcoins} Deadcoins"
+                    : offer.Gold > 0 ? $"{offer.Gold} Coins" : $"{offer.Deadcoins} Deadcoins";
                 var label = ValheimUi.CreateLabel(row,
-                    $"{offer.Title}\n<size=12><color=#9a9188>{detail} · {offer.Price} {offer.CurrencyName}</color></size>",
+                    $"{offer.Title}\n<size=12><color=#9a9188>{detail} · {priceText}</color></size>",
                     15, ValheimUi.Beige, TextAlignmentOptions.Left);
                 Flexible(label.gameObject);
 
@@ -150,8 +154,17 @@ namespace NpcValheim.UI
                     continue;
                 }
 
-                var buy = ValheimUi.CreateButton(row, offer.Kind == MountOfferKind.Skill ? "Aprender" : "Comprar", 120f, 36f, 14);
-                buy.onClick.AddListener(() => Buy(trainer, offer));
+                string verb = offer.Kind == MountOfferKind.Skill ? "Aprender" : "Comprar";
+                if (offer.Gold > 0)
+                {
+                    var buyGold = ValheimUi.CreateButton(row, offer.Deadcoins > 0 ? $"{verb} (Coins)" : verb, 130f, 36f, 14);
+                    buyGold.onClick.AddListener(() => Buy(trainer, offer, MountCurrency.Coins));
+                }
+                if (offer.Deadcoins > 0)
+                {
+                    var buyDc = ValheimUi.CreateButton(row, offer.Gold > 0 ? $"{verb} (DC)" : verb, 130f, 36f, 14);
+                    buyDc.onClick.AddListener(() => Buy(trainer, offer, MountCurrency.Deadcoins));
+                }
             }
         }
 
@@ -172,17 +185,19 @@ namespace NpcValheim.UI
             return MontariasApi.LocalOwns(offer.Id) ? "Já é sua" : null;
         }
 
-        private void Buy(MountTrainerNpc trainer, MountOffer offer)
+        private void Buy(MountTrainerNpc trainer, MountOffer offer, MountCurrency method)
         {
+            int price = method == MountCurrency.Deadcoins ? offer.Deadcoins : offer.Gold;
+
             // Courtesies only -- the server decides with its own numbers.
-            if (offer.Currency == MountCurrency.Coins && MarketplaceNpc.CoinsOf(Player) < offer.Price)
+            if (method == MountCurrency.Coins && MarketplaceNpc.CoinsOf(Player) < price)
             {
-                Say($"Você tem {MarketplaceNpc.CoinsOf(Player)} Coins; custa {offer.Price}.");
+                Say($"Você tem {MarketplaceNpc.CoinsOf(Player)} Coins; custa {price}.");
                 return;
             }
-            if (offer.Currency == MountCurrency.Deadcoins && DeadcoinShop.Balance >= 0 && DeadcoinShop.Balance < offer.Price)
+            if (method == MountCurrency.Deadcoins && DeadcoinShop.Balance >= 0 && DeadcoinShop.Balance < price)
             {
-                Say($"Você tem {DeadcoinShop.Balance} Deadcoins; custa {offer.Price}.");
+                Say($"Você tem {DeadcoinShop.Balance} Deadcoins; custa {price}.");
                 return;
             }
             if (!MountTrainer.TryBeginPurchase())
@@ -191,7 +206,7 @@ namespace NpcValheim.UI
                 return;
             }
 
-            if (MountTrainer.RequestBuy(trainer, offer))
+            if (MountTrainer.RequestBuy(trainer, offer, method))
             {
                 Say($"{(offer.Kind == MountOfferKind.Skill ? "Aprendendo" : "Comprando")} {offer.Title}...");
                 return;
