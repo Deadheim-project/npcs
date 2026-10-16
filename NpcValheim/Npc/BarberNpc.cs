@@ -31,6 +31,9 @@ namespace NpcValheim.Npc
 
         internal override bool DispatchServiceAction(long sender, string action, string payload)
         {
+            if ((action == Barber.ActionStatus || action == Barber.ActionApply)
+                && !(Plugin.BarberEnabled?.Value ?? false))
+                return true;
             switch (action)
             {
                 case Barber.ActionStatus:

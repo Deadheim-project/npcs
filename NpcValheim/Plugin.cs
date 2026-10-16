@@ -20,7 +20,7 @@ namespace NpcValheim
     {
         public const string Guid = "com.npcvalheim.mod";
         public const string Name = "NpcValheim";
-        public const string Version = "0.1.73";
+        public const string Version = "0.1.74";
 
         internal static ManualLogSource Log;
         private Harmony _harmony;
@@ -240,7 +240,7 @@ namespace NpcValheim
 
             // The Barber
             const string barber = "Barber";
-            BarberEnabled = Config.Bind(barber, "Enabled", true,
+            BarberEnabled = Config.Bind(barber, "Enabled", false,
                 "Liga o Barbeiro NPC. Desligado, o NPC não interage.");
             BarberTokenPrefab = Config.Bind(barber, "TokenPrefab", "FichaBarbeiro",
                 "Nome do prefab da ficha que o Barbeiro cobra.");
