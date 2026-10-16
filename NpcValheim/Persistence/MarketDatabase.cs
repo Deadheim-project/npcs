@@ -189,7 +189,20 @@ namespace NpcValheim.Persistence
         public static List<Listing> GetListings(string npcId) =>
             Read(listings => listings.Find(x => x.NpcId == npcId).ToList());
 
-        public static Listing AddListing(string npcId, long ownerId, string ownerName, string itemName, int quality, int amount, int pricePerUnit, TimeSpan? duration = null)
+        /// <summary>
+        /// Teto do quadro acima do qual o limite VIP não se aplica: se o quadro já tem
+        /// este número de anúncios ou mais, qualquer novo anúncio usa o limite padrão,
+        /// independente de VIP — evita que VIPs lotem o quadro e impeçam não-VIPs.
+        /// </summary>
+        private const int VipBoardSafetyThreshold = 400;
+
+        /// <param name="maxListings">
+        /// Limite de anúncios por jogador neste quadro. Passe
+        /// <see cref="MaxListingsPerPlayer"/> para não-VIP e o valor VIP para VIP.
+        /// Quando o quadro já tem <see cref="VipBoardSafetyThreshold"/> ou mais anúncios,
+        /// o limite é reduzido ao padrão automaticamente.
+        /// </param>
+        public static Listing AddListing(string npcId, long ownerId, string ownerName, string itemName, int quality, int amount, int pricePerUnit, TimeSpan? duration = null, int maxListings = MaxListingsPerPlayer)
         {
             var listing = new Listing
             {
@@ -207,8 +220,16 @@ namespace NpcValheim.Persistence
             bool inserted = false;
             Write(listings =>
             {
-                if (listings.Count(x => x.NpcId == npcId) >= MaxListingsPerBoard) return;
-                if (listings.Count(x => x.NpcId == npcId && x.OwnerId == ownerId) >= MaxListingsPerPlayer) return;
+                int boardTotal = listings.Count(x => x.NpcId == npcId);
+                if (boardTotal >= MaxListingsPerBoard) return;
+
+                // VIP limit is capped to the default once the board is getting full,
+                // so non-VIPs still have room to list.
+                int effectiveMax = boardTotal >= VipBoardSafetyThreshold
+                    ? MaxListingsPerPlayer
+                    : maxListings;
+
+                if (listings.Count(x => x.NpcId == npcId && x.OwnerId == ownerId) >= effectiveMax) return;
                 listings.Insert(listing);
                 inserted = true;
             });

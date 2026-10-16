@@ -65,6 +65,17 @@ namespace NpcValheim.Npc
         public List<MarketEntry> CachedListings { get; private set; } = new List<MarketEntry>();
         public bool HasSyncedOnce { get; private set; }
 
+        /// <summary>How many of the cached listings belong to the local player.</summary>
+        public int CountMyListings => CachedListings.Count(l => l.IsMine);
+
+        /// <summary>The listing limit that applies to the local player on this board,
+        /// computed client-side from the synced config and the local VIP state.
+        /// This is only a hint for the UI; the server enforces the real limit in RPC_Sell.</summary>
+        public int MyListingLimit =>
+            VipList.VipListApi.IsLocalPlayerVip()
+                ? Mathf.Max(Plugin.MaxListingsPerPlayer.Value, Plugin.VipMaxListings.Value)
+                : Plugin.MaxListingsPerPlayer.Value;
+
         /// <summary>What the player is actually carrying. This is the only balance there is --
         /// there is no separate wallet to fall out of step with it.</summary>
         public static int CoinsOf(Player player) =>
@@ -1186,8 +1197,18 @@ namespace NpcValheim.Npc
             long sellerId = GameApi.GetPlayerId(sender);
             if (sellerId == 0L) return;
             string sellerName = GameApi.GetPlayerName(sender);
+
+            // Resolve the per-player limit: VIPs get a larger quota, but only while the
+            // board has room — VipBoardSafetyThreshold inside AddListing caps it back down
+            // once the board is getting crowded so non-VIPs can still list.
+            bool isVip = UI.VipShopShortcut.SenderIsVip(sender);
+            int maxListings = isVip
+                ? Mathf.Max(Plugin.MaxListingsPerPlayer.Value, Plugin.VipMaxListings.Value)
+                : Plugin.MaxListingsPerPlayer.Value;
+
             MarketDatabase.AddListing(NpcId, sellerId, sellerName, itemName, quality, amount, pricePerUnit,
-                TimeSpan.FromHours(Mathf.Max(1, Plugin.ListingDurationHours.Value)));
+                TimeSpan.FromHours(Mathf.Max(1, Plugin.ListingDurationHours.Value)),
+                maxListings);
             BroadcastMarketDataTo(sender);
         }
 

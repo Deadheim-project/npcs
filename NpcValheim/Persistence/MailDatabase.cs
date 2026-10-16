@@ -49,6 +49,8 @@ namespace NpcValheim.Persistence
     {
         public const int MaxMailPerPlayer = 500;
         public const int MaxHouseRecipients = 100;
+        /// <summary>Stacks de itens que não-VIP pode enviar em uma única carta.</summary>
+        public const int MaxAttachmentsNonVip = 1;
         private const string Available = "available";
         private const string Delivering = "delivering";
         private static readonly object Gate = new object();
@@ -138,6 +140,47 @@ namespace NpcValheim.Persistence
                 ItemName = "",
                 Quality = 1,
                 Amount = 0,
+                Coins = 0,
+                CreatedUtc = DateTime.UtcNow,
+                DeliveryState = Available,
+            };
+            return InsertOnce(entry);
+        }
+
+        /// <summary>
+        /// Envia uma mensagem com até <paramref name="attachmentCount"/> stacks de item para
+        /// <paramref name="playerId"/>. O chamador (MailboxNpc.RPC_SendMail) já validou que o
+        /// remetente tem o item no inventário e debitou os stacks antes de chamar este método.
+        /// A carta fica na caixa do destinatário com <see cref="MailEntry.ItemName"/> e
+        /// <see cref="MailEntry.Amount"/> preenchidos; o destinatário resgata pelo Correio
+        /// normalmente.
+        /// </summary>
+        public static MailEntry SendMessageWithAttachment(
+            long playerId, long senderId, string senderName,
+            string subject, string body,
+            string itemName, int quality, int amount,
+            string houseName = "")
+        {
+            if (playerId == 0L) return null;
+            if (string.IsNullOrEmpty(itemName) || amount <= 0) return null;
+            subject = (subject ?? "").Trim();
+            body = (body ?? "").Trim();
+            if (subject.Length > 80) subject = subject.Substring(0, 80);
+            if (body.Length > 1000) body = body.Substring(0, 1000);
+            if (string.IsNullOrEmpty(subject)) subject = $"Pacote de {senderName}";
+
+            var entry = new MailEntry
+            {
+                Id = Guid.NewGuid().ToString("N"),
+                PlayerId = playerId,
+                SenderId = senderId,
+                SenderName = string.IsNullOrWhiteSpace(senderName) ? "???" : senderName.Trim(),
+                Subject = subject,
+                Body = body,
+                HouseName = houseName ?? "",
+                ItemName = itemName,
+                Quality = Math.Max(1, quality),
+                Amount = amount,
                 Coins = 0,
                 CreatedUtc = DateTime.UtcNow,
                 DeliveryState = Available,

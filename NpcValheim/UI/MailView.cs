@@ -4,6 +4,7 @@ using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
 using NpcValheim.Npc;
+using NpcValheim.Persistence;
 
 namespace NpcValheim.UI
 {
@@ -352,6 +353,318 @@ namespace NpcValheim.UI
                 var name = recipient.Name;
                 pick.onClick.AddListener(() => _target.text = name);
             }
+        }
+    }
+
+    /// <summary>
+    /// Send an item to another player via the mailbox. The attachment is taken directly from
+    /// the sender's inventory and waits in the recipient's mailbox until collected.
+    ///
+    /// Non-VIP: 1 stack per letter (up to the item's own max stack size).
+    /// VIP: up to VipMaxAttachments stacks per letter.
+    /// The server re-validates both limits on RPC_SendMail; this UI is just first-line UX.
+    /// </summary>
+    internal sealed class MailParcelView : NpcViewBase
+    {
+        private MailboxNpc Mailbox => Npc as MailboxNpc;
+
+        // inventory picker
+        private RectTransform _inventory;
+        private string _inventorySignature;
+        private readonly List<GameObject> _inventoryRows = new List<GameObject>();
+        private Image _selectedIcon;
+        private TextMeshProUGUI _selectedLabel;
+        private string _itemName = "";
+        private int _itemQuality = 1;
+        private int _itemMaxStack = 1;
+
+        // form fields
+        private TMP_InputField _target;
+        private TMP_InputField _amount;
+        private TMP_InputField _subject;
+        private TMP_InputField _body;
+        private TextMeshProUGUI _limitHint;
+        private string _dirSignature;
+        private RectTransform _suggestions;
+        private readonly List<GameObject> _suggestionRows = new List<GameObject>();
+
+        protected override void OnBuild()
+        {
+            // Two columns: left = inventory, right = form
+            const float leftW = 280f;
+
+            var left = ValheimUi.CreateInlay(Root, "Inv");
+            ValheimUi.Anchor(left, new Vector2(0f, 0f), new Vector2(0f, 1f),
+                new Vector2(0f, 0f), new Vector2(leftW, 0f));
+
+            var invHeader = ValheimUi.CreateLabel(left, "Inventário", 16, ValheimUi.Orange,
+                TextAlignmentOptions.Center, display: true);
+            ValheimUi.Anchor((RectTransform)invHeader.transform, new Vector2(0f, 1f), new Vector2(1f, 1f),
+                new Vector2(8f, -36f), new Vector2(-8f, -6f));
+
+            var invArea = ValheimUi.CreateRect("InvArea", left);
+            ValheimUi.Anchor(invArea, Vector2.zero, Vector2.one, new Vector2(4f, 4f), new Vector2(-4f, -38f));
+            _inventory = ValheimUi.CreateScrollList(invArea, spacing: 3f);
+
+            // right pane
+            var right = ValheimUi.CreateInlay(Root, "Form");
+            ValheimUi.Anchor(right, Vector2.zero, Vector2.one, new Vector2(leftW + 8f, 0f), Vector2.zero);
+
+            // selected item display
+            var selRow = ValheimUi.CreateRect("SelRow", right);
+            ValheimUi.Anchor(selRow, new Vector2(0f, 1f), new Vector2(1f, 1f),
+                new Vector2(8f, -48f), new Vector2(-8f, -6f));
+            var selLayout = selRow.gameObject.AddComponent<HorizontalLayoutGroup>();
+            selLayout.spacing = 8f;
+            selLayout.childControlWidth = true;
+            selLayout.childControlHeight = true;
+            selLayout.childForceExpandWidth = false;
+            selLayout.childAlignment = TextAnchor.MiddleLeft;
+            _selectedIcon = ValheimUi.CreateItemIcon(selRow, null, 36f);
+            _selectedLabel = ValheimUi.CreateLabel(selRow, "(nenhum item selecionado)", 15,
+                ValheimUi.Muted, TextAlignmentOptions.Left);
+            _selectedLabel.textWrappingMode = TextWrappingModes.NoWrap;
+
+            // limit hint (changes with VIP status)
+            _limitHint = ValheimUi.CreateLabel(right, "", 13, ValheimUi.Muted, TextAlignmentOptions.Left);
+            ValheimUi.Anchor((RectTransform)_limitHint.transform, new Vector2(0f, 1f), new Vector2(1f, 1f),
+                new Vector2(10f, -68f), new Vector2(-8f, -50f));
+
+            // destinatário
+            var tLabel = ValheimUi.CreateLabel(right, "Destinatário", 13, ValheimUi.Muted, TextAlignmentOptions.Left);
+            ValheimUi.Anchor((RectTransform)tLabel.transform, new Vector2(0f, 1f), new Vector2(1f, 1f),
+                new Vector2(10f, -90f), new Vector2(-8f, -72f));
+            _target = ValheimUi.CreateInputField(right, "", 0f, 34f);
+            ValheimUi.Anchor((RectTransform)_target.transform, new Vector2(0f, 1f), new Vector2(1f, 1f),
+                new Vector2(8f, -126f), new Vector2(-8f, -92f));
+
+            // quantidade
+            var qLabel = ValheimUi.CreateLabel(right, "Quantidade", 13, ValheimUi.Muted, TextAlignmentOptions.Left);
+            ValheimUi.Anchor((RectTransform)qLabel.transform, new Vector2(0f, 1f), new Vector2(1f, 1f),
+                new Vector2(10f, -148f), new Vector2(-8f, -130f));
+            _amount = ValheimUi.CreateInputField(right, "1", 0f, 34f);
+            _amount.contentType = TMP_InputField.ContentType.IntegerNumber;
+            ValheimUi.Anchor((RectTransform)_amount.transform, new Vector2(0f, 1f), new Vector2(1f, 1f),
+                new Vector2(8f, -184f), new Vector2(-8f, -150f));
+
+            // assunto
+            var sLabel = ValheimUi.CreateLabel(right, "Assunto", 13, ValheimUi.Muted, TextAlignmentOptions.Left);
+            ValheimUi.Anchor((RectTransform)sLabel.transform, new Vector2(0f, 1f), new Vector2(1f, 1f),
+                new Vector2(10f, -206f), new Vector2(-8f, -188f));
+            _subject = ValheimUi.CreateInputField(right, "", 0f, 34f);
+            ValheimUi.Anchor((RectTransform)_subject.transform, new Vector2(0f, 1f), new Vector2(1f, 1f),
+                new Vector2(8f, -242f), new Vector2(-8f, -208f));
+
+            // mensagem (opcional)
+            var bLabel = ValheimUi.CreateLabel(right, "Mensagem (opcional)", 13, ValheimUi.Muted, TextAlignmentOptions.Left);
+            ValheimUi.Anchor((RectTransform)bLabel.transform, new Vector2(0f, 1f), new Vector2(1f, 1f),
+                new Vector2(10f, -264f), new Vector2(-8f, -246f));
+            _body = ValheimUi.CreateInputField(right, "", 0f, 64f, 13, multiline: true);
+            ValheimUi.Anchor((RectTransform)_body.transform, new Vector2(0f, 1f), new Vector2(1f, 1f),
+                new Vector2(8f, -332f), new Vector2(-8f, -266f));
+
+            // sugestões de destinatário
+            var sugArea = ValheimUi.CreateRect("Suggest", right);
+            ValheimUi.Anchor(sugArea, new Vector2(0f, 0f), new Vector2(1f, 0f),
+                new Vector2(8f, 54f), new Vector2(-8f, 0f + 332f - 334f + 54f));
+            // posição dinâmica — pinnar na parte inferior
+            ValheimUi.Anchor(sugArea, Vector2.zero, new Vector2(1f, 0f),
+                new Vector2(8f, 54f), new Vector2(-8f, 140f));
+            _suggestions = ValheimUi.CreateScrollList(sugArea, spacing: 2f);
+
+            // botão enviar
+            var send = ValheimUi.CreateButton(right, "Enviar pacote", 220f, 42f, 16);
+            ValheimUi.Anchor((RectTransform)send.transform, new Vector2(1f, 0f), new Vector2(1f, 0f),
+                new Vector2(-238f, 8f), new Vector2(-14f, 50f));
+            send.onClick.AddListener(OnSend);
+
+            Mailbox?.RequestDirectory();
+        }
+
+        public override void Refresh()
+        {
+            var mailbox = Mailbox;
+            if (mailbox == null) return;
+
+            if (!string.IsNullOrEmpty(mailbox.LastStatus))
+            {
+                Say(mailbox.LastStatus);
+                mailbox.LastStatus = "";
+            }
+
+            RebuildInventoryIfChanged();
+            RebuildSuggestionsIfChanged(mailbox);
+            UpdateLimitHint();
+        }
+
+        // ---- inventory ----
+
+        private void RebuildInventoryIfChanged()
+        {
+            var items = Player.GetInventory()?.GetAllItems()
+                ?.Where(i => i != null && !string.IsNullOrEmpty(i.m_dropPrefab?.name))
+                .OrderBy(i => i.m_shared?.m_name ?? i.m_dropPrefab.name)
+                .ToList();
+            if (items == null) return;
+
+            var sig = string.Join("|", items.Select(i =>
+                $"{i.m_dropPrefab.name}:{i.m_quality}:{i.m_stack}"));
+            if (sig == _inventorySignature) return;
+            _inventorySignature = sig;
+
+            foreach (var row in _inventoryRows) if (row != null) Object.Destroy(row);
+            _inventoryRows.Clear();
+
+            foreach (var item in items)
+            {
+                string prefab = item.m_dropPrefab.name;
+                int quality = item.m_quality;
+                int stack = item.m_stack;
+                int maxStack = item.m_shared?.m_maxStackSize ?? 1;
+                string name = item.m_shared?.m_name ?? prefab;
+
+                var btn = ValheimUi.CreateButton(_inventory, "", 0f, 42f, 14);
+                _inventoryRows.Add(btn.gameObject);
+
+                var icon = ValheimUi.CreateItemIcon((RectTransform)btn.transform, prefab, 36f);
+                var lbl = ValheimUi.CreateLabel((RectTransform)btn.transform,
+                    $"{ValheimUi.Localize(name)} x{stack}",
+                    14, ValheimUi.Beige, TextAlignmentOptions.Left);
+                Flexible(lbl.gameObject);
+
+                btn.onClick.AddListener(() =>
+                {
+                    _itemName = prefab;
+                    _itemQuality = quality;
+                    _itemMaxStack = maxStack;
+                    var sprite = ValheimUi.FindItemIcon(prefab);
+                    _selectedIcon.sprite = sprite;
+                    _selectedIcon.enabled = sprite != null;
+                    _selectedLabel.text = $"{ValheimUi.Localize(name)}  (q{quality}, {stack} no inv.)";
+                    _selectedLabel.color = ValheimUi.Beige;
+                    UpdateLimitHint();
+                });
+            }
+        }
+
+        // ---- suggestions ----
+
+        private void RebuildSuggestionsIfChanged(MailboxNpc mailbox)
+        {
+            var sig = string.Join("|", mailbox.CachedRecipients
+                .Where(r => !r.IsHouse)
+                .Select(r => r.Name));
+            if (sig == _dirSignature) return;
+            _dirSignature = sig;
+
+            foreach (var row in _suggestionRows) if (row != null) Object.Destroy(row);
+            _suggestionRows.Clear();
+
+            foreach (var recipient in mailbox.CachedRecipients.Where(r => !r.IsHouse))
+            {
+                var row = Row(_suggestions, 34f);
+                _suggestionRows.Add(row.gameObject);
+                var pick = ValheimUi.CreateButton(row, recipient.Name, 0f, 32f, 13);
+                Flexible(pick.gameObject);
+                var n = recipient.Name;
+                pick.onClick.AddListener(() => _target.text = n);
+            }
+        }
+
+        // ---- limit hint ----
+
+        private void UpdateLimitHint()
+        {
+            bool isVip = VipList.VipListApi.IsLocalPlayerVip();
+            int maxStacks = isVip
+                ? System.Math.Max(MailDatabase.MaxAttachmentsNonVip, Plugin.VipMaxAttachments.Value)
+                : MailDatabase.MaxAttachmentsNonVip;
+
+            if (string.IsNullOrEmpty(_itemName))
+            {
+                _limitHint.text = isVip
+                    ? $"<color=#c8b090>VIP: até {maxStacks} stack(s) por carta</color>"
+                    : "1 stack por carta";
+                return;
+            }
+
+            int cap = isVip
+                ? (int)System.Math.Min((long)_itemMaxStack * maxStacks, int.MaxValue)
+                : _itemMaxStack;
+            _limitHint.text = isVip
+                ? $"<color=#c8b090>VIP: até {cap} unid. ({maxStacks} stack(s))</color>"
+                : $"Limite: {cap} unid. (1 stack)";
+        }
+
+        // ---- send ----
+
+        private void OnSend()
+        {
+            var mailbox = Mailbox;
+            if (mailbox == null) return;
+
+            if (string.IsNullOrEmpty(_itemName))
+            {
+                Say("Selecione um item no inventário.");
+                return;
+            }
+
+            string target = (_target.text ?? "").Trim();
+            if (target.Length == 0)
+            {
+                Say("Informe o destinatário.");
+                return;
+            }
+
+            if (!int.TryParse(_amount.text, out int amount) || amount <= 0)
+            {
+                Say("Quantidade inválida.");
+                return;
+            }
+
+            bool isVip = VipList.VipListApi.IsLocalPlayerVip();
+            int maxStacks = isVip
+                ? System.Math.Max(MailDatabase.MaxAttachmentsNonVip, Plugin.VipMaxAttachments.Value)
+                : MailDatabase.MaxAttachmentsNonVip;
+            long maxAmount = (long)_itemMaxStack * maxStacks;
+            if (maxAmount > int.MaxValue) maxAmount = int.MaxValue;
+
+            if (amount > (int)maxAmount)
+            {
+                Say(isVip
+                    ? $"Máximo {maxAmount} unid. ({maxStacks} stack(s)) por carta."
+                    : $"Não-VIP pode enviar no máximo {_itemMaxStack} unid. (1 stack) por carta.");
+                return;
+            }
+
+            var inventory = Player.GetInventory();
+            if (inventory == null || ItemNames.Count(inventory, _itemName, _itemQuality) < amount)
+            {
+                Say($"Você não tem {amount}x {ValheimUi.Localize(MarketView.DisplayName(_itemName))} no inventário.");
+                return;
+            }
+
+            // Remove o item do inventário do cliente antes de enviar (mesmo padrão do MarketView)
+            ItemNames.Remove(inventory, _itemName, amount, _itemQuality);
+            _inventorySignature = null; // força rebuild do inventário
+
+            string subject = (_subject.text ?? "").Trim();
+            if (string.IsNullOrEmpty(subject))
+                subject = $"Pacote de {Player.m_localPlayer?.GetPlayerName() ?? "alguém"}";
+
+            mailbox.RequestSendWithAttachment(false, target, subject, _body.text ?? "",
+                _itemName, _itemQuality, amount);
+            Say($"Enviando {amount}x {ValheimUi.Localize(MarketView.DisplayName(_itemName))} para {target}...");
+
+            // reset do item selecionado
+            _itemName = "";
+            _itemQuality = 1;
+            _itemMaxStack = 1;
+            _selectedLabel.text = "(nenhum item selecionado)";
+            _selectedLabel.color = ValheimUi.Muted;
+            _selectedIcon.sprite = null;
+            _selectedIcon.enabled = false;
+            _amount.text = "1";
         }
     }
 

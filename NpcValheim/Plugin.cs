@@ -64,6 +64,9 @@ namespace NpcValheim
         internal static ConfigEntry<int> TeleportCostAmount;
         internal static ConfigEntry<float> TeleportCooldownSeconds;
         internal static ConfigEntry<int> ListingDurationHours;
+        internal static ConfigEntry<int> MaxListingsPerPlayer;
+        internal static ConfigEntry<int> VipMaxListings;
+        internal static ConfigEntry<int> VipMaxAttachments;
         internal static ConfigEntry<string> GuildCostItem;
         internal static ConfigEntry<int> GuildCostAmount;
         internal static ConfigEntry<bool> GuildWindowNpcOnly;
@@ -81,6 +84,11 @@ namespace NpcValheim
         internal static ConfigEntry<int> TrainerLessonMaxLevel;
         internal static ConfigEntry<int> TrainerLessonsPerWeek;
         internal static ConfigEntry<string> TrainerPrices;
+        internal static ConfigEntry<bool> BarberEnabled;
+        internal static ConfigEntry<string> BarberTokenPrefab;
+        internal static ConfigEntry<string> BarberSkinColors;
+        internal static ConfigEntry<string> BarberHairColors;
+        internal static ConfigEntry<bool> BarberAllowSkin;
         internal static ConfigEntry<UnityEngine.KeyCode> QuestJournalKey;
         internal static ConfigEntry<UnityEngine.KeyCode> VipShopKey;
         internal static ConfigEntry<bool> ShowQuestButton;
@@ -138,6 +146,16 @@ namespace NpcValheim
 
             ListingDurationHours = Config.Bind("Marketplace", "ListingDurationHours", 48,
                 "How long a listing stays up before it expires and the unsold stock is mailed back to the seller.");
+
+            MaxListingsPerPlayer = Config.Bind("Marketplace", "MaxListingsPerPlayer", 50,
+                "Máximo de anúncios simultâneos por jogador não-VIP em qualquer quadro de leilão.");
+            VipMaxListings = Config.Bind("Marketplace", "VipMaxListings", 100,
+                "Máximo de anúncios simultâneos para jogadores VIP. Só vale quando o quadro tem menos de 400 anúncios no total.");
+
+            VipMaxAttachments = Config.Bind("Mail", "VipMaxAttachments", 3,
+                "Quantos stacks de itens um jogador VIP pode anexar a uma única carta. " +
+                "Não-VIP pode enviar apenas 1 stack por carta. " +
+                "O destinatário nunca é limitado para receber.");
 
             // Same text as the ShopItems line of the retired DonationShop mod, so the server's
             // value can be pasted in as it is. Synchronized for display only: the server reads
@@ -220,12 +238,28 @@ namespace NpcValheim
                 "Deadcoins saem do saldo do servidor; Coins ficam na bolsa do jogador e o cliente paga depois de receber, " +
                 "como no Mestre das Montarias (um cliente modificado pode nao pagar).");
 
+            // The Barber
+            const string barber = "Barber";
+            BarberEnabled = Config.Bind(barber, "Enabled", true,
+                "Liga o Barbeiro NPC. Desligado, o NPC não interage.");
+            BarberTokenPrefab = Config.Bind(barber, "TokenPrefab", "FichaBarbeiro",
+                "Nome do prefab da ficha que o Barbeiro cobra.");
+            BarberSkinColors = Config.Bind(barber, "SkinColors", "",
+                "Paleta de cores de pele permitidas (RGB como \"r,g,b\" separados por |). Vazio = qualquer cor natural.");
+            BarberHairColors = Config.Bind(barber, "HairColors", "",
+                "Paleta de cores de cabelo permitidas (RGB como \"r,g,b\" separados por |). Vazio = qualquer cor.");
+            BarberAllowSkin = Config.Bind(barber, "AllowSkin", false,
+                "Permite mudança de cor de pele. Falso por padrão (evita disfarce extremo).");
+
             // Server-authoritative entries. The Quests/VIP keys and HUD positions are left out
             // on purpose: they are each player's own preferences.
             ConfigSync.AddConfigEntry(TeleportCostItem).SynchronizedConfig = true;
             ConfigSync.AddConfigEntry(TeleportCostAmount).SynchronizedConfig = true;
             ConfigSync.AddConfigEntry(TeleportCooldownSeconds).SynchronizedConfig = true;
             ConfigSync.AddConfigEntry(ListingDurationHours).SynchronizedConfig = true;
+            ConfigSync.AddConfigEntry(MaxListingsPerPlayer).SynchronizedConfig = true;
+            ConfigSync.AddConfigEntry(VipMaxListings).SynchronizedConfig = true;
+            ConfigSync.AddConfigEntry(VipMaxAttachments).SynchronizedConfig = true;
             ConfigSync.AddConfigEntry(DeadcoinShopItems).SynchronizedConfig = true;
             ConfigSync.AddConfigEntry(BossPassBosses).SynchronizedConfig = true;
             ConfigSync.AddConfigEntry(BossPassKillRadius).SynchronizedConfig = true;
@@ -250,6 +284,12 @@ namespace NpcValheim
             ConfigSync.AddConfigEntry(TrainerLessonMaxLevel).SynchronizedConfig = true;
             ConfigSync.AddConfigEntry(TrainerLessonsPerWeek).SynchronizedConfig = true;
             ConfigSync.AddConfigEntry(TrainerPrices).SynchronizedConfig = true;
+
+            ConfigSync.AddConfigEntry(BarberEnabled).SynchronizedConfig = true;
+            ConfigSync.AddConfigEntry(BarberTokenPrefab).SynchronizedConfig = true;
+            ConfigSync.AddConfigEntry(BarberSkinColors).SynchronizedConfig = true;
+            ConfigSync.AddConfigEntry(BarberHairColors).SynchronizedConfig = true;
+            ConfigSync.AddConfigEntry(BarberAllowSkin).SynchronizedConfig = true;
 
             // Everything above is read where it is used (a new teleporter, a new listing, the
             // HUD every frame), so a reload takes effect on its own. The HUD offsets are the

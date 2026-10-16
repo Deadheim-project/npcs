@@ -131,7 +131,11 @@ namespace NpcValheim.UI
             if (market == null) return;
 
             // Your own pocket, read directly -- the auction house never holds money for you.
-            _balance.text = $"Suas moedas: {MarketplaceNpc.CoinsOf(Player)}";
+            // Also show how many of the player's own listings are up vs. their limit.
+            int myCount = market.CountMyListings;
+            int myLimit = market.MyListingLimit;
+            _balance.text = $"Suas moedas: {MarketplaceNpc.CoinsOf(Player)}    " +
+                            $"<size=14><color=#9a9188>Seus anúncios: {myCount}/{myLimit}</color></size>";
 
             var signature = string.Join("|", market.CachedListings.Select(l =>
                 $"{l.Id}:{l.Amount}:{l.PricePerUnit}:{l.IsMine}"));

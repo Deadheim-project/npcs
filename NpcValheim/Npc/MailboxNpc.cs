@@ -5,6 +5,7 @@ using System.Linq;
 using System.Text;
 using UnityEngine;
 using NpcValheim.Persistence;
+using NpcValheim.UI;
 
 namespace NpcValheim.Npc
 {
@@ -124,6 +125,16 @@ namespace NpcValheim.Npc
             Nview.InvokeRPC("RPC_SendMail", PackSend(toHouse, target, subject, body));
         }
 
+        /// <summary>Envia carta com um stack de item anexado. O cliente já removeu o item do
+        /// inventário antes de chamar este método; o servidor valida e entrega.</summary>
+        public void RequestSendWithAttachment(bool toHouse, string target, string subject, string body,
+            string itemName, int quality, int amount)
+        {
+            if (Nview == null || !Nview.IsValid()) return;
+            Nview.InvokeRPC("RPC_SendMail",
+                PackSend(toHouse, target, subject, body, itemName, quality, amount));
+        }
+
         public void RequestCreateHouse(string name)
         {
             if (Nview == null || !Nview.IsValid()) return;
@@ -208,10 +219,46 @@ namespace NpcValheim.Npc
             if (playerId == 0L) return;
             RememberSender(sender);
 
-            if (!TryUnpackSend(packed, out var toHouse, out var target, out var subject, out var body))
+            if (!TryUnpackSend(packed, out var toHouse, out var target, out var subject, out var body,
+                    out var attachItem, out var attachQuality, out var attachAmount))
             {
                 ReplyStatus(sender, "Mensagem inválida.");
                 return;
+            }
+
+            // Valida o anexo se houver
+            bool hasAttachment = !string.IsNullOrEmpty(attachItem) && attachAmount > 0;
+            if (hasAttachment)
+            {
+                bool isVip = VipShopShortcut.SenderIsVip(sender);
+                int maxAttachments = isVip
+                    ? Math.Max(MailDatabase.MaxAttachmentsNonVip, Plugin.VipMaxAttachments.Value)
+                    : MailDatabase.MaxAttachmentsNonVip;
+
+                // attachAmount conta como número de stacks do item
+                if (attachAmount > ItemSpawner.MaxDeliverableAmount(attachItem))
+                {
+                    ReplyStatus(sender, "Quantidade do anexo é inválida para esse item.");
+                    return;
+                }
+
+                // Não-VIP: apenas 1 stack; VIP: até VipMaxAttachments stacks
+                // Calculamos stacks = ceil(attachAmount / maxStack), mas para simplificar
+                // o limite é sobre a contagem de "anexos por carta" que a UI controla.
+                // O servidor apenas verifica se o remetente não é VIP tentando passar mais
+                // de MaxAttachmentsNonVip stacks (a UI já bloqueou, mas isso protege contra
+                // clientes modificados).
+                if (!isVip && attachAmount > GetMaxAmountForNonVip(attachItem))
+                {
+                    ReplyStatus(sender, "Somente VIP pode enviar mais de 1 stack de item por carta.");
+                    return;
+                }
+                if (isVip && attachAmount > GetMaxAmountForVip(attachItem))
+                {
+                    int vipMax = Plugin.VipMaxAttachments.Value;
+                    ReplyStatus(sender, $"VIP pode enviar no máximo {vipMax} stack(s) de item por carta.");
+                    return;
+                }
             }
 
             string senderName = GameApi.GetPlayerName(sender);
@@ -223,7 +270,16 @@ namespace NpcValheim.Npc
                     ReplyStatus(sender, "Casa não encontrada.");
                     return;
                 }
-                int sent = MailDatabase.SendToHouse(house.Name, playerId, senderName, subject, body);
+                int sent;
+                if (hasAttachment)
+                {
+                    sent = SendToHouseWithAttachment(house.Name, playerId, senderName, subject, body,
+                        attachItem, attachQuality, attachAmount);
+                }
+                else
+                {
+                    sent = MailDatabase.SendToHouse(house.Name, playerId, senderName, subject, body);
+                }
                 ReplyStatus(sender, sent > 0
                     ? $"Enviado para a casa {house.Name} ({sent} membro(s))."
                     : "A casa não tem membros.");
@@ -236,12 +292,57 @@ namespace NpcValheim.Npc
                     ReplyStatus(sender, "Jogador não encontrado. Ele precisa ter entrado no servidor ao menos uma vez.");
                     return;
                 }
-                MailDatabase.SendMessage(known.Id, playerId, senderName, subject, body);
+                if (hasAttachment)
+                {
+                    MailDatabase.SendMessageWithAttachment(known.Id, playerId, senderName, subject, body,
+                        attachItem, attachQuality, attachAmount);
+                }
+                else
+                {
+                    MailDatabase.SendMessage(known.Id, playerId, senderName, subject, body);
+                }
                 ReplyStatus(sender, $"Mensagem enviada para {known.Name}.");
             }
 
             SendMailTo(sender);
             Nview.InvokeRPC(sender, "RPC_DirectoryData", PackDirectory(playerId));
+        }
+
+        /// <summary>Máximo de quantidade que não-VIP pode enviar (1 stack completo).</summary>
+        private static int GetMaxAmountForNonVip(string itemName)
+        {
+            var prefab = ObjectDB.instance?.GetItemPrefab(itemName);
+            var drop = prefab?.GetComponent<ItemDrop>();
+            if (drop?.m_itemData?.m_shared == null) return 1;
+            return Math.Max(1, drop.m_itemData.m_shared.m_maxStackSize);
+        }
+
+        /// <summary>Máximo de quantidade que VIP pode enviar (VipMaxAttachments stacks completos).</summary>
+        private static int GetMaxAmountForVip(string itemName)
+        {
+            var prefab = ObjectDB.instance?.GetItemPrefab(itemName);
+            var drop = prefab?.GetComponent<ItemDrop>();
+            if (drop?.m_itemData?.m_shared == null) return Plugin.VipMaxAttachments.Value;
+            int maxStack = Math.Max(1, drop.m_itemData.m_shared.m_maxStackSize);
+            int vipStacks = Math.Max(MailDatabase.MaxAttachmentsNonVip, Plugin.VipMaxAttachments.Value);
+            long cap = (long)maxStack * vipStacks;
+            return cap > int.MaxValue ? int.MaxValue : (int)cap;
+        }
+
+        /// <summary>Envia uma carta com item para cada membro da casa.</summary>
+        private static int SendToHouseWithAttachment(string houseName, long senderId, string senderName,
+            string subject, string body, string itemName, int quality, int amount)
+        {
+            var house = HouseDatabase.FindByName(houseName);
+            if (house == null) return 0;
+            int sent = 0;
+            foreach (var memberId in house.MemberIds.Distinct().Take(MailDatabase.MaxHouseRecipients))
+            {
+                if (MailDatabase.SendMessageWithAttachment(memberId, senderId, senderName,
+                        subject, body, itemName, quality, amount, house.Name) != null)
+                    sent++;
+            }
+            return sent;
         }
 
         private void RPC_CreateHouse(long sender, string name)
@@ -463,21 +564,47 @@ namespace NpcValheim.Npc
         }
 
         private static string PackSend(bool toHouse, string target, string subject, string body) =>
+            PackSend(toHouse, target, subject, body, "", 1, 0);
+
+        private static string PackSend(bool toHouse, string target, string subject, string body,
+            string itemName, int quality, int amount) =>
             (toHouse ? "house" : "player") + ";" + MailWire.Sanitize(target) + ";" +
-            MailWire.Sanitize(subject) + ";" + MailWire.EscapeBody(body);
+            MailWire.Sanitize(subject) + ";" + MailWire.EscapeBody(body) + ";" +
+            MailWire.Sanitize(itemName ?? "") + ";" +
+            quality.ToString(System.Globalization.CultureInfo.InvariantCulture) + ";" +
+            amount.ToString(System.Globalization.CultureInfo.InvariantCulture);
 
         private static bool TryUnpackSend(string packed, out bool toHouse, out string target,
-            out string subject, out string body)
+            out string subject, out string body,
+            out string attachItem, out int attachQuality, out int attachAmount)
         {
             toHouse = false;
-            target = subject = body = "";
-            var p = (packed ?? "").Split(new[] { ';' }, 4);
-            if (p.Length != 4) return false;
+            target = subject = body = attachItem = "";
+            attachQuality = 1;
+            attachAmount = 0;
+            if (string.IsNullOrEmpty(packed)) return false;
+
+            // Formato novo: type;target;subject;body;item;quality;amount  (7 campos)
+            // Formato antigo: type;target;subject;body                    (4 campos) — compatibilidade
+            var p = packed.Split(new[] { ';' }, 7);
+            if (p.Length < 4) return false;
             toHouse = p[0] == "house";
             target = p[1].Trim();
             subject = p[2].Trim();
             body = MailWire.UnescapeBody(p[3]).Trim();
-            return target.Length > 0 && (subject.Length > 0 || body.Length > 0);
+
+            if (p.Length >= 7)
+            {
+                attachItem = p[4].Trim();
+                int.TryParse(p[5], System.Globalization.NumberStyles.Integer,
+                    System.Globalization.CultureInfo.InvariantCulture, out attachQuality);
+                int.TryParse(p[6], System.Globalization.NumberStyles.Integer,
+                    System.Globalization.CultureInfo.InvariantCulture, out attachAmount);
+                attachQuality = Math.Max(1, attachQuality);
+            }
+
+            return target.Length > 0 && (subject.Length > 0 || body.Length > 0 ||
+                (!string.IsNullOrEmpty(attachItem) && attachAmount > 0));
         }
 
         private static string PackDirectory(long viewerId)

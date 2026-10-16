@@ -79,6 +79,7 @@ namespace NpcValheim.Prefabs
             RegisterNpcType(scene, source, "NpcValheim_BountyHunter", typeof(BountyHunterNpc), BountyHunterNpc.DisplayName, "bounty.png");
             RegisterNpcType(scene, source, "NpcValheim_WarJudge", typeof(WarJudgeNpc), WarJudgeNpc.DisplayName, "war-judge.png");
             RegisterNpcType(scene, source, "NpcValheim_Trainer", typeof(TrainerNpc), TrainerNpc.DisplayName, "trainer.png");
+            RegisterNpcType(scene, source, "NpcValheim_Barber", typeof(BarberNpc), BarberNpc.DisplayName, "barber.png");
         }
 
         /// <summary>

@@ -116,6 +116,7 @@ namespace NpcValheim.UI
                 case MailboxNpc _:
                     AddTab("Correio", new MailView(), npc, player);
                     AddTab("Enviar", new MailComposeView(), npc, player);
+                    AddTab("Parcela", new MailParcelView(), npc, player);
                     AddTab("Casa", new HouseView(), npc, player);
                     break;
                 case QuestGiverNpc _:
@@ -158,6 +159,9 @@ namespace NpcValheim.UI
                 case TrainerNpc _:
                     AddTab("Estudo", new TrainerView(lessons: false), npc, player);
                     AddTab("Aulas", new TrainerView(lessons: true), npc, player);
+                    break;
+                case BarberNpc _:
+                    AddTab("Barbeiro", new BarberView(), npc, player);
                     break;
                 // A marketplace NPC decides for itself which side of the economy it runs. The
                 // auction house and the merchant are different NPCs now, so nobody has to work

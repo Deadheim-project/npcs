@@ -51,6 +51,7 @@ namespace NpcValheim.Npc
             "NpcValheim_BountyHunter",
             "NpcValheim_WarJudge",
             "NpcValheim_Trainer",
+            "NpcValheim_Barber",
         };
 
         private static readonly HashSet<ZDOID> ProcessedStubs = new HashSet<ZDOID>();
@@ -79,6 +80,7 @@ namespace NpcValheim.Npc
             Arena.ArenaNet.Register(rpc);
             MountTrainer.Register(rpc);
             Trainer.Register(rpc);
+            Barber.Register(rpc);
             Plugin.Log.LogInfo("NpcValheim: server-authoritative service NPC RPCs registered");
         }
 
