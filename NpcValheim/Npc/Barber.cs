@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Reflection;
+using HarmonyLib;
 using UnityEngine;
 
 namespace NpcValheim.Npc
@@ -369,14 +371,26 @@ namespace NpcValheim.Npc
             if (Barber.AllowSkin && Barber.TryParseColor(skinColor, out var sc)) player.SetSkinColor(sc);
         }
 
+        // m_hairColor / m_skinColor are private in the shipped game (only the publicized
+        // reference assembly exposes them), so reading them directly throws
+        // FieldAccessException at runtime. Reflection works on both.
+        private static readonly FieldInfo HairColorField = AccessTools.Field(typeof(Player), "m_hairColor");
+        private static readonly FieldInfo SkinColorField = AccessTools.Field(typeof(Player), "m_skinColor");
+
+        internal static Vector3 HairColorOf(Player player) =>
+            player != null && HairColorField != null ? (Vector3)HairColorField.GetValue(player) : Vector3.one;
+
+        internal static Vector3 SkinColorOf(Player player) =>
+            player != null && SkinColorField != null ? (Vector3)SkinColorField.GetValue(player) : Vector3.one;
+
         internal static void SaveOriginal()
         {
             var player = Player.m_localPlayer;
             if (player == null) return;
             _origHair = player.GetHair();
             _origBeard = player.GetBeard();
-            _origHairColor = player.m_hairColor;
-            _origSkinColor = player.m_skinColor;
+            _origHairColor = HairColorOf(player);
+            _origSkinColor = SkinColorOf(player);
             _hasOriginal = true;
         }
 

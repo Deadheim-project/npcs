@@ -222,7 +222,15 @@ namespace NpcValheim.UI
             var index = _tabs.Count;
             button.onClick.AddListener(() => SetActive(index));
 
-            view.Build(_content, npc, player);
+            // One broken page must not take the other tabs (Admin included) down with it.
+            try { view.Build(_content, npc, player); }
+            catch (System.Exception ex)
+            {
+                Plugin.Log.LogError($"NpcValheim UI: tab '{label}' failed to build: {ex}");
+                view.Destroy();
+                UnityEngine.Object.Destroy(button.gameObject);
+                return;
+            }
             view.SetVisible(false);
             _tabs.Add((button, view, label));
         }
