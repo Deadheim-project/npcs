@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
@@ -28,8 +29,12 @@ namespace NpcValheim.UI
 
         private List<string> _availableHair = new List<string>();
         private List<string> _availableBeard = new List<string>();
+        private List<Vector3> _hairPalette = new List<Vector3>();
+        private List<Vector3> _skinPalette = new List<Vector3>();
         private float _nextPoll;
-        private int _seenMessage;
+        private int _seenCatalog;
+        private int _seenResult;
+        private Vector3 _startHairColor, _startSkinColor;
 
         private BarberNpc Barber => Npc as BarberNpc;
 
@@ -89,77 +94,119 @@ namespace NpcValheim.UI
             ValheimUi.Anchor((RectTransform)_statusLabel.transform, new Vector2(0f, 0f), new Vector2(1f, 0f),
                 new Vector2(16f, 10f), new Vector2(-16f, 80f));
 
-            // Request initial status
-            Barber?.RequestStatus();
+            // Start the sliders on the character's current colors, so "no change" is the default
             BarberClient.SaveOriginal();
+            ResetSliders();
+
+            _seenCatalog = NpcValheim.Npc.Barber.CatalogRevision;
+            _seenResult = NpcValheim.Npc.Barber.ResultRevision;
+            Barber?.RequestStatus();
+        }
+
+        public override void Destroy()
+        {
+            // Closing the window without confirming drops the preview
+            BarberClient.RevertPreview();
+            base.Destroy();
+        }
+
+        private void ResetSliders()
+        {
+            if (Player == null) return;
+            _startHairColor = Player.m_hairColor;
+            _startSkinColor = Player.m_skinColor;
+            _hairR.SetValueWithoutNotify(_startHairColor.x);
+            _hairG.SetValueWithoutNotify(_startHairColor.y);
+            _hairB.SetValueWithoutNotify(_startHairColor.z);
+            if (_skinR != null)
+            {
+                _skinR.SetValueWithoutNotify(_startSkinColor.x);
+                _skinG.SetValueWithoutNotify(_startSkinColor.y);
+                _skinB.SetValueWithoutNotify(_startSkinColor.z);
+            }
         }
 
         public override void Refresh()
         {
             if (Barber == null || Player == null) return;
 
-            // Poll for updates
-            if (Time.unscaledTime >= _nextPoll)
+            // The catalog arrives once; ask again only while it is still missing
+            if (_availableHair.Count == 0 && Time.unscaledTime >= _nextPoll)
             {
                 _nextPoll = Time.unscaledTime + PollSeconds;
                 Barber.RequestStatus();
             }
 
-            // Check for messages
-            if (NpcValheim.Npc.Barber.MessageRevision != _seenMessage)
+            if (NpcValheim.Npc.Barber.CatalogRevision != _seenCatalog)
             {
-                _seenMessage = NpcValheim.Npc.Barber.MessageRevision;
-                UpdateHairList(NpcValheim.Npc.Barber.LastMessage);
+                _seenCatalog = NpcValheim.Npc.Barber.CatalogRevision;
+                UpdateCatalog(NpcValheim.Npc.Barber.LastCatalog);
             }
-            else
+            if (NpcValheim.Npc.Barber.ResultRevision != _seenResult)
             {
-                // Check if we got an error response from the server
-                if (!string.IsNullOrEmpty(Status) && Status.StartsWith("error:"))
-                {
-                    _statusLabel.text = Status.Substring(6);
-                }
-                else if (!string.IsNullOrEmpty(Status))
-                {
-                    _statusLabel.text = Status;
-                }
+                _seenResult = NpcValheim.Npc.Barber.ResultRevision;
+                Say(NpcValheim.Npc.Barber.LastResult);
+                // After a confirmed change the new look is the baseline
+                ResetSliders();
+                _hairDropdown.SetValueWithoutNotify(0);
+                _beardDropdown.SetValueWithoutNotify(0);
             }
+            if (!string.IsNullOrEmpty(Status)) _statusLabel.text = Status;
 
-            // Update token count
-            string tokenPrefab = Plugin.BarberTokenPrefab?.Value ?? "FichaBarbeiro";
-            int tokenCount = Player.GetInventory() != null ? ItemNames.Count(Player.GetInventory(), tokenPrefab, -1) : 0;
+            int tokenCount = Player.GetInventory() != null
+                ? ItemNames.Count(Player.GetInventory(), NpcValheim.Npc.Barber.TokenPrefab, -1) : 0;
             _tokenCount.text = $"<color={Grey}>Fichas do Barbeiro:</color> {tokenCount}";
+            _confirmButton.interactable = !BarberClient.Awaiting;
 
-            // Update preview
             UpdatePreview();
         }
 
-        private void UpdateHairList(string message)
+        // "hair=a,b|beard=c,d|hc=r,g,b;r,g,b|sc=...|skin=0|token=X"
+        private void UpdateCatalog(string message)
         {
             if (string.IsNullOrWhiteSpace(message)) return;
-
-            // Parse "hair:Hair1,Hair2|beard:Beard1,Beard2"
-            var parts = message.Split('|');
-            foreach (var part in parts)
+            foreach (var part in message.Split('|'))
             {
-                var kv = part.Split(':');
-                if (kv.Length != 2) continue;
+                int eq = part.IndexOf('=');
+                if (eq <= 0) continue;
+                string key = part.Substring(0, eq), value = part.Substring(eq + 1);
 
-                if (kv[0] == "hair")
+                if (key == "hair")
                 {
-                    _availableHair.Clear();
-                    _availableHair.Add(""); // Empty = no change
-                    _availableHair.AddRange(kv[1].Split(','));
+                    _availableHair = new List<string> { "" }; // empty = no change
+                    foreach (var n in value.Split(',')) if (n.Length > 0) _availableHair.Add(n);
                     UpdateDropdown(_hairDropdown, _availableHair);
                 }
-                else if (kv[0] == "beard")
+                else if (key == "beard")
                 {
-                    _availableBeard.Clear();
-                    _availableBeard.Add(""); // Empty = no change
-                    _availableBeard.AddRange(kv[1].Split(','));
+                    _availableBeard = new List<string> { "" };
+                    foreach (var n in value.Split(',')) if (n.Length > 0) _availableBeard.Add(n);
                     UpdateDropdown(_beardDropdown, _availableBeard);
                 }
+                else if (key == "hc") _hairPalette = NpcValheim.Npc.Barber.ParsePalette(value, ';');
+                else if (key == "sc") _skinPalette = NpcValheim.Npc.Barber.ParsePalette(value, ';');
             }
         }
+
+        /// <summary>With a palette, snap the slider color to the nearest entry (the server
+        /// only accepts palette colors); without one the color stays free.</summary>
+        private static Vector3 Snap(Vector3 color, List<Vector3> palette)
+        {
+            if (palette == null || palette.Count == 0) return color;
+            Vector3 best = palette[0];
+            float bestD = (best - color).sqrMagnitude;
+            foreach (var c in palette)
+            {
+                float d = (c - color).sqrMagnitude;
+                if (d < bestD) { best = c; bestD = d; }
+            }
+            return best;
+        }
+
+        private static string Fmt(Vector3 c) =>
+            string.Format(CultureInfo.InvariantCulture, "{0:F2},{1:F2},{2:F2}", c.x, c.y, c.z);
+
+        private static bool Same(Vector3 a, Vector3 b) => (a - b).sqrMagnitude < 0.0001f;
 
         private void UpdateDropdown(TMP_Dropdown dropdown, List<string> options)
         {
@@ -167,44 +214,39 @@ namespace NpcValheim.UI
             dropdown.AddOptions(options);
         }
 
+        private string SelectedHair() =>
+            _hairDropdown.value > 0 && _hairDropdown.value < _availableHair.Count ? _availableHair[_hairDropdown.value] : "";
+
+        private string SelectedBeard() =>
+            _beardDropdown.value > 0 && _beardDropdown.value < _availableBeard.Count ? _availableBeard[_beardDropdown.value] : "";
+
+        private Vector3 HairColor() => Snap(new Vector3(_hairR.value, _hairG.value, _hairB.value), _hairPalette);
+
+        private Vector3 SkinColor() => _skinR == null ? _startSkinColor
+            : Snap(new Vector3(_skinR.value, _skinG.value, _skinB.value), _skinPalette);
+
+        // Colors travel only when they differ from the character's current ones
+        private string HairColorText() => Same(HairColor(), _startHairColor) ? "" : Fmt(HairColor());
+        private string SkinColorText() => _skinR == null || Same(SkinColor(), _startSkinColor) ? "" : Fmt(SkinColor());
+
         private void UpdatePreview()
         {
-            string hair = _hairDropdown.value > 0 && _hairDropdown.value < _availableHair.Count
-                ? _availableHair[_hairDropdown.value]
-                : "";
-            string beard = _beardDropdown.value > 0 && _beardDropdown.value < _availableBeard.Count
-                ? _availableBeard[_beardDropdown.value]
-                : "";
-
-            Vector3 hairColor = new Vector3(_hairR.value, _hairG.value, _hairB.value);
-            Vector3 skinColor = Vector3.zero;
-            if (_skinR != null)
-                skinColor = new Vector3(_skinR.value, _skinG.value, _skinB.value);
-
-            BarberClient.ApplyPreview(hair, beard, hairColor, skinColor);
+            if (_hairDropdown == null || BarberClient.Awaiting) return;
+            BarberClient.ApplyPreview(SelectedHair(), SelectedBeard(), HairColorText(), SkinColorText());
         }
 
         private void OnConfirm()
         {
-            string hair = _hairDropdown.value > 0 && _hairDropdown.value < _availableHair.Count
-                ? _availableHair[_hairDropdown.value]
-                : "";
-            string beard = _beardDropdown.value > 0 && _beardDropdown.value < _availableBeard.Count
-                ? _availableBeard[_beardDropdown.value]
-                : "";
-
-            string hairColor = $"{_hairR.value:F2},{_hairG.value:F2},{_hairB.value:F2}";
-            string skinColor = "";
-            if (_skinR != null)
-                skinColor = $"{_skinR.value:F2},{_skinG.value:F2},{_skinB.value:F2}";
-
-            Barber?.RequestApply(hair, beard, hairColor, skinColor);
-            Say("Solicitando mudança...");
+            string error = BarberClient.BeginApply(Barber, SelectedHair(), SelectedBeard(), HairColorText(), SkinColorText());
+            Say(error ?? "Solicitando mudança...");
         }
 
         private void OnCancel()
         {
             BarberClient.RevertPreview();
+            ResetSliders();
+            _hairDropdown.SetValueWithoutNotify(0);
+            _beardDropdown.SetValueWithoutNotify(0);
             Say("Prévia cancelada.");
         }
 
@@ -247,7 +289,7 @@ namespace NpcValheim.UI
             var slider = row.gameObject.AddComponent<Slider>();
             slider.minValue = min;
             slider.maxValue = max;
-            slider.value = 0.5f;
+            slider.SetValueWithoutNotify(0.5f);
             var sliderRect = slider.GetComponent<RectTransform>();
             ValheimUi.Stretch(sliderRect, 0f, 0f);
 

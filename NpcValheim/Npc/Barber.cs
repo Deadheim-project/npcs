@@ -2,11 +2,10 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using UnityEngine;
-using NpcValheim.Integration;
 
 namespace NpcValheim.Npc
 {
-    /// <summary>One barber choice as the client sends it.</summary>
+    /// <summary>One barber choice as the client sends it. Empty fields mean "keep as is".</summary>
     public sealed class BarberChoice
     {
         public string Hair = "";
@@ -15,40 +14,59 @@ namespace NpcValheim.Npc
         public string SkinColor = "";
     }
 
-    /// <summary>The barber's server-side logic: validation, token consumption, persistence.</summary>
+    /// <summary>
+    /// The barber's server side. The server only AUTHORIZES: it checks that the NPC is
+    /// enabled, the player is standing next to it, the request is not a repeat, and that the
+    /// hair, beard and colors are on the allowed lists. It never touches the look and never
+    /// sees the token: the FichaBarbeiro lives in the owning client's inventory (a dedicated
+    /// server holds no Player objects), so that client removes it exactly once, on the
+    /// single-use grant below, and writes the look on its own Player (which the game saves
+    /// with the character). Cheating costs only a cosmetic.
+    /// </summary>
     internal static class Barber
     {
         internal const string ActionStatus = "barber_status";
         internal const string ActionApply = "barber_apply";
+        internal const string ActionDone = "barber_done";
 
+        private const float MaxDistance = 6f;
+        private const float GrantSeconds = 20f;
+
+        private sealed class Grant
+        {
+            public string Token;
+            public float Expires;
+            public string Payload;
+        }
+
+        private static readonly Dictionary<long, Grant> Grants = new Dictionary<long, Grant>();
         private static readonly HashSet<string> AllowedHair = new HashSet<string>(StringComparer.Ordinal);
         private static readonly HashSet<string> AllowedBeard = new HashSet<string>(StringComparer.Ordinal);
         private static bool _initialized;
 
-        // Message revision for UI updates
-        internal static int MessageRevision;
-        internal static string LastMessage = "";
+        // Client-side mirrors of what the server last said (read by the view).
+        internal static int CatalogRevision;
+        internal static string LastCatalog = "";
+        internal static int ResultRevision;
+        internal static string LastResult = "";
 
         internal static void Register(ZRoutedRpc rpc)
         {
-            // Barber uses the service action RPC through ServiceNpcAuthority
-            // No additional registration needed
+            Grants.Clear();
+            BarberNet.Register(rpc);
         }
 
-        /// <summary>Converts item name to hash for VisEquipment methods.</summary>
-        private static int VisualHash(string itemName) =>
-            string.IsNullOrEmpty(itemName) ? 0 : itemName.GetStableHashCode();
+        internal static bool Enabled => Plugin.BarberEnabled?.Value ?? false;
+        internal static bool AllowSkin => Plugin.BarberAllowSkin?.Value ?? false;
+        internal static string TokenPrefab => Plugin.BarberTokenPrefab?.Value ?? "FichaBarbeiro";
 
-        /// <summary>Payload: hair;beard;hairColor;skinColor (RGB as "r,g,b" or empty).</summary>
+        /// <summary>Payload: hair;beard;hairColor;skinColor (colors as "r,g,b").</summary>
         internal static string ApplyPayload(string hair, string beard, string hairColor, string skinColor) =>
             $"{hair ?? ""};{beard ?? ""};{hairColor ?? ""};{skinColor ?? ""}";
 
-        /// <summary>Parses the payload back into a BarberChoice.</summary>
         internal static BarberChoice ParsePayload(string payload)
         {
-            if (string.IsNullOrWhiteSpace(payload))
-                return new BarberChoice();
-
+            if (string.IsNullOrWhiteSpace(payload)) return new BarberChoice();
             var parts = payload.Split(';');
             return new BarberChoice
             {
@@ -59,177 +77,177 @@ namespace NpcValheim.Npc
             };
         }
 
-        /// <summary>Sends the current hair/beard list to the client.</summary>
-        internal static void ServeStatus(long sender)
+        // ---- server ----
+
+        /// <summary>Sends the hair/beard lists, the color palettes and the token name.</summary>
+        internal static void ServeStatus(long sender, ZNetView view, Transform npc)
         {
-            if (!GameApi.TryGetPlayer(sender, out var player)) return;
+            if (!Enabled) return;
+            if (!NpcRequestGuard.AllowNearby(view, npc, sender, "barber-status", out string reason, MaxDistance, 6, 3f))
+            {
+                Plugin.Log.LogDebug($"NpcValheim: barber status from peer {sender} refused: {reason}");
+                return;
+            }
 
             EnsureHairList();
-
-            var csvHair = string.Join(",", AllowedHair);
-            var csvBeard = string.Join(",", AllowedBeard);
-
-            var response = $"hair:{csvHair}|beard:{csvBeard}";
-            LastMessage = response;
-            MessageRevision++;
-            SendResponse(sender, response);
+            string msg = "catalog:hair=" + string.Join(",", AllowedHair) +
+                         "|beard=" + string.Join(",", AllowedBeard) +
+                         "|hc=" + Palette(Plugin.BarberHairColors?.Value) +
+                         "|sc=" + (AllowSkin ? Palette(Plugin.BarberSkinColors?.Value) : "") +
+                         "|skin=" + (AllowSkin ? "1" : "0") +
+                         "|token=" + TokenPrefab;
+            SendResponse(sender, msg);
         }
 
-        /// <summary>Validates and applies the change, consuming the token if successful.</summary>
-        internal static void ServeApply(long sender, string payload, string npcName)
+        /// <summary>Validates the request and, if it is fine, hands out ONE single-use grant.</summary>
+        internal static void ServeApply(long sender, string payload, ZNetView view, Transform npc, string npcName)
         {
-            if (!GameApi.TryGetPlayer(sender, out var player)) return;
+            if (!Enabled) { SendResponse(sender, "error:O Barbeiro está fechado."); return; }
+
+            if (!NpcRequestGuard.AllowNearby(view, npc, sender, "barber-apply", out string reason, MaxDistance, 3, 5f))
+            {
+                Plugin.Log.LogWarning($"NpcValheim: barber apply from peer {sender} refused: {reason}");
+                SendResponse(sender, "error:Chegue mais perto do Barbeiro (ou aguarde um instante).");
+                return;
+            }
 
             var choice = ParsePayload(payload);
-
-            // Validate that we have at least one change
-            if (string.IsNullOrEmpty(choice.Hair) && string.IsNullOrEmpty(choice.Beard) &&
-                string.IsNullOrEmpty(choice.HairColor) && string.IsNullOrEmpty(choice.SkinColor))
+            if (choice.Hair.Length == 0 && choice.Beard.Length == 0 &&
+                choice.HairColor.Length == 0 && choice.SkinColor.Length == 0)
             {
                 SendResponse(sender, "error:Nenhuma mudança selecionada.");
                 return;
             }
 
-            // Validate hair/beard against the allowed list
             EnsureHairList();
-            if (!string.IsNullOrEmpty(choice.Hair) && !AllowedHair.Contains(choice.Hair))
+            if (choice.Hair.Length > 0 && !AllowedHair.Contains(choice.Hair))
             {
                 SendResponse(sender, "error:Cabelo inválido.");
                 return;
             }
-            if (!string.IsNullOrEmpty(choice.Beard) && !AllowedBeard.Contains(choice.Beard))
+            if (choice.Beard.Length > 0 && !AllowedBeard.Contains(choice.Beard))
             {
                 SendResponse(sender, "error:Barba inválida.");
                 return;
             }
-
-            // Validate colors if provided
-            if (!string.IsNullOrEmpty(choice.HairColor) && !TryParseColor(choice.HairColor, out _))
+            if (choice.HairColor.Length > 0 && !ColorAllowed(choice.HairColor, Plugin.BarberHairColors?.Value))
             {
-                SendResponse(sender, "error:Cor de cabelo inválida.");
+                SendResponse(sender, "error:Cor de cabelo não permitida.");
                 return;
             }
-            if (!string.IsNullOrEmpty(choice.SkinColor) && !TryParseColor(choice.SkinColor, out _))
+            if (choice.SkinColor.Length > 0)
             {
-                SendResponse(sender, "error:Cor de pele inválida.");
-                return;
-            }
-
-            // Check if skin changes are allowed
-            bool allowSkin = Plugin.BarberAllowSkin?.Value ?? false;
-            if (!string.IsNullOrEmpty(choice.SkinColor) && !allowSkin)
-            {
-                SendResponse(sender, "error:Mudança de cor de pele não permitida.");
-                return;
-            }
-
-            // Validate skin color against palette if configured
-            if (!string.IsNullOrEmpty(choice.SkinColor) && allowSkin)
-            {
-                string palette = Plugin.BarberSkinColors?.Value ?? "";
-                if (!string.IsNullOrEmpty(palette) && !IsColorInPalette(choice.SkinColor, palette))
+                if (!AllowSkin) { SendResponse(sender, "error:Mudança de cor de pele não permitida."); return; }
+                if (!ColorAllowed(choice.SkinColor, Plugin.BarberSkinColors?.Value))
                 {
                     SendResponse(sender, "error:Cor de pele não permitida.");
                     return;
                 }
             }
 
-            // Check if the player has the token
-            string tokenPrefab = Plugin.BarberTokenPrefab?.Value ?? "FichaBarbeiro";
-            var inv = player.GetInventory();
-            if (inv == null || ItemNames.Count(inv, tokenPrefab, -1) < 1)
+            // One live grant per player: a new request replaces the old one, so spamming the
+            // button can never stack charges.
+            var grant = new Grant
             {
-                SendResponse(sender, "error:Você não tem uma Ficha do Barbeiro.");
-                return;
-            }
+                Token = Guid.NewGuid().ToString("N"),
+                Expires = Time.realtimeSinceStartup + GrantSeconds,
+                Payload = payload,
+            };
+            Grants[sender] = grant;
+            Prune();
+            SendResponse(sender, $"ok:{grant.Token}|{payload}");
+        }
 
-            // Apply the changes on the server side (for persistence)
-            if (player.m_visEquipment != null)
-            {
-                if (!string.IsNullOrEmpty(choice.Hair))
-                    player.m_visEquipment.SetHairItem(VisualHash(choice.Hair));
-                if (!string.IsNullOrEmpty(choice.Beard))
-                    player.m_visEquipment.SetBeardItem(VisualHash(choice.Beard));
-                if (TryParseColor(choice.HairColor, out var hairRgb))
-                    player.m_visEquipment.SetHairColor(hairRgb);
-                if (allowSkin && TryParseColor(choice.SkinColor, out var skinRgb))
-                    player.m_visEquipment.SetSkinColor(skinRgb);
-            }
+        /// <summary>The client reports it charged the token and applied the look; only logs.</summary>
+        internal static void ServeDone(long sender, string token, string npcName)
+        {
+            if (!Grants.TryGetValue(sender, out var grant) || grant.Token != token) return;
+            Grants.Remove(sender);
+            Plugin.Log.LogInfo($"NpcValheim: {GameApi.GetPlayerName(sender)} changed appearance at {npcName} ({grant.Payload})");
+        }
 
-            // Remove the token
-            ItemNames.Remove(inv, tokenPrefab, 1, -1);
-
-            // Log the transaction
-            Plugin.Log.LogInfo($"NpcValheim: {player.GetPlayerName()} changed appearance at {npcName} (hair={choice.Hair}, beard={choice.Beard})");
-
-            // Send success response with the applied choices
-            SendResponse(sender, $"ok:{payload}");
+        private static void Prune()
+        {
+            float now = Time.realtimeSinceStartup;
+            var dead = new List<long>();
+            foreach (var kv in Grants) if (kv.Value.Expires < now) dead.Add(kv.Key);
+            foreach (long key in dead) Grants.Remove(key);
         }
 
         private static void SendResponse(long peer, string message)
         {
             var package = new ZPackage();
             package.Write(message);
-            ZRoutedRpc.instance?.InvokeRoutedRPC(peer, "NpcValheim_BarberResponse", package);
+            ZRoutedRpc.instance?.InvokeRoutedRPC(peer, BarberNet.RpcResponse, package);
         }
 
         private static void EnsureHairList()
         {
             if (_initialized) return;
-
             if (ObjectDB.instance == null || ObjectDB.instance.m_items == null) return;
 
             AllowedHair.Clear();
             AllowedBeard.Clear();
-
             foreach (var item in ObjectDB.instance.m_items)
             {
                 if (item == null) continue;
                 string name = item.name;
-                if (name.StartsWith("Hair", StringComparison.Ordinal))
-                    AllowedHair.Add(name);
-                else if (name.StartsWith("Beard", StringComparison.Ordinal))
-                    AllowedBeard.Add(name);
+                if (name.StartsWith("Hair", StringComparison.Ordinal)) AllowedHair.Add(name);
+                else if (name.StartsWith("Beard", StringComparison.Ordinal)) AllowedBeard.Add(name);
             }
 
-            _initialized = true;
+            _initialized = AllowedHair.Count > 0 || AllowedBeard.Count > 0;
             Plugin.Log.LogInfo($"NpcValheim: Barber found {AllowedHair.Count} hair styles and {AllowedBeard.Count} beard styles");
         }
 
-        private static bool TryParseColor(string text, out Vector3 color)
+        // ---- colors ----
+
+        /// <summary>Palette entries are "r,g,b" separated by '|'. On the wire they use ';'.</summary>
+        private static string Palette(string raw) =>
+            string.IsNullOrWhiteSpace(raw) ? "" : raw.Replace('|', ';');
+
+        internal static List<Vector3> ParsePalette(string raw, char separator)
+        {
+            var list = new List<Vector3>();
+            if (string.IsNullOrWhiteSpace(raw)) return list;
+            foreach (string part in raw.Split(separator))
+                if (TryParseColor(part, out var color)) list.Add(color);
+            return list;
+        }
+
+        /// <summary>With a palette configured the color must match an entry; with none it is
+        /// free, but every channel must still be a plain 0..1 number.</summary>
+        private static bool ColorAllowed(string text, string paletteRaw)
+        {
+            if (!TryParseColor(text, out var color)) return false;
+            var palette = ParsePalette(paletteRaw, '|');
+            if (palette.Count == 0) return true;
+            foreach (var entry in palette)
+                if ((entry - color).sqrMagnitude < 0.0004f) return true; // within 0.02 per channel
+            return false;
+        }
+
+        internal static bool TryParseColor(string text, out Vector3 color)
         {
             color = Vector3.zero;
             if (string.IsNullOrWhiteSpace(text)) return false;
-
             var parts = text.Split(',');
             if (parts.Length != 3) return false;
-
-            if (!float.TryParse(parts[0].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out float r)) return false;
-            if (!float.TryParse(parts[1].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out float g)) return false;
-            if (!float.TryParse(parts[2].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out float b)) return false;
-
-            color = new Vector3(r, g, b);
-            return true;
-        }
-
-        private static bool IsColorInPalette(string colorText, string palette)
-        {
-            if (string.IsNullOrWhiteSpace(palette)) return true; // empty palette = no restriction
-
-            var colors = palette.Split('|');
-            foreach (var c in colors)
+            var v = new float[3];
+            for (int i = 0; i < 3; i++)
             {
-                if (string.Equals(c.Trim(), colorText, StringComparison.Ordinal))
-                    return true;
+                if (!float.TryParse(parts[i].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out v[i])) return false;
+                if (float.IsNaN(v[i]) || float.IsInfinity(v[i]) || v[i] < 0f || v[i] > 1f) return false;
             }
-            return false;
+            color = new Vector3(v[0], v[1], v[2]);
+            return true;
         }
     }
 
-    /// <summary>RPC registration for the barber.</summary>
+    /// <summary>Client-bound RPC. Registered on both sides by Barber.Register.</summary>
     internal static class BarberNet
     {
-        private const string RpcResponse = "NpcValheim_BarberResponse";
+        internal const string RpcResponse = "NpcValheim_BarberResponse";
 
         internal static void Register(ZRoutedRpc rpc)
         {
@@ -239,94 +257,153 @@ namespace NpcValheim.Npc
 
         private static void RPC_Response(long sender, ZPackage package)
         {
-            if (package == null) return;
-            string message = package.ReadString();
-            BarberClient.OnResponse(message);
+            // Only the server may tell a client to apply a look.
+            if (package == null || !ServiceNpcAuthority.IsAuthoritativeSender(sender)) return;
+            try { BarberClient.OnResponse(package.ReadString()); }
+            catch (Exception e) { Plugin.Log.LogWarning($"NpcValheim: invalid barber response: {e.Message}"); }
         }
     }
 
-    /// <summary>Client-side barber logic: preview, UI, applying changes after server OK.</summary>
+    /// <summary>
+    /// Client side: preview, charging the token and writing the look.
+    ///
+    /// The look lives on the Player (Humanoid.m_hairItem / m_beardItem, Player.m_hairColor /
+    /// m_skinColor): Player.Save writes those, and Player.SetupVisEquipment copies them to
+    /// the VisEquipment on every refresh. Touching only VisEquipment would be undone on the
+    /// next refresh and never saved, so every change here goes through the Player setters.
+    /// </summary>
     internal static class BarberClient
     {
-        private static int _originalHair = 0;
-        private static int _originalBeard = 0;
-        private static Vector3 _originalHairColor;
-        private static Vector3 _originalSkinColor;
-        private static bool _hasOriginal;
+        private const float AwaitSeconds = 8f;
 
-        /// <summary>Converts item name to hash for VisEquipment methods.</summary>
-        private static int VisualHash(string itemName) =>
-            string.IsNullOrEmpty(itemName) ? 0 : itemName.GetStableHashCode();
+        private static string _origHair = "", _origBeard = "";
+        private static Vector3 _origHairColor = Vector3.one, _origSkinColor = Vector3.one;
+        private static bool _hasOriginal;
+        private static float _awaitUntil;
+        private static string _lastPreview = "";
+        private static BarberNpc _npc;
+
+        /// <summary>True while a request is in flight; blocks a second click.</summary>
+        internal static bool Awaiting => Time.unscaledTime < _awaitUntil;
+
+        internal static bool HasToken(Player player)
+        {
+            var inv = player != null ? player.GetInventory() : null;
+            return inv != null && ItemNames.Count(inv, Barber.TokenPrefab, -1) >= 1;
+        }
+
+        /// <summary>Called by the confirm button. Returns an error text, or null if sent.</summary>
+        internal static string BeginApply(BarberNpc npc, string hair, string beard, string hairColor, string skinColor)
+        {
+            var player = Player.m_localPlayer;
+            if (player == null) return "Sem personagem.";
+            if (Awaiting) return "Aguarde...";
+            if (!HasToken(player)) return "Você não tem uma Ficha do Barbeiro.";
+            if (!npc.RequestApply(hair, beard, hairColor, skinColor)) return "Não foi possível falar com o servidor.";
+            _npc = npc;
+            _awaitUntil = Time.unscaledTime + AwaitSeconds;
+            return null;
+        }
 
         internal static void OnResponse(string message)
         {
             if (string.IsNullOrWhiteSpace(message)) return;
 
-            if (message.StartsWith("error:"))
+            if (message.StartsWith("catalog:", StringComparison.Ordinal))
             {
-                // Server refused - revert preview
-                RevertPreview();
-                // Message will be shown by the UI through Status
+                Barber.LastCatalog = message.Substring(8);
+                Barber.CatalogRevision++;
                 return;
             }
 
-            if (message.StartsWith("ok:"))
+            if (message.StartsWith("error:", StringComparison.Ordinal))
             {
-                // Server approved - consume token and finalize
-                string payload = message.Substring(3);
-                var choice = Barber.ParsePayload(payload);
-
-                // Consume token (client-side, after server OK)
-                string tokenPrefab = Plugin.BarberTokenPrefab?.Value ?? "FichaBarbeiro";
-                var player = Player.m_localPlayer;
-                if (player != null && player.GetInventory() != null)
-                {
-                    ItemNames.Remove(player.GetInventory(), tokenPrefab, 1, -1);
-                }
-
-                _hasOriginal = false; // New look is now the original
+                _awaitUntil = 0f;
+                RevertPreview();
+                Publish(message.Substring(6));
+                return;
             }
+
+            if (!message.StartsWith("ok:", StringComparison.Ordinal)) return;
+
+            // Only the grant we are waiting for counts, and only once: a repeated or
+            // unsolicited "ok" must never charge or apply anything.
+            if (!Awaiting) return;
+            _awaitUntil = 0f;
+
+            string body = message.Substring(3);
+            int bar = body.IndexOf('|');
+            if (bar <= 0) return;
+            string token = body.Substring(0, bar);
+            var choice = Barber.ParsePayload(body.Substring(bar + 1));
+
+            var player = Player.m_localPlayer;
+            var inv = player != null ? player.GetInventory() : null;
+            if (inv == null || ItemNames.Count(inv, Barber.TokenPrefab, -1) < 1)
+            {
+                RevertPreview();
+                Publish("Você não tem uma Ficha do Barbeiro.");
+                return;
+            }
+
+            ItemNames.Remove(inv, Barber.TokenPrefab, 1, -1);
+            ApplyLook(player, choice.Hair, choice.Beard, choice.HairColor, choice.SkinColor);
+            _hasOriginal = false; // the new look is now the one to go back to
+            _lastPreview = "";
+            Publish("Visual atualizado!");
+
+            if (_npc != null) _npc.ReportDone(token);
+        }
+
+        private static void Publish(string text)
+        {
+            Barber.LastResult = text;
+            Barber.ResultRevision++;
+        }
+
+        private static void ApplyLook(Player player, string hair, string beard, string hairColor, string skinColor)
+        {
+            if (hair.Length > 0) player.SetHair(hair);
+            if (beard.Length > 0) player.SetBeard(beard);
+            if (Barber.TryParseColor(hairColor, out var hc)) player.SetHairColor(hc);
+            if (Barber.AllowSkin && Barber.TryParseColor(skinColor, out var sc)) player.SetSkinColor(sc);
         }
 
         internal static void SaveOriginal()
         {
             var player = Player.m_localPlayer;
-            if (player == null || player.m_visEquipment == null) return;
-
-            _originalHair = player.m_visEquipment.m_hairItem;
-            _originalBeard = player.m_visEquipment.m_beardItem;
-            _originalHairColor = player.m_visEquipment.m_hairColor;
-            _originalSkinColor = player.m_visEquipment.m_skinColor;
+            if (player == null) return;
+            _origHair = player.GetHair();
+            _origBeard = player.GetBeard();
+            _origHairColor = player.m_hairColor;
+            _origSkinColor = player.m_skinColor;
             _hasOriginal = true;
         }
 
         internal static void RevertPreview()
         {
+            _lastPreview = "";
             if (!_hasOriginal) return;
             var player = Player.m_localPlayer;
-            if (player == null || player.m_visEquipment == null) return;
-
-            player.m_visEquipment.SetHairItem(_originalHair);
-            player.m_visEquipment.SetBeardItem(_originalBeard);
-            player.m_visEquipment.SetHairColor(_originalHairColor);
-            player.m_visEquipment.SetSkinColor(_originalSkinColor);
+            if (player == null) return;
+            player.SetHair(_origHair);
+            player.SetBeard(_origBeard);
+            player.SetHairColor(_origHairColor);
+            player.SetSkinColor(_origSkinColor);
+            _hasOriginal = false;
         }
 
-        internal static void ApplyPreview(string hair, string beard, Vector3 hairColor, Vector3 skinColor)
+        internal static void ApplyPreview(string hair, string beard, string hairColor, string skinColor)
         {
             var player = Player.m_localPlayer;
-            if (player == null || player.m_visEquipment == null) return;
+            if (player == null) return;
+
+            string key = hair + ";" + beard + ";" + hairColor + ";" + skinColor;
+            if (key == _lastPreview) return; // setters rebuild the equipment: only on change
+            _lastPreview = key;
 
             if (!_hasOriginal) SaveOriginal();
-
-            if (!string.IsNullOrEmpty(hair))
-                player.m_visEquipment.SetHairItem(VisualHash(hair));
-            if (!string.IsNullOrEmpty(beard))
-                player.m_visEquipment.SetBeardItem(VisualHash(beard));
-            if (hairColor != Vector3.zero)
-                player.m_visEquipment.SetHairColor(hairColor);
-            if (skinColor != Vector3.zero)
-                player.m_visEquipment.SetSkinColor(skinColor);
+            ApplyLook(player, hair, beard, hairColor, skinColor);
         }
     }
 }
