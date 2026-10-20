@@ -73,6 +73,7 @@ namespace NpcValheim.Npc
 
             if (target.Length == 0 || target.Length > 128) return;
             CreditMatching(sender, playerId, kind, target, count);
+            Season.OnEvent(sender, playerId, kind, target, count);
         }
 
         private static void OnTalk(long sender, ZDOID npcId)
@@ -89,6 +90,7 @@ namespace NpcValheim.Npc
             long playerId = GameApi.GetPlayerId(sender);
             if (playerId == 0L) return;
             CreditMatching(sender, playerId, QuestObjectiveKind.Talk, npc.GetHoverName(), 1);
+            Season.OnEvent(sender, playerId, QuestObjectiveKind.Talk, npc.GetHoverName(), 1);
         }
 
         private static void CreditMatching(long sender, long playerId, QuestObjectiveKind kind, string target, int count)
