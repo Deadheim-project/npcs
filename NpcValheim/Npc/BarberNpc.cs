@@ -29,18 +29,20 @@ namespace NpcValheim.Npc
         internal bool RequestApply(string hair, string beard, string hairColor, string skinColor) =>
             InvokeServiceAction(Barber.ActionApply, Barber.ApplyPayload(hair, beard, hairColor, skinColor));
 
+        internal bool ReportDone(string token) => InvokeServiceAction(Barber.ActionDone, token ?? "");
+
         internal override bool DispatchServiceAction(long sender, string action, string payload)
         {
-            if ((action == Barber.ActionStatus || action == Barber.ActionApply)
-                && !(Plugin.BarberEnabled?.Value ?? false))
-                return true;
             switch (action)
             {
                 case Barber.ActionStatus:
-                    Barber.ServeStatus(sender);
+                    Barber.ServeStatus(sender, Nview, transform);
                     return true;
                 case Barber.ActionApply:
-                    Barber.ServeApply(sender, payload ?? "", $"'{GetHoverName()}'");
+                    Barber.ServeApply(sender, payload ?? "", Nview, transform, $"'{GetHoverName()}'");
+                    return true;
+                case Barber.ActionDone:
+                    Barber.ServeDone(sender, payload ?? "", $"'{GetHoverName()}'");
                     return true;
                 default:
                     return base.DispatchServiceAction(sender, action, payload);

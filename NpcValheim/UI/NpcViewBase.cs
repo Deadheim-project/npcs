@@ -43,7 +43,7 @@ namespace NpcValheim.UI
                 Root.gameObject.SetActive(visible);
         }
 
-        public void Destroy()
+        public virtual void Destroy()
         {
             if (Root != null) Object.Destroy(Root.gameObject);
             Root = null;

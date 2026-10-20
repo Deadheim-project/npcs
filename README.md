@@ -723,6 +723,39 @@ paga depois de aplicar, então um cliente modificado pode não pagar.
 Sem um Deadheim com a `TreinadorApi`, o NPC continua dando aulas e diz que os buffs pedem um
 Deadheim atualizado.
 
+## Barbeiro (cabelo, barba e cor por uma FichaBarbeiro)
+
+NPC colocável **Barbeiro** (`BarberNpc`, prefab `NpcValheim_Barber`, ícone provisório `barber.png`
+copiado do Treinador). **Desligado por padrão.** Só visual, sem vantagem de combate.
+
+**Como ligar** (cfg do NpcValheim, seção `[Barber]`, sincronizada com os clientes):
+1. `Enabled = true` (enquanto `false` o servidor ignora o catálogo e os pedidos).
+2. `TokenPrefab = FichaBarbeiro` (item do Deadheim, hoje FORA da loja de Deadcoins: devolver à loja
+   é decisão separada).
+3. `HairColors` / `SkinColors`: paleta `r,g,b|r,g,b` (canais de 0 a 1, ex.: `0.9,0.7,0.4|0.2,0.1,0.05`).
+   Com paleta, o servidor só aceita cor dela (tolerância 0,02 por canal) e a tela encaixa o slider
+   na cor mais próxima; vazia = cor livre (ainda 0..1). `AllowSkin = false` por padrão.
+4. Admin coloca o NPC com o martelo (peça "Barbeiro"), como os outros NPCs de serviço.
+
+**Fluxo e autoridade.** O servidor só AUTORIZA (NPC ligado, jogador a até 6 m, limite de
+frequência, cabelo/barba na lista do `ObjectDB`, cor na paleta) e devolve uma autorização de uso
+único (`ok:token|escolha`, 20 s, uma por jogador; um novo pedido substitui a anterior). Quem cobra
+e grava é o cliente dono: ele confere a ficha, remove **uma**, aplica o visual e avisa o servidor
+(`barber_done`, só para o log). Ele só aceita o "ok" se está esperando resposta, então um "ok"
+repetido não cobra duas vezes, e o botão fica travado enquanto espera. O servidor dedicado não
+enxerga o inventário do jogador, por isso a ficha não é conferida lá (fraude custa só cosmético).
+
+**Persistência (spike resolvido lendo o assembly).** O visual do jogador vive em `Humanoid.m_hairItem`
+/ `m_beardItem` e `Player.m_hairColor` / `m_skinColor`; `Player.Save` grava esses campos e
+`Player.SetupVisEquipment` os copia para o `VisEquipment` a cada atualização. Mexer só no
+`VisEquipment` (como a versão 0.1.74 fazia) seria desfeito no quadro seguinte e nunca salvo; agora
+tudo passa por `Player.SetHair/SetBeard/SetHairColor/SetSkinColor`. Não precisa de `m_customData`.
+Falta confirmar no jogo (relogar).
+
+**Testes pendentes no jogo:** trocar com ficha (aplica, ficha some); cancelar (volta, ficha fica);
+sem ficha (bloqueia); relogar (persiste); segundo cliente vê; spam de clique (cobra uma vez);
+longe do NPC (recusa); cor fora da paleta (recusa); `Enabled=false` (nada acontece).
+
 ## Interface: Unity UI com os assets do próprio Valheim
 
 O painel era IMGUI (`OnGUI`) e agora é Unity UI (uGUI), construído em
