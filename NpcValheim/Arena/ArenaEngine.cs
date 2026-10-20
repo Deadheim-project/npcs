@@ -15,6 +15,8 @@ namespace NpcValheim.Arena
         double Now { get; }
         DateTime UtcNow { get; }
         bool IsOnline(long playerId);
+        /// <summary>Whether the character is a VIP right now (only used for the win celebration).</summary>
+        bool IsVip(long playerId);
         /// <summary>Exact name (case-insensitive) of someone online, or 0.</summary>
         long FindOnline(string name);
         /// <summary>The name of someone online, or null.</summary>
@@ -1347,6 +1349,8 @@ namespace NpcValheim.Arena
                         : winner == seat.Side ? "Vitória!" : "Derrota.", alert: true);
             }
 
+            Celebrate(match, winner);
+
             _db.SaveMatch(new ArenaMatchRecord
             {
                 Id = match.Id,
@@ -1359,6 +1363,20 @@ namespace NpcValheim.Arena
             });
             _host.Log($"Arena: partida #{match.Id} terminou: {(winner == 0 ? "empate (tempo)" : "vitória do " + ArenaSide.Name(winner))}");
             SendMatchState(match);
+        }
+
+        /// <summary>Aesir 34: once the match is over, one VIP on the winning side gets a cosmetic
+        /// celebration that everyone still in the arena sees. Nothing is paid and nothing in the
+        /// fight changes; it never runs while the match is live.</summary>
+        private void Celebrate(ArenaMatch match, int winner)
+        {
+            if (!_t.VipCelebration || winner == ArenaSide.None) return;
+            var star = match.Seats.FirstOrDefault(s => s.Side == winner && s.Present && _host.IsVip(s.PlayerId));
+            if (star == null) return;
+            string payload = Record(L(match.Id), L(star.PlayerId), star.Name, F(_t.CelebrationSeconds));
+            foreach (var seat in match.Seats.Where(s => s.Present))
+                _host.Send(seat.PlayerId, ArenaWire.Celebrate, payload);
+            _host.Log($"Arena: partida #{match.Id}: comemoracao VIP de {star.Name}");
         }
 
         private void SettleRated(ArenaMatch match, int winner)

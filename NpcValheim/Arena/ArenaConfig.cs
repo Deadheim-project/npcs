@@ -17,6 +17,8 @@ namespace NpcValheim.Arena
         internal static ConfigEntry<bool> Enabled;
         internal static ConfigEntry<string> Brackets;
         internal static ConfigEntry<bool> Skirmish;
+        internal static ConfigEntry<bool> VipCelebration;
+        internal static ConfigEntry<float> CelebrationSeconds;
         internal static ConfigEntry<bool> Solo;
         internal static ConfigEntry<KeyCode> PanelKey;
 
@@ -83,6 +85,10 @@ namespace NpcValheim.Arena
                 "O rating 1v1 e' dele. Liga o 1v1 mesmo que Brackets nao tenha o 1.");
             Skirmish = S(config, general, "Skirmish", true,
                 "Escaramuca: fila sem time e sem rating, sozinho ou em grupo.");
+            VipCelebration = S(config, general, "VipCelebration", true,
+                "Aesir 34: quando um VIP vence a partida, os presentes veem uma comemoracao so visual sobre ele (particulas, texto e emote). Sem premio e sem efeito no combate.");
+            CelebrationSeconds = S(config, general, "CelebrationSeconds", 6f,
+                "Duracao da comemoracao do VIP, em segundos (1 a 10).");
             PanelKey = config.Bind(general, "PanelKey", KeyCode.H,
                 "Tecla que abre o painel da Arena (convites, fila, times, ranking). Preferencia de cada jogador, nao sincroniza.");
 
@@ -230,6 +236,8 @@ namespace NpcValheim.Arena
                 Brackets = ArenaSettingsParser.ParseBrackets(Brackets.Value, problems),
                 Solo = Solo.Value,
                 Skirmish = Skirmish.Value,
+                VipCelebration = VipCelebration.Value,
+                CelebrationSeconds = Mathf.Clamp(CelebrationSeconds.Value, 1f, 10f),
                 CharterCost = ArenaSettingsParser.ParseSizeMap(CharterCost.Value, "CharterCost", problems),
                 SignaturesRequired = SignaturesRequired.Value,
                 StartRating = Mathf.Max(0, StartRating.Value),

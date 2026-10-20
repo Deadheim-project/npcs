@@ -169,6 +169,10 @@ namespace NpcValheim.Arena
                     ArenaNet.Request(ActGroupConfirm, Str(f, 0) + "\n" + (ok ? "1" : "0"));
                     break;
 
+                case ArenaWire.Celebrate:
+                    ArenaCelebration.Start(f);
+                    break;
+
                 case ArenaWire.Ladder:
                     ReadLadder(payload);
                     break;

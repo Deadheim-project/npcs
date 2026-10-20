@@ -24,6 +24,7 @@ namespace NpcValheim.Arena
         internal const string Confirm = "confirm";
         internal const string Ladder = "ladder";
         internal const string Feed = "feed";
+        internal const string Celebrate = "celebrate";
 
         // client -> server actions
         internal const string ActData = "data";

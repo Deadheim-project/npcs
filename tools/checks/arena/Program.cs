@@ -37,6 +37,8 @@ class Program
 
         public double Now => T;
         public DateTime UtcNow => Utc;
+        public readonly HashSet<long> Vips = new HashSet<long>();
+        public bool IsVip(long playerId) => Vips.Contains(playerId);
         public bool IsOnline(long playerId) => Online.ContainsKey(playerId);
         public string OnlineName(long playerId) => Online.TryGetValue(playerId, out var n) ? n : null;
         public long FindOnline(string name) => Online.FirstOrDefault(kv => string.Equals(kv.Value, name, StringComparison.OrdinalIgnoreCase)).Key;

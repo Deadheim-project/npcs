@@ -353,6 +353,9 @@ namespace NpcValheim.Arena
 
             public bool IsOnline(long playerId) => _online.ContainsKey(playerId);
 
+            public bool IsVip(long playerId) =>
+                _online.TryGetValue(playerId, out var p) && UI.VipShopShortcut.SenderIsVip(p.Peer);
+
             public string OnlineName(long playerId) => _online.TryGetValue(playerId, out var p) ? p.Name : null;
 
             public long FindOnline(string name)

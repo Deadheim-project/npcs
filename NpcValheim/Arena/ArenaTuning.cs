@@ -95,6 +95,9 @@ namespace NpcValheim.Arena
         /// one-person team for them behind the scenes. WoW never had it.</summary>
         public bool Solo = true;
         public bool Skirmish = true;
+        /// <summary>Aesir 34: a visual-only celebration over a VIP who wins, sent after the match ended.</summary>
+        public bool VipCelebration = true;
+        public float CelebrationSeconds = 6f;
 
         // Arena Organizer -- ArenaTeam.CharterCost.* (80/120/200 gold) and PetitionsHandler.
         public Dictionary<int, int> CharterCost = new Dictionary<int, int> { { 2, 80 }, { 3, 120 }, { 5, 200 } };
