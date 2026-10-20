@@ -163,6 +163,9 @@ namespace NpcValheim.UI
                 case BarberNpc _:
                     AddTab("Barbeiro", new BarberView(), npc, player);
                     break;
+                case SeasonHeraldNpc _:
+                    AddTab("Temporada", new SeasonView(), npc, player);
+                    break;
                 // A marketplace NPC decides for itself which side of the economy it runs. The
                 // auction house and the merchant are different NPCs now, so nobody has to work
                 // out who they are trading with from which tab happens to be open.

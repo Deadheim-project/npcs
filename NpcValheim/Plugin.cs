@@ -89,6 +89,16 @@ namespace NpcValheim
         internal static ConfigEntry<string> BarberSkinColors;
         internal static ConfigEntry<string> BarberHairColors;
         internal static ConfigEntry<bool> BarberAllowSkin;
+        internal static ConfigEntry<bool> SeasonEnabled;
+        internal static ConfigEntry<string> SeasonId;
+        internal static ConfigEntry<string> SeasonName;
+        internal static ConfigEntry<string> SeasonStart;
+        internal static ConfigEntry<string> SeasonEnd;
+        internal static ConfigEntry<int> SeasonPointsPerLevel;
+        internal static ConfigEntry<int> SeasonFreeLevels;
+        internal static ConfigEntry<int> SeasonPrice;
+        internal static ConfigEntry<string> SeasonRewards;
+        internal static ConfigEntry<string> SeasonChallenges;
         internal static ConfigEntry<UnityEngine.KeyCode> QuestJournalKey;
         internal static ConfigEntry<UnityEngine.KeyCode> VipShopKey;
         internal static ConfigEntry<bool> ShowQuestButton;
@@ -251,6 +261,28 @@ namespace NpcValheim
             BarberAllowSkin = Config.Bind(barber, "AllowSkin", false,
                 "Permite mudança de cor de pele. Falso por padrão (evita disfarce extremo).");
 
+            // The Season Herald (season pass). The server decides everything, so none of this is synced.
+            const string season = "Season";
+            SeasonEnabled = Config.Bind(season, "Enabled", false,
+                "Liga o passe de temporada. Desligado, o Arauto da Temporada não mostra nada e nenhum ponto é contado.");
+            SeasonId = Config.Bind(season, "SeasonId", "t1",
+                "Identificador da temporada. Trocar o id começa uma temporada nova do zero (a antiga fica guardada).");
+            SeasonName = Config.Bind(season, "Name", "Temporada 1", "Nome mostrado na tela do Arauto.");
+            SeasonStart = Config.Bind(season, "Start", "2026-11-01",
+                "Primeiro dia (aaaa-mm-dd, UTC). A semana 1 começa neste dia.");
+            SeasonEnd = Config.Bind(season, "End", "2026-11-29",
+                "Dia em que a temporada acaba (aaaa-mm-dd, UTC; este dia já não conta). Depois disso o progresso congela.");
+            SeasonPointsPerLevel = Config.Bind(season, "PointsPerLevel", 90,
+                "Pontos por nível (10 níveis). Com 3 desafios de 80 pontos por semana, 90 fecha os 10 níveis em ~4 semanas.");
+            SeasonFreeLevels = Config.Bind(season, "FreeLevels", 3, "Quantos dos primeiros níveis são grátis.");
+            SeasonPrice = Config.Bind(season, "Price", 500,
+                "Deadcoins para liberar a trilha paga (retroativo: o que já foi ganho em pontos é entregue na hora).");
+            SeasonRewards = Config.Bind(season, "Rewards", Npc.SeasonCatalog.DefaultRewards,
+                "nível=chave do registro de cosméticos do Deadheim, separados por |. Só cosméticos: nunca item de combate.");
+            SeasonChallenges = Config.Bind(season, "Challenges", Npc.SeasonCatalog.DefaultChallenges,
+                "Pool de desafios semanais, separados por |: id;tipo;alvo;quantidade;pontos;texto. Tipo: Kill, Gather ou Talk. " +
+                "Alvo: prefab, 'Prefixo*' ou '*' (qualquer). Três deles, sorteados por semana, valem para todos. Nada de PvP.");
+
             // Server-authoritative entries. The Quests/VIP keys and HUD positions are left out
             // on purpose: they are each player's own preferences.
             ConfigSync.AddConfigEntry(TeleportCostItem).SynchronizedConfig = true;
@@ -304,6 +336,7 @@ namespace NpcValheim
             MailDatabase.Init(Path.Combine(Path.GetDirectoryName(dbPath)!, "mail.db"));
             MarketDatabase.FlushOutbox();
             QuestDatabase.Init(Path.Combine(Path.GetDirectoryName(dbPath)!, "quests.db"));
+            SeasonDatabase.Init(Path.Combine(Path.GetDirectoryName(dbPath)!, "season.db"));
 
 
             // Before anything reads the quests folder, so the shipped content is already there
@@ -346,6 +379,7 @@ namespace NpcValheim
             MarketDatabase.Shutdown();
             MailDatabase.Shutdown();
             QuestDatabase.Shutdown();
+            SeasonDatabase.Shutdown();
         }
     }
 }
