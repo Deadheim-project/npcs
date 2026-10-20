@@ -46,7 +46,12 @@ namespace NpcValheim.Npc
         internal const string DefaultItems =
             "prefab=PortalToken;amount=1;price=250|" +
             "prefab=FichaFundador;amount=1;price=200|" +
-            "prefab=FichaPet;amount=1;price=150|" +
+            "prefab=Pet_galinha;amount=1;price=150|" +
+            "prefab=Pet_pintinho;amount=1;price=150|" +
+            "prefab=Pet_leitao;amount=1;price=150|" +
+            "prefab=Pet_wolf_cub;amount=1;price=150|" +
+            "prefab=Pet_lox_cub;amount=1;price=150|" +
+            "prefab=Pet_corvo;amount=1;price=150|" +
             "prefab=FichaBatizar;amount=1;price=800|" +
             "prefab=FichaBrasao;amount=1;price=1000";
 
