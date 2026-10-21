@@ -135,9 +135,19 @@ namespace NpcValheim.Npc
         /// </summary>
         private void Anchor()
         {
-            if (GetComponent<Rigidbody>() == null) return;
+            var body = GetComponent<Rigidbody>();
+            if (body == null) return;
+
+            // Frozen from the start, not once the ground has been found: finding it can take
+            // seconds (see FreezeOnceSettled), and a free body would spend them sliding or
+            // falling through a floor that has not loaded yet.
+            body.constraints = RigidbodyConstraints.FreezeAll;
             StartCoroutine(FreezeOnceSettled());
         }
+
+        /// <summary>How long an NPC waits for the objects around him before giving up on
+        /// correcting his height and staying exactly where the ZDO put him.</summary>
+        private const float AreaWaitSeconds = 20f;
 
         /// <summary>
         /// Puts the NPC on the ground and pins it there.
@@ -154,13 +164,25 @@ namespace NpcValheim.Npc
         /// </summary>
         private System.Collections.IEnumerator FreezeOnceSettled()
         {
-            // A frame first: the zone this NPC sits in may still be loading, and terrain that
-            // does not exist yet cannot be measured.
             yield return null;
 
             var body = GetComponent<Rigidbody>();
             var character = GetComponent<Character>();
             if (body == null) yield break;
+
+            // The floor of a house is a piece like any other, and pieces keep arriving for a
+            // while after the zone itself has loaded. Measured before they exist, the ray
+            // passes through where the floor will be. So wait until every object around the
+            // NPC has been created; a peer that never loads the area -- the dedicated server
+            // holding an NPC far from anything it simulates -- gives up and moves nothing.
+            float giveUp = Time.unscaledTime + AreaWaitSeconds;
+            while (ZNetScene.instance != null && !ZNetScene.instance.IsAreaReady(transform.position))
+            {
+                if (Time.unscaledTime >= giveUp) yield break;
+                yield return new WaitForSecondsRealtime(0.25f);
+            }
+
+            body.constraints = RigidbodyConstraints.FreezeAll;
 
             var before = transform.position;
             // A test-world NPC stands on a floor in the sky. The terrain lookup would find the
@@ -168,43 +190,56 @@ namespace NpcValheim.Npc
             if (!Testing.TestWorld.IsFloating(Nview) && TryFindGround(before, out float groundY))
                 transform.position = new Vector3(before.x, groundY, before.z);
 
-            body.constraints = RigidbodyConstraints.FreezeAll;
-
             Plugin.Log.LogInfo($"NpcValheim: '{GetNpcName()}' anchored y {before.y:0.00} -> " +
                                $"{transform.position.y:0.00} (gravity={body.useGravity} " +
                                $"grounded={character?.IsOnGround()})");
         }
 
+        /// <summary>How far above the feet the ground ray starts, which is also the most the
+        /// NPC can ever be lifted: enough to step out of a floor he sank into, never enough
+        /// to reach a roof, a beam or the floor above.</summary>
+        private const float GroundStepUp = 0.5f;
+
+        /// <summary>How far below the feet a surface may be and still count as his. Less than
+        /// a wall's 2 m, so an upper-storey NPC can never drop to the storey below.</summary>
+        private const float GroundMaxDrop = 1.5f;
+
         /// <summary>
-        /// Surface height under a point, or false when it cannot be determined.
+        /// Height of the surface the NPC stands on, or false to leave him where he is.
         ///
-        /// Asks the game's own terrain first -- that is authoritative and works even where
-        /// nothing has a collider yet -- and falls back to a downward ray so an NPC placed on
-        /// a floor, a roof or a ship still lands on it rather than sinking to the terrain
-        /// underneath. Casting from well above the feet, because a ray started inside the
-        /// ground reports nothing.
+        /// Only the space right around the feet is searched. It used to take the higher of a
+        /// downward ray and ZoneSystem.GetSolidHeight -- read as "the terrain", but it is not:
+        /// it casts from 1000 m up against pieces as well, so it answers with the TOP of
+        /// whatever is built there. Every NPC placed inside a house was lifted onto its roof
+        /// the next time a player loaded him, and the owning peer saved that for good.
         /// </summary>
         private static bool TryFindGround(Vector3 position, out float groundY)
         {
             groundY = position.y;
-            bool found = false;
-
-            if (ZoneSystem.instance != null &&
-                ZoneSystem.instance.GetSolidHeight(position, out float terrain) && terrain > -1000f)
-            {
-                groundY = terrain;
-                found = true;
-            }
 
             int solid = LayerMask.GetMask("terrain", "static_solid", "Default", "piece", "vehicle");
-            if (Physics.Raycast(position + Vector3.up * 3f, Vector3.down, out var hit, 20f, solid))
+            if (Physics.Raycast(position + Vector3.up * GroundStepUp, Vector3.down, out var hit,
+                    GroundStepUp + GroundMaxDrop, solid, QueryTriggerInteraction.Ignore))
             {
-                // Whichever surface is higher is the one being stood on.
-                if (!found || hit.point.y > groundY) groundY = hit.point.y;
-                found = true;
+                groundY = hit.point.y;
+                return true;
             }
 
-            return found;
+            // Nothing within reach. The one case still worth correcting is an NPC buried in the
+            // terrain, which a ray started under the surface cannot see. GetGroundHeight reads
+            // the terrain alone, so this can only ever bring him up to the ground, not onto a
+            // building.
+            if (ZoneSystem.instance != null)
+            {
+                float terrain = ZoneSystem.instance.GetGroundHeight(position);
+                if (terrain > position.y)
+                {
+                    groundY = terrain;
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         protected virtual void Update()
@@ -497,6 +532,9 @@ namespace NpcValheim.Npc
                     return true;
                 case "RPC_SetBodyPrefab" when arguments.Length == 1 && arguments[0] is string bodyPrefab:
                     RPC_SetBodyPrefab(sender, bodyPrefab);
+                    return true;
+                case "RPC_MoveTo" when arguments.Length == 1 && arguments[0] is Vector3 target:
+                    RPC_MoveTo(sender, target);
                     return true;
                 case "RPC_RequestTemplateIndex" when arguments.Length == 0:
                     RPC_RequestTemplateIndex(sender);
@@ -896,6 +934,46 @@ namespace NpcValheim.Npc
             zdo.Set(ZdoKeys.Scale, scale);
             PublishAppearance(zdo, "scale");
             PersistProfileSnapshot();
+        }
+
+        // ----- Moving (admin) -----
+
+        /// <summary>How far one move may carry an NPC. Enough to bring one down from a roof
+        /// or across a room; anything further is far more likely a mistyped name than intent.</summary>
+        public const float MaxMoveDistance = 64f;
+
+        /// <summary>Puts this NPC at `target`, keeping the way he faces. See NpcMoveCommand.</summary>
+        public void RequestMoveTo(Vector3 target)
+        {
+            if (Nview == null || !Nview.IsValid() || !CanLocalPlayerAdminister()) return;
+            InvokeAuthoritativeRpc("RPC_MoveTo", target);
+        }
+
+        private void RPC_MoveTo(long sender, Vector3 target)
+        {
+            if (!CanAdminister(sender)) return;
+            var zdo = Nview.GetZDO();
+            var from = zdo.GetPosition();
+            if (float.IsNaN(target.x) || float.IsInfinity(target.x) ||
+                float.IsNaN(target.y) || float.IsInfinity(target.y) ||
+                float.IsNaN(target.z) || float.IsInfinity(target.z)) return;
+            if (Vector3.Distance(from, target) > MaxMoveDistance)
+            {
+                ServiceNpcAuthority.SendStatus(sender, $"{GetNpcName()} está longe demais. Chegue mais perto.");
+                return;
+            }
+
+            // The ZDO is the position everyone else loads; the transform and body are this
+            // instance's copy, which the owner's ZSyncTransform would otherwise write straight
+            // back over the ZDO. Clients that already have him snap to it through their own
+            // ZSyncTransform.
+            transform.position = target;
+            var body = GetComponent<Rigidbody>();
+            if (body != null) body.position = target;
+            zdo.SetPosition(target);
+
+            ServiceNpcAuthority.SendStatus(sender, $"{GetNpcName()} trazido até você.");
+            Plugin.Log.LogInfo($"NpcValheim: admin peer {sender} moved '{GetNpcName()}' {from} -> {target}");
         }
 
         private void PublishAppearance(ZDO zdo, string source)
