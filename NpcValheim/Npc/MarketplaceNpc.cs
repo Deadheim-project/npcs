@@ -32,6 +32,11 @@ namespace NpcValheim.Npc
         public int Gold;
         public int Deadcoins;
         public int WeeklyLimit;
+
+        /// <summary>Units handed over per sale: Gold and Deadcoins are the price of one lot,
+        /// not of one unit, so cheap goods can go for less than a coin each (50 Wood for 10).
+        /// 1 is the old per-unit behaviour. WeeklyLimit still counts units.</summary>
+        public int Lot = 1;
     }
 
     public class MarketplaceNpc : NpcBase
@@ -245,6 +250,25 @@ namespace NpcValheim.Npc
         }
 
         public int GetBuyPrice(string itemName) => LookUp(GetBuyPrices(), itemName);
+
+        /// <summary>The largest lot an admin can set. A lot is one click's worth of goods, and
+        /// past a few stacks it stops being a price and starts being a bulk order.</summary>
+        internal const int MaxLot = 1000;
+
+        /// <summary>Prefab name -> units the merchant takes per payment, for buy entries sold
+        /// in lots. An item missing here is bought one unit at a time.</summary>
+        public Dictionary<string, int> GetBuyLots()
+        {
+            if (Nview == null || !Nview.IsValid()) return new Dictionary<string, int>();
+            return ParseLotTable(Nview.GetZDO().GetString(KeyBuyPrices, ""));
+        }
+
+        public int GetBuyLot(string itemName) =>
+            !string.IsNullOrEmpty(itemName) && GetBuyLots().TryGetValue(itemName, out int lot) ? lot : 1;
+
+        /// <summary>" por 50 un" for a lot, "/un" for a single unit: what follows a price on
+        /// every label and status message, so the two read the same everywhere.</summary>
+        internal static string PerLot(int lot) => lot > 1 ? $" por {lot} un" : "/un";
         public int GetSellPrice(string itemName) => LookUp(GetSellPrices(), itemName);
 
         /// <summary>This item's sell offer, or null when the merchant does not sell it.</summary>
@@ -268,17 +292,40 @@ namespace NpcValheim.Npc
             foreach (var line in packed.Split('\n'))
             {
                 var p = line.Split(';');
-                if (p.Length != 2 || !int.TryParse(p[1], out int price) || price <= 0) continue;
+                if ((p.Length != 2 && p.Length != 3) || !int.TryParse(p[1], out int price) || price <= 0) continue;
+                // A lot that does not parse drops the whole entry rather than falling back to
+                // one unit: that fallback would pay the lot's price for every single item.
+                if (p.Length == 3 && !TryLot(p[2], out _)) continue;
                 result[p[0]] = price;
             }
             return result;
         }
 
+        /// <summary>The buy side's lots: "item;price;lot" lines, the third field written only
+        /// when the lot is above 1 (so a table without lots is byte-for-byte the old one).</summary>
+        private static Dictionary<string, int> ParseLotTable(string packed)
+        {
+            var result = new Dictionary<string, int>();
+            if (string.IsNullOrEmpty(packed)) return result;
+
+            foreach (var line in packed.Split('\n'))
+            {
+                var p = line.Split(';');
+                if (p.Length != 3 || !int.TryParse(p[1], out int price) || price <= 0) continue;
+                if (TryLot(p[2], out int lot) && lot > 1) result[p[0]] = lot;
+            }
+            return result;
+        }
+
+        private static bool TryLot(string text, out int lot) =>
+            int.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out lot) && lot >= 1 && lot <= MaxLot;
+
         /// <summary>
-        /// "item;gold;deadcoins;weeklyLimit" per line (A3) -- the sell side's own format, richer
+        /// "item;gold;deadcoins;weeklyLimit[;lot]" per line (A3) -- the sell side's own format, richer
         /// than the buy side's "item;price" because a sale can be priced in either currency and
         /// capped per week. gold=0 means not sold for Coins; deadcoins=0 means not sold for
-        /// Deadcoins; weeklyLimit=0 means no cap. An entry with both prices at 0 is dropped,
+        /// Deadcoins; weeklyLimit=0 means no cap; lot is written only when above 1, and both
+        /// prices are per lot. An entry with both prices at 0 is dropped,
         /// same rule as every other price list here: nothing is ever free by omission.
         /// </summary>
         private static Dictionary<string, SellOffer> ParseSellTable(string packed)
@@ -290,15 +337,17 @@ namespace NpcValheim.Npc
             {
                 if (line.Length == 0) continue;
                 var p = line.Split(';');
-                if (p.Length != 4) continue;
+                if (p.Length != 4 && p.Length != 5) continue;
                 string item = p[0];
                 if (string.IsNullOrEmpty(item)) continue;
                 if (!int.TryParse(p[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out int gold) || gold < 0) continue;
                 if (!int.TryParse(p[2], NumberStyles.Integer, CultureInfo.InvariantCulture, out int deadcoins) || deadcoins < 0) continue;
                 if (!int.TryParse(p[3], NumberStyles.Integer, CultureInfo.InvariantCulture, out int weeklyLimit) || weeklyLimit < 0) continue;
+                int lot = 1;
+                if (p.Length == 5 && !TryLot(p[4], out lot)) continue;
                 if (gold <= 0 && deadcoins <= 0) continue;
 
-                result[item] = new SellOffer { ItemName = item, Gold = gold, Deadcoins = deadcoins, WeeklyLimit = weeklyLimit };
+                result[item] = new SellOffer { ItemName = item, Gold = gold, Deadcoins = deadcoins, WeeklyLimit = weeklyLimit, Lot = lot };
             }
             return result;
         }
@@ -315,13 +364,14 @@ namespace NpcValheim.Npc
                 sb.Append(o.ItemName).Append(';').Append(o.Gold.ToString(CultureInfo.InvariantCulture)).Append(';')
                   .Append(o.Deadcoins.ToString(CultureInfo.InvariantCulture)).Append(';')
                   .Append(o.WeeklyLimit.ToString(CultureInfo.InvariantCulture));
+                if (o.Lot > 1) sb.Append(';').Append(o.Lot.ToString(CultureInfo.InvariantCulture));
             }
             return sb.ToString();
         }
 
         /// <summary>Admin sets a price. 0 removes the entry. `selling` picks which side of
-        /// the counter it applies to.</summary>
-        public void RequestSetPrice(Player requester, string itemName, int price, bool selling)
+        /// the counter it applies to; `lot` is how many units that price buys or pays for.</summary>
+        public void RequestSetPrice(Player requester, string itemName, int price, bool selling, int lot = 1)
         {
             if (Nview == null || !Nview.IsValid()) return;
             if (!CanLocalPlayerAdminister())
@@ -333,7 +383,12 @@ namespace NpcValheim.Npc
                     "Seu cliente não considera você admin", 0, null);
                 return;
             }
-            InvokeAuthoritativeRpc("RPC_SetPrice", (selling ? "S:" : "B:") + (itemName ?? ""), price);
+            // The lot rides on the tagged name ("S:Wood;50"): ';' can never be part of a prefab
+            // name on this counter (the tables are ';'-separated), and keeping the RPC's shape
+            // means a server without lots refuses the unknown item instead of misreading it.
+            InvokeAuthoritativeRpc("RPC_SetPrice",
+                (selling ? "S:" : "B:") + (itemName ?? "") +
+                (lot > 1 ? ";" + lot.ToString(CultureInfo.InvariantCulture) : ""), price);
         }
 
         /// <summary>Admin, sell side only (A3): the Deadcoins price and/or the weekly limit,
@@ -517,6 +572,17 @@ namespace NpcValheim.Npc
 
             bool selling = tagged[0] == 'S';
             string itemName = tagged.Substring(2);
+            int lot = 1;
+            int lotAt = itemName.IndexOf(';');
+            if (lotAt >= 0)
+            {
+                if (!TryLot(itemName.Substring(lotAt + 1), out lot))
+                {
+                    ServiceNpcAuthority.SendStatus(sender, $"Lote inválido: use de 1 a {MaxLot}.");
+                    return;
+                }
+                itemName = itemName.Substring(0, lotAt);
+            }
             if (ObjectDB.instance?.GetItemPrefab(itemName) == null)
             {
                 ServiceNpcAuthority.SendStatus(sender, $"O servidor não conhece o item '{itemName}'.");
@@ -537,6 +603,7 @@ namespace NpcValheim.Npc
                         {
                             ItemName = itemName, Gold = 0,
                             Deadcoins = existingOffer.Deadcoins, WeeklyLimit = existingOffer.WeeklyLimit,
+                            Lot = existingOffer.Lot,
                         };
                     else
                         offers.Remove(itemName);
@@ -547,6 +614,7 @@ namespace NpcValheim.Npc
                     {
                         ItemName = itemName, Gold = Mathf.Min(price, 1000000),
                         Deadcoins = existingOffer?.Deadcoins ?? 0, WeeklyLimit = existingOffer?.WeeklyLimit ?? 0,
+                        Lot = lot,
                     };
                 }
                 else
@@ -560,20 +628,25 @@ namespace NpcValheim.Npc
             else
             {
                 var prices = GetPriceTable(KeyBuyPrices);
-                if (price <= 0) prices.Remove(itemName);
-                else if (prices.Count < 60 || prices.ContainsKey(itemName)) prices[itemName] = Mathf.Min(price, 1000000);
+                var lots = GetBuyLots();
+                if (price <= 0) { prices.Remove(itemName); lots.Remove(itemName); }
+                else if (prices.Count < 60 || prices.ContainsKey(itemName))
+                {
+                    prices[itemName] = Mathf.Min(price, 1000000);
+                    if (lot > 1) lots[itemName] = lot; else lots.Remove(itemName);
+                }
                 else
                 {
                     ServiceNpcAuthority.SendStatus(sender, "Este lado do balcão já tem 60 itens.");
                     return;
                 }
-                SavePriceTable(KeyBuyPrices, prices);
+                SavePriceTable(KeyBuyPrices, prices, lots);
             }
 
             string side = selling ? "vende" : "compra";
-            Plugin.Log.LogInfo($"NpcValheim: '{GetHoverName()}' {side} {itemName} por {price} (peer {sender})");
+            Plugin.Log.LogInfo($"NpcValheim: '{GetHoverName()}' {side} {itemName} por {price}, lote {lot} (peer {sender})");
             ServiceNpcAuthority.SendStatus(sender, price > 0
-                ? $"O NPC {side} {ItemNames.Display(itemName)} por {price}/un."
+                ? $"O NPC {side} {ItemNames.Display(itemName)} por {price} moedas{PerLot(lot)}."
                 : $"{ItemNames.Display(itemName)} removido do balcão.");
         }
 
@@ -627,19 +700,19 @@ namespace NpcValheim.Npc
             offers[itemName] = new SellOffer
             {
                 ItemName = itemName, Gold = gold, Deadcoins = Mathf.Min(deadcoins, 1000000),
-                WeeklyLimit = Mathf.Min(weeklyLimit, 1000000),
+                WeeklyLimit = Mathf.Min(weeklyLimit, 1000000), Lot = existing?.Lot ?? 1,
             };
             SaveSellTable(offers);
 
             Plugin.Log.LogInfo($"NpcValheim: '{GetHoverName()}' vende {itemName} por {deadcoins} Deadcoins, " +
                                $"limite semanal {weeklyLimit} (peer {sender})");
             ServiceNpcAuthority.SendStatus(sender, deadcoins > 0
-                ? $"{ItemNames.Display(itemName)}: {deadcoins} Deadcoins/un" +
+                ? $"{ItemNames.Display(itemName)}: {deadcoins} Deadcoins{PerLot(existing?.Lot ?? 1)}" +
                   (weeklyLimit > 0 ? $", limite {weeklyLimit}/semana." : ", sem limite semanal.")
                 : $"{ItemNames.Display(itemName)}: Deadcoins desligado" + (weeklyLimit > 0 ? $", limite {weeklyLimit}/semana." : "."));
         }
 
-        private void SavePriceTable(string key, Dictionary<string, int> prices)
+        private void SavePriceTable(string key, Dictionary<string, int> prices, Dictionary<string, int> lots = null)
         {
             var sb = new StringBuilder();
             foreach (var kv in prices)
@@ -647,6 +720,8 @@ namespace NpcValheim.Npc
                 if (string.IsNullOrEmpty(kv.Key) || kv.Key.IndexOf(';') >= 0) continue;
                 if (sb.Length > 0) sb.Append('\n');
                 sb.Append(kv.Key).Append(';').Append(kv.Value.ToString(CultureInfo.InvariantCulture));
+                if (lots != null && lots.TryGetValue(kv.Key, out int lot) && lot > 1)
+                    sb.Append(';').Append(Mathf.Min(lot, MaxLot).ToString(CultureInfo.InvariantCulture));
             }
             string packed = sb.ToString();
             Nview.GetZDO().Set(key, packed);
@@ -712,13 +787,27 @@ namespace NpcValheim.Npc
             if (!int.TryParse(parts[0], out int amount) || !int.TryParse(parts[1], out int paid)) return;
             if (amount <= 0 || amount > 10000 || paid < 0) return;
 
+            // `amount` is in units and the price is per lot, so the purchase closes at a lot
+            // that divides it: the current one first, then any lot the counter showed in the
+            // last minute (an admin can change the lot between a click and this landing, the
+            // same gap ClosingPrice already covers for the price).
             int price = GetSellPrice(itemName);
-            int unitPrice = ClosingPrice(paid, amount, price, ShownSellPrices(itemName));
+            int currentLot = GetSellOffer(itemName)?.Lot ?? 1;
+            int unitPrice = 0, lot = currentLot;
+            foreach (int candidate in SellLotsFor(itemName, currentLot))
+            {
+                if (amount % candidate != 0) continue;
+                unitPrice = ClosingPrice(paid, amount / candidate, candidate == currentLot ? price : 0,
+                    ShownSellPrices(itemName, candidate));
+                if (unitPrice > 0) { lot = candidate; break; }
+            }
+            int lots = amount / lot;
             if (unitPrice <= 0)
             {
                 Plugin.Log.LogWarning(
                     $"NpcValheim: refused {amount}x {itemName} to {playerId}: the client claims {paid} " +
-                    $"and the counter never showed a price that adds up to it (asks {PayoutFor(price, amount)} now)");
+                    $"and the counter never showed a price that adds up to it (asks {PayoutFor(price, amount / currentLot)} " +
+                    $"in lots of {currentLot} now)");
                 ServiceNpcAuthority.SendStatus(sender, price > 0
                     ? "O pagamento não confere com o preço do balcão."
                     : $"{ItemNames.Display(itemName)} não está à venda.");
@@ -776,7 +865,7 @@ namespace NpcValheim.Npc
                     BroadcastMarketDataTo(sender);
                     return;
                 }
-                try { MarketWeeklyLedger.Record(playerId, GameApi.GetPlayerName(sender), week, itemName, amount, $"gold:{PayoutFor(unitPrice, amount)}", Guid.NewGuid().ToString("N")); }
+                try { MarketWeeklyLedger.Record(playerId, GameApi.GetPlayerName(sender), week, itemName, amount, $"gold:{PayoutFor(unitPrice, lots)}", Guid.NewGuid().ToString("N")); }
                 catch (Exception e)
                 {
                     // Coins already left the buyer's bag (the client removed them before this
@@ -792,9 +881,10 @@ namespace NpcValheim.Npc
             Nview.InvokeRPC(sender, "RPC_DeliverItem", itemName, amount);
 
             Plugin.Log.LogInfo(
-                $"NpcValheim: merchant sold {amount}x {itemName} to {playerId} for {PayoutFor(unitPrice, amount)}" +
-                (unitPrice != price ? $" at {unitPrice}/un, a price it showed moments ago (now {price})" : "") +
-                (paid > PayoutFor(unitPrice, amount) ? $"; the client claims {paid}" : ""));
+                $"NpcValheim: merchant sold {amount}x {itemName} to {playerId} for {PayoutFor(unitPrice, lots)}" +
+                (unitPrice != price || lot != currentLot
+                    ? $" at {unitPrice} per {lot}, a price it showed moments ago (now {price} per {currentLot})" : "") +
+                (paid > PayoutFor(unitPrice, lots) ? $"; the client claims {paid}" : ""));
             BroadcastMarketDataTo(sender);
         }
 
@@ -805,24 +895,57 @@ namespace NpcValheim.Npc
 
         private readonly ShownPrices _shownSells = new ShownPrices();
 
+        /// <summary>Every lot size each item was shown with, so a purchase made against a lot
+        /// an admin has just changed can still be matched (see RPC_BuyFromNpc). Never pruned:
+        /// it holds a handful of small numbers per item, and an old lot only matches together
+        /// with a shown price that has not expired.</summary>
+        private readonly Dictionary<string, HashSet<int>> _shownSellLots =
+            new Dictionary<string, HashSet<int>>(StringComparer.Ordinal);
+
+        /// <summary>A shown price is a price for one lot size: kept under its own key, so a
+        /// lot of 50 at 10 never closes a purchase of 10 single units at 10 each. Lot 1 keeps
+        /// the bare item name, exactly what this cache held before lots existed.</summary>
+        private static string ShownKey(string itemName, int lot) => lot > 1 ? itemName + "#" + lot : itemName;
+
         /// <summary>Only the Coins half of a sell table (A3): this cache is for the gold
         /// purchase's grace period, and Deadcoins purchases never go through it.</summary>
         private void RememberShownSells(string packed)
         {
             var gold = new Dictionary<string, int>();
             foreach (var kv in ParseSellTable(packed))
-                if (kv.Value.Gold > 0) gold[kv.Key] = kv.Value.Gold;
+            {
+                if (kv.Value.Gold <= 0) continue;
+                gold[ShownKey(kv.Key, kv.Value.Lot)] = kv.Value.Gold;
+                if (!_shownSellLots.TryGetValue(kv.Key, out var seen))
+                    _shownSellLots[kv.Key] = seen = new HashSet<int>();
+                seen.Add(kv.Value.Lot);
+            }
             _shownSells.Remember(gold, Time.unscaledTime + ShownPriceSeconds);
         }
 
-        /// <summary>Every price for this item a client could be paying right now, besides
-        /// the one on the ZDO: the server's last own write (the ZDO can drift away from it,
-        /// see RestoreIfDrifted) and whatever the counter showed in the last minute.</summary>
-        private List<int> ShownSellPrices(string itemName)
+        /// <summary>The lots a purchase of this item may be closing at: the current one
+        /// first, then every other the counter has shown or the server last wrote.</summary>
+        private List<int> SellLotsFor(string itemName, int currentLot)
         {
-            var shown = _shownSells.For(itemName, Time.unscaledTime);
+            var lots = new List<int> { currentLot };
+            if (_shownSellLots.TryGetValue(itemName ?? "", out var seen))
+                foreach (int seenLot in seen)
+                    if (!lots.Contains(seenLot)) lots.Add(seenLot);
             if (_authoritativeSells != null &&
-                ParseSellTable(_authoritativeSells).TryGetValue(itemName ?? "", out var kept) && kept.Gold > 0)
+                ParseSellTable(_authoritativeSells).TryGetValue(itemName ?? "", out var kept) && !lots.Contains(kept.Lot))
+                lots.Add(kept.Lot);
+            return lots;
+        }
+
+        /// <summary>Every price for one lot of this item a client could be paying right now,
+        /// besides the one on the ZDO: the server's last own write (the ZDO can drift away
+        /// from it, see RestoreIfDrifted) and whatever the counter showed in the last minute.</summary>
+        private List<int> ShownSellPrices(string itemName, int lot)
+        {
+            var shown = _shownSells.For(ShownKey(itemName ?? "", lot), Time.unscaledTime);
+            if (_authoritativeSells != null &&
+                ParseSellTable(_authoritativeSells).TryGetValue(itemName ?? "", out var kept) &&
+                kept.Gold > 0 && kept.Lot == lot)
                 shown.Add(kept.Gold);
             return shown;
         }
@@ -1009,7 +1132,17 @@ namespace NpcValheim.Npc
                 return;
             }
 
-            int payout = PayoutFor(unitPrice, amount);
+            // The price is per lot: the merchant takes whole lots only, and a stack that is not
+            // one goes back untouched rather than being paid for in part.
+            int lot = GetBuyLot(itemName);
+            if (amount % lot != 0)
+            {
+                ReturnItem(sender, itemName, quality, amount, $"O NPC só compra em lotes de {lot}");
+                BroadcastMarketDataTo(sender);
+                return;
+            }
+
+            int payout = PayoutFor(unitPrice, amount / lot);
             if (payout <= 0)
             {
                 Plugin.Log.LogWarning($"NpcValheim: refused an out-of-range sale ({amount}x {itemName} at {unitPrice})");
@@ -1319,13 +1452,18 @@ namespace NpcValheim.Npc
                 TaxPercent = Nview.GetZDO().GetInt(KeyTaxPercent, 0),
                 RequiredBoss = HasShop ? RequiredBoss : "",
             };
+            var buyLots = GetBuyLots();
             foreach (var kv in GetBuyPrices())
-                profile.Marketplace.Buys.Add(new ShopPrice { ItemName = kv.Key, Price = kv.Value });
+                profile.Marketplace.Buys.Add(new ShopPrice
+                {
+                    ItemName = kv.Key, Price = kv.Value,
+                    Lot = buyLots.TryGetValue(kv.Key, out int lot) ? lot : 1,
+                });
             foreach (var kv in GetSellOffers())
                 profile.Marketplace.Sells.Add(new ShopPrice
                 {
                     ItemName = kv.Key, Price = kv.Value.Gold,
-                    Deadcoins = kv.Value.Deadcoins, WeeklyLimit = kv.Value.WeeklyLimit,
+                    Deadcoins = kv.Value.Deadcoins, WeeklyLimit = kv.Value.WeeklyLimit, Lot = kv.Value.Lot,
                 });
             return profile;
         }
@@ -1364,10 +1502,14 @@ namespace NpcValheim.Npc
         {
             if (entries == null || entries.Count == 0) return;
             var prices = new Dictionary<string, int>();
+            var lots = new Dictionary<string, int>();
             foreach (var entry in entries)
-                if (entry != null && !string.IsNullOrEmpty(entry.ItemName) && entry.Price > 0)
-                    prices[entry.ItemName] = entry.Price;
-            SavePriceTable(KeyBuyPrices, prices);
+            {
+                if (entry == null || string.IsNullOrEmpty(entry.ItemName) || entry.Price <= 0) continue;
+                prices[entry.ItemName] = entry.Price;
+                if (entry.Lot > 1) lots[entry.ItemName] = Mathf.Min(entry.Lot, MaxLot);
+            }
+            SavePriceTable(KeyBuyPrices, prices, lots);
         }
 
         /// <summary>A3: a template's sell list carries gold, Deadcoins and the weekly limit
@@ -1387,6 +1529,7 @@ namespace NpcValheim.Npc
                     Gold = Mathf.Max(0, entry.Price),
                     Deadcoins = Mathf.Max(0, entry.Deadcoins),
                     WeeklyLimit = Mathf.Max(0, entry.WeeklyLimit),
+                    Lot = Mathf.Clamp(entry.Lot, 1, MaxLot),
                 };
             }
             SaveSellTable(offers);

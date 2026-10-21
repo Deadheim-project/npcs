@@ -293,7 +293,7 @@ namespace NpcValheim.Persistence
         public string ItemName { get; set; } = "";
         public int Price { get; set; } = 0;
 
-        /// <summary>Sell side only (A3): Deadcoins price per unit, or 0 for not sold that way.
+        /// <summary>Sell side only (A3): Deadcoins price per lot, or 0 for not sold that way.
         /// Ignored for a buy-list entry.</summary>
         public int Deadcoins { get; set; } = 0;
 
@@ -301,5 +301,9 @@ namespace NpcValheim.Persistence
         /// (Monday to Monday, server clock) across every Mercador, 0 for no limit. Counted
         /// regardless of which currency paid for them.</summary>
         public int WeeklyLimit { get; set; } = 0;
+
+        /// <summary>Units the price is for, both sides: 50 with Price 10 is 50 of the item for
+        /// 10 coins. 1 (the default, and what a template without it means) is per unit.</summary>
+        public int Lot { get; set; } = 1;
     }
 }

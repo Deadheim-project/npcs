@@ -99,6 +99,19 @@ namespace NpcValheim.UI
             _seenCatalog = NpcValheim.Npc.Barber.CatalogRevision;
             _seenResult = NpcValheim.Npc.Barber.ResultRevision;
             Barber?.RequestStatus();
+            MovePanelAside();
+        }
+
+        // The window covers the middle of the screen, which is where the character is, and
+        // the preview is the point of this screen. Park it at the left edge (it can still be
+        // dragged by its title bar).
+        private void MovePanelAside()
+        {
+            var panel = Root != null && Root.parent != null ? Root.parent.parent as RectTransform : null;
+            var canvas = panel != null ? panel.GetComponentInParent<Canvas>() : null;
+            if (panel == null || canvas == null) return;
+            float free = ((RectTransform)canvas.transform).rect.width - panel.rect.width;
+            if (free > 0f) panel.anchoredPosition = new Vector2(-free / 2f + 16f, panel.anchoredPosition.y);
         }
 
         public override void Destroy()
@@ -148,7 +161,8 @@ namespace NpcValheim.UI
                 ResetSliders();
                 _hairIndex = _beardIndex = 0;
             }
-            if (!string.IsNullOrEmpty(Status)) _statusLabel.text = Status;
+            if (!NpcValheim.Npc.Barber.Enabled) _statusLabel.text = "O Barbeiro está fechado (desligado na config).";
+            else if (!string.IsNullOrEmpty(Status)) _statusLabel.text = Status;
 
             int tokenCount = Player.GetInventory() != null
                 ? ItemNames.Count(Player.GetInventory(), NpcValheim.Npc.Barber.TokenPrefab, -1) : 0;
@@ -211,10 +225,16 @@ namespace NpcValheim.UI
         private string SelectedBeard() =>
             _beardIndex > 0 && _beardIndex < _availableBeard.Count ? _availableBeard[_beardIndex] : "";
 
-        private Vector3 HairColor() => Snap(new Vector3(_hairR.value, _hairG.value, _hairB.value), _hairPalette);
+        // Untouched sliders mean "keep the current color": snapping them to the palette would
+        // recolor a character whose color is not in it just by opening the window.
+        private static Vector3 Picked(Vector3 raw, Vector3 start, List<Vector3> palette) =>
+            Same(raw, start) ? start : Snap(raw, palette);
+
+        private Vector3 HairColor() =>
+            Picked(new Vector3(_hairR.value, _hairG.value, _hairB.value), _startHairColor, _hairPalette);
 
         private Vector3 SkinColor() => _skinR == null ? _startSkinColor
-            : Snap(new Vector3(_skinR.value, _skinG.value, _skinB.value), _skinPalette);
+            : Picked(new Vector3(_skinR.value, _skinG.value, _skinB.value), _startSkinColor, _skinPalette);
 
         // Colors travel only when they differ from the character's current ones
         private string HairColorText() => Same(HairColor(), _startHairColor) ? "" : Fmt(HairColor());
@@ -243,6 +263,7 @@ namespace NpcValheim.UI
 
         private void OnCancel()
         {
+            if (BarberClient.Awaiting) return; // a grant is in flight; cancelling now would still charge
             BarberClient.RevertPreview();
             ResetSliders();
             _hairIndex = _beardIndex = 0;

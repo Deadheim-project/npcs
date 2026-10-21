@@ -146,7 +146,17 @@ namespace NpcValheim.Npc
                 return;
             }
 
-            int total = MarketplaceNpc.PayoutFor(offer.Deadcoins, amount);
+            // The price is per lot and `amount` is in units, so it has to be whole lots. A lot
+            // changed since the buyer read the row lands here, and nothing has been charged.
+            int lot = Math.Max(1, offer.Lot);
+            if (amount % lot != 0)
+            {
+                Refuse(sender, $"{amount}x is not a whole number of {lot}-unit lots",
+                    $"{ItemNames.Display(item)} agora é vendido em lotes de {lot}. Confira e compre de novo.");
+                return;
+            }
+
+            int total = MarketplaceNpc.PayoutFor(offer.Deadcoins, amount / lot);
             if (total <= 0)
             {
                 Refuse(sender, $"{amount}x at {offer.Deadcoins} is out of range", "Quantidade inválida.");
@@ -155,7 +165,7 @@ namespace NpcValheim.Npc
             if (total != shownPrice)
             {
                 Refuse(sender, $"the buyer saw {shownPrice}, the price is {total}",
-                    $"O preço de {ItemNames.Display(item)} agora é {offer.Deadcoins} Deadcoins/un. Confira e compre de novo.");
+                    $"O preço de {ItemNames.Display(item)} agora é {offer.Deadcoins} Deadcoins{MarketplaceNpc.PerLot(lot)}. Confira e compre de novo.");
                 return;
             }
 

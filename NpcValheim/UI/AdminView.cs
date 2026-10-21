@@ -42,6 +42,7 @@ namespace NpcValheim.UI
 
         private TMP_InputField _buyItem;
         private TMP_InputField _buyPrice;
+        private TMP_InputField _buyLot;
         private TMP_InputField _sellDeadcoins;
         private TMP_InputField _sellWeeklyLimit;
         private TMP_InputField _questName;
@@ -235,13 +236,17 @@ namespace NpcValheim.UI
                     BuildBossLock(column, market);
 
                     // Two lists on one counter: he deals only in what he is told to deal in.
-                    Heading(column, "Balcão (item / preço)");
+                    // The price buys a lot, not a unit: "10 / 50" is 50 Wood for 10 coins. Without
+                    // it the cheapest anything could go for was a coin apiece, and selling bulk
+                    // goods meant pricing them one by one.
+                    Heading(column, "Balcão (item / preço / lote)");
                     var buyRow = Row(column, 40f);
-                    _buyItem = ValheimUi.CreateInputField(buyRow, "", 150f, 38f);
+                    _buyItem = ValheimUi.CreateInputField(buyRow, "", 130f, 38f);
                     Flexible(_buyItem.gameObject);
                     _buyPrice = ValheimUi.CreateInputField(buyRow, "1", 60f, 38f);
-                    var addBuy = ValheimUi.CreateButton(buyRow, "Ele compra", 125f, 38f, 14);
-                    var addSell = ValheimUi.CreateButton(buyRow, "Ele vende", 125f, 38f, 14);
+                    _buyLot = ValheimUi.CreateInputField(buyRow, "1", 55f, 38f);
+                    var addBuy = ValheimUi.CreateButton(buyRow, "Ele compra", 110f, 38f, 14);
+                    var addSell = ValheimUi.CreateButton(buyRow, "Ele vende", 110f, 38f, 14);
                     addBuy.onClick.AddListener(() => SetPrice(market, selling: false));
                     addSell.onClick.AddListener(() => SetPrice(market, selling: true));
 
@@ -250,7 +255,7 @@ namespace NpcValheim.UI
                     // leaves whichever of these an admin does not touch exactly as it was (see
                     // RequestSetSellExtra / RequestSetPrice, which each preserve the other's data).
                     var sellExtraRow = Row(column, 40f);
-                    ValheimUi.CreateLabel(sellExtraRow, "Deadcoins/un", 14, ValheimUi.Muted, TextAlignmentOptions.Left);
+                    ValheimUi.CreateLabel(sellExtraRow, "Deadcoins/lote", 14, ValheimUi.Muted, TextAlignmentOptions.Left);
                     _sellDeadcoins = ValheimUi.CreateInputField(sellExtraRow, "0", 70f, 38f);
                     ValheimUi.CreateLabel(sellExtraRow, "Limite/semana", 14, ValheimUi.Muted, TextAlignmentOptions.Left);
                     _sellWeeklyLimit = ValheimUi.CreateInputField(sellExtraRow, "0", 70f, 38f);
@@ -263,7 +268,8 @@ namespace NpcValheim.UI
                     // searches, matching either the prefab name or the name the player reads, and
                     // picking a result fills it in.
                     Dim(column, "Digite o item acima para buscar; clique num resultado para preencher. " +
-                                "\"Ele vende\" só muda o preço em moedas; \"Definir (venda)\" só muda Deadcoins/limite.");
+                                "Preço e Deadcoins valem por lote (3º campo; 1 = por unidade). " +
+                                "\"Ele vende\" muda o preço em moedas e o lote; \"Definir (venda)\" só muda Deadcoins/limite.");
                     var searchArea = ValheimUi.CreateRect("SearchArea", column);
                     // 70 rather than 150: the boss lock and Deadcoins rows above took the
                     // difference, and the column was already full.
@@ -412,12 +418,17 @@ namespace NpcValheim.UI
                 return;
             }
             if (!int.TryParse(_buyPrice.text, out int price) || price < 0) { Say("Preco invalido."); return; }
+            if (!int.TryParse(_buyLot.text, out int lot) || lot < 1 || lot > MarketplaceNpc.MaxLot)
+            {
+                Say($"Lote invalido: use de 1 a {MarketplaceNpc.MaxLot}.");
+                return;
+            }
 
             // No result message here: only the server knows whether the change took, and it
             // answers with one either way (see MarketplaceNpc.RPC_SetPrice). Printing success
             // straight after the click is how an admin ends up staring at a merchant that
             // "não compra nada" right after being told it does.
-            market.RequestSetPrice(Player, item, price, selling);
+            market.RequestSetPrice(Player, item, price, selling, lot);
             _buyItem.text = "";
             _buySignature = null;
         }
@@ -678,9 +689,12 @@ namespace NpcValheim.UI
             if (_buys == null || !(Npc is MarketplaceNpc market)) return;
 
             var buys = market.GetBuyPrices();
+            var buyLots = market.GetBuyLots();
             var sells = market.GetSellOffers();
-            var signature = string.Join("|", buys.Select(kv => $"B{kv.Key}:{kv.Value}")) + "/" +
-                            string.Join("|", sells.Select(kv => $"S{kv.Key}:{kv.Value.Gold}:{kv.Value.Deadcoins}:{kv.Value.WeeklyLimit}"));
+            var signature = string.Join("|", buys.Select(kv =>
+                                $"B{kv.Key}:{kv.Value}:{(buyLots.TryGetValue(kv.Key, out int lot) ? lot : 1)}")) + "/" +
+                            string.Join("|", sells.Select(kv =>
+                                $"S{kv.Key}:{kv.Value.Gold}:{kv.Value.Deadcoins}:{kv.Value.WeeklyLimit}:{kv.Value.Lot}"));
             if (signature == _buySignature) return;
             _buySignature = signature;
 
@@ -694,7 +708,7 @@ namespace NpcValheim.UI
             }
 
             AddSellRows(market, sells);
-            AddPriceRows(market, buys, selling: false);
+            AddPriceRows(market, buys, buyLots, selling: false);
         }
 
         /// <summary>A3: one row per sell item, both prices and the weekly limit together, with
@@ -710,8 +724,9 @@ namespace NpcValheim.UI
                 _buyRows.Add(row.gameObject);
 
                 ValheimUi.CreateItemIcon(row, item, 34f);
-                string gold = offer.Gold > 0 ? $"{offer.Gold} moedas/un" : "";
-                string dc = offer.Deadcoins > 0 ? $"{offer.Deadcoins} Deadcoins/un" : "";
+                string perLot = MarketplaceNpc.PerLot(offer.Lot);
+                string gold = offer.Gold > 0 ? $"{offer.Gold} moedas{perLot}" : "";
+                string dc = offer.Deadcoins > 0 ? $"{offer.Deadcoins} Deadcoins{perLot}" : "";
                 string price = gold.Length > 0 && dc.Length > 0 ? $"{gold} · {dc}" : gold + dc;
                 string weekly = offer.WeeklyLimit > 0 ? $" · limite {offer.WeeklyLimit}/semana" : "";
                 var label = ValheimUi.CreateLabel(row,
@@ -736,17 +751,18 @@ namespace NpcValheim.UI
             }
         }
 
-        private void AddPriceRows(MarketplaceNpc market, Dictionary<string, int> prices, bool selling)
+        private void AddPriceRows(MarketplaceNpc market, Dictionary<string, int> prices, Dictionary<string, int> lots, bool selling)
         {
             foreach (var kv in prices)
             {
                 var row = Row(_buys, 44f);
                 _buyRows.Add(row.gameObject);
 
+                int lot = lots.TryGetValue(kv.Key, out int found) ? found : 1;
                 ValheimUi.CreateItemIcon(row, kv.Key, 34f);
                 var label = ValheimUi.CreateLabel(row,
                     ItemNames.Display(kv.Key) + "\n<size=11><color=#9a9188>" +
-                    (selling ? "vende" : "compra") + " a " + kv.Value + "/un</color></size>",
+                    (selling ? "vende" : "compra") + " a " + kv.Value + MarketplaceNpc.PerLot(lot) + "</color></size>",
                     15, selling ? ValheimUi.Orange : ValheimUi.Beige, TextAlignmentOptions.Left);
                 Flexible(label.gameObject);
 

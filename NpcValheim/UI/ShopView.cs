@@ -70,8 +70,9 @@ namespace NpcValheim.UI
 
             // "Quantidade" sitting directly under "Suas moedas" read as a control for editing
             // your money -- which is exactly what somebody would fear after the balance bug.
-            // Name what it counts.
-            var amountLabel = ValheimUi.CreateLabel(amountRow, "Itens por operação", 15, ValheimUi.Beige,
+            // Name what it counts: lots, since a price can be for 50 Wood at once (each row
+            // says its own lot; a row without one is a lot of 1).
+            var amountLabel = ValheimUi.CreateLabel(amountRow, "Lotes por operação", 15, ValheimUi.Beige,
                 TextAlignmentOptions.Right);
             ValheimUi.SetWidth(amountLabel.gameObject, 150f);
 
@@ -208,7 +209,7 @@ namespace NpcValheim.UI
 
             var sells = market.GetSellOffers();
             var sellSignature = string.Join("|", sells.Select(kv =>
-                $"{kv.Key}:{kv.Value.Gold}:{kv.Value.Deadcoins}:{kv.Value.WeeklyLimit}:{MarketDeadcoinSale.WeeklyUsedOf(kv.Key)}"));
+                $"{kv.Key}:{kv.Value.Gold}:{kv.Value.Deadcoins}:{kv.Value.WeeklyLimit}:{kv.Value.Lot}:{MarketDeadcoinSale.WeeklyUsedOf(kv.Key)}"));
             if (sellSignature != _sellSignature)
             {
                 _sellSignature = sellSignature;
@@ -218,11 +219,13 @@ namespace NpcValheim.UI
             _sellsEmpty.text = "Este mercador não tem\nnada à venda.";
 
             var buys = market.GetBuyPrices();
-            var buySignature = string.Join("|", buys.Select(kv => $"{kv.Key}:{kv.Value}"));
+            var buyLots = market.GetBuyLots();
+            var buySignature = string.Join("|", buys.Select(kv =>
+                $"{kv.Key}:{kv.Value}:{(buyLots.TryGetValue(kv.Key, out int lot) ? lot : 1)}"));
             if (buySignature != _buySignature)
             {
                 _buySignature = buySignature;
-                RebuildBuys(market, buys);
+                RebuildBuys(market, buys, buyLots);
             }
             _buysEmpty.gameObject.SetActive(buys.Count == 0);
             _buysEmpty.text = "Este mercador não compra\nnada no momento.";
@@ -245,13 +248,14 @@ namespace NpcValheim.UI
                 string weeklyText = offer.WeeklyLimit > 0
                     ? $" <color=#9a9188>· {MarketDeadcoinSale.WeeklyUsedOf(item)}/{offer.WeeklyLimit} esta semana</color>"
                     : "";
+                string perLot = MarketplaceNpc.PerLot(offer.Lot);
                 string priceText = offer.Gold > 0 && offer.Deadcoins > 0
-                    ? $"{offer.Gold} moedas ou {offer.Deadcoins} Deadcoins/un"
+                    ? $"{offer.Gold} moedas ou {offer.Deadcoins} Deadcoins{perLot}"
                     : offer.Gold > 0
-                        ? $"{offer.Gold} moedas/un"
-                        : $"{offer.Deadcoins} Deadcoins/un";
+                        ? $"{offer.Gold} moedas{perLot}"
+                        : $"{offer.Deadcoins} Deadcoins{perLot}";
                 var label = ValheimUi.CreateLabel(row,
-                    $"{ItemNames.Display(item)}\n<size=12><color=#9a9188>{priceText}</color>{weeklyText}</size>",
+                    $"{LotPrefix(offer.Lot)}{ItemNames.Display(item)}\n<size=12><color=#9a9188>{priceText}</color>{weeklyText}</size>",
                     15, ValheimUi.Beige, TextAlignmentOptions.Left);
                 Flexible(label.gameObject);
 
@@ -277,11 +281,38 @@ namespace NpcValheim.UI
             }
         }
 
+        /// <summary>"50x " in front of an item sold in lots, nothing for a single unit.</summary>
+        private static string LotPrefix(int lot) => lot > 1 ? $"{lot}x " : "";
+
+        /// <summary>Lots on the stepper times the row's lot: the units that actually change
+        /// hands, which is what the server and the weekly limit count.</summary>
+        private bool TryUnits(int lot, out int lots, out int units)
+        {
+            units = 0;
+            if (!TryAmount(out lots)) return false;
+            units = lots * Mathf.Max(1, lot);
+            if (units <= 10000) return true;
+            Say($"Quantidade grande demais: {lots} lotes de {lot} passam de 10000 itens.");
+            return false;
+        }
+
+        /// <summary>Checked here because the Coins path cannot give coins back once they
+        /// left (see RPC_BuyFromNpc): going over the weekly limit there loses them.</summary>
+        private bool WithinWeeklyLimit(string item, SellOffer offer, int units)
+        {
+            if (offer.WeeklyLimit <= 0) return true;
+            int left = offer.WeeklyLimit - MarketDeadcoinSale.WeeklyUsedOf(item);
+            if (units <= left) return true;
+            Say($"Limite semanal de {ItemNames.Display(item)}: restam {Mathf.Max(0, left)} esta semana.");
+            return false;
+        }
+
         private void BuyGold(MarketplaceNpc market, string item, SellOffer offer)
         {
-            if (!TryAmount(out int amount)) return;
+            if (!TryUnits(offer.Lot, out int lots, out int amount)) return;
+            if (!WithinWeeklyLimit(item, offer, amount)) return;
 
-            int cost = MarketplaceNpc.PayoutFor(offer.Gold, amount);
+            int cost = MarketplaceNpc.PayoutFor(offer.Gold, lots);
             if (cost <= 0) { Say("Quantidade inválida."); return; }
 
             // The coins leave the pocket here. The server closes the sale at the price this
@@ -301,9 +332,10 @@ namespace NpcValheim.UI
 
         private void BuyDeadcoins(MarketplaceNpc market, string item, SellOffer offer)
         {
-            if (!TryAmount(out int amount)) return;
+            if (!TryUnits(offer.Lot, out int lots, out int amount)) return;
+            if (!WithinWeeklyLimit(item, offer, amount)) return;
 
-            int cost = MarketplaceNpc.PayoutFor(offer.Deadcoins, amount);
+            int cost = MarketplaceNpc.PayoutFor(offer.Deadcoins, lots);
             if (cost <= 0) { Say("Quantidade inválida."); return; }
             if (DeadcoinShop.Balance >= 0 && DeadcoinShop.Balance < cost)
             {
@@ -315,7 +347,7 @@ namespace NpcValheim.UI
             Say($"Comprando {amount}x {ItemNames.Display(item)}...");
         }
 
-        private void RebuildBuys(MarketplaceNpc market, Dictionary<string, int> buys)
+        private void RebuildBuys(MarketplaceNpc market, Dictionary<string, int> buys, Dictionary<string, int> lots)
         {
             foreach (var row in _buyRows) if (row != null) Object.Destroy(row);
             _buyRows.Clear();
@@ -324,19 +356,20 @@ namespace NpcValheim.UI
             {
                 var item = kv.Key;
                 var price = kv.Value;
+                int lot = lots.TryGetValue(item, out int found) ? found : 1;
                 var row = Row(_buys, 46f);
                 _buyRows.Add(row.gameObject);
 
                 ValheimUi.CreateItemIcon(row, item, 36f);
                 var label = ValheimUi.CreateLabel(row,
-                    $"{ItemNames.Display(item)}\n<size=12><color=#9a9188>{price} moedas/un</color></size>",
+                    $"{LotPrefix(lot)}{ItemNames.Display(item)}\n<size=12><color=#9a9188>{price} moedas{MarketplaceNpc.PerLot(lot)}</color></size>",
                     15, ValheimUi.Beige, TextAlignmentOptions.Left);
                 Flexible(label.gameObject);
 
                 var sell = ValheimUi.CreateButton(row, "Vender", 110f, 36f, 14);
                 sell.onClick.AddListener(() =>
                 {
-                    if (!TryAmount(out int amount)) return;
+                    if (!TryUnits(lot, out _, out int amount)) return;
 
                     var inventory = Player.GetInventory();
                     if (ItemNames.Count(inventory, item, -1) < amount)
