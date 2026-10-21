@@ -70,6 +70,11 @@ namespace NpcValheim.Arena
 
         internal static ArenaEngine Engine => _engine;
 
+        /// <summary>The rating the Intendente checks (see ArenaEngine.BestPurchaseRating), for
+        /// other NPCs that ask for one. Server only; 0 when the arena is not up.</summary>
+        internal static int BestRating(long playerId, int minBracket) =>
+            playerId != 0L && EnsureEngine() ? _engine.BestPurchaseRating(playerId, minBracket) : 0;
+
         private static bool IsServer => ZNet.instance != null && ZNet.instance.IsServer();
 
         private static bool EnsureEngine()

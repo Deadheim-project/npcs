@@ -20,7 +20,7 @@ namespace NpcValheim
     {
         public const string Guid = "com.npcvalheim.mod";
         public const string Name = "NpcValheim";
-        public const string Version = "0.1.77";
+        public const string Version = "0.1.78";
 
         internal static ManualLogSource Log;
         private Harmony _harmony;
@@ -89,6 +89,10 @@ namespace NpcValheim
         internal static ConfigEntry<string> BarberSkinColors;
         internal static ConfigEntry<string> BarberHairColors;
         internal static ConfigEntry<bool> BarberAllowSkin;
+        internal static ConfigEntry<bool> TailorEnabled;
+        internal static ConfigEntry<int> TailorPriceCoins;
+        internal static ConfigEntry<int> TailorMinArenaRating;
+        internal static ConfigEntry<int> TailorArenaBracket;
         internal static ConfigEntry<bool> SeasonEnabled;
         internal static ConfigEntry<string> SeasonId;
         internal static ConfigEntry<string> SeasonName;
@@ -261,6 +265,18 @@ namespace NpcValheim
             BarberAllowSkin = Config.Bind(barber, "AllowSkin", false,
                 "Permite mudança de cor de pele. Falso por padrão (evita disfarce extremo).");
 
+            // The Alfaiate (Deadheim's transmog behind a counter)
+            const string tailor = "Tailor";
+            TailorEnabled = Config.Bind(tailor, "Enabled", false,
+                "Liga o Alfaiate NPC (transmog do Deadheim). Desligado, o NPC não interage.");
+            TailorPriceCoins = Config.Bind(tailor, "PriceCoins", 500,
+                "Moedas (Coins) por peça que muda de aparência. Voltar ao visual real é grátis. " +
+                "As moedas saem da bolsa do jogador depois que o servidor aplica (um cliente modificado pode não pagar).");
+            TailorMinArenaRating = Config.Bind(tailor, "MinArenaRating", 1200,
+                "Rating de arena mínimo para trocar a aparência (o mesmo do Intendente: o menor entre o pessoal e o do time). 0 = sem exigência.");
+            TailorArenaBracket = Config.Bind(tailor, "ArenaBracket", 1,
+                "Tamanho mínimo do time cujo rating vale (1 = qualquer time, 3 = só 3v3 ou maior).");
+
             // The Season Herald (season pass). The server decides everything, so none of this is synced.
             const string season = "Season";
             SeasonEnabled = Config.Bind(season, "Enabled", false,
@@ -322,6 +338,11 @@ namespace NpcValheim
             ConfigSync.AddConfigEntry(BarberSkinColors).SynchronizedConfig = true;
             ConfigSync.AddConfigEntry(BarberHairColors).SynchronizedConfig = true;
             ConfigSync.AddConfigEntry(BarberAllowSkin).SynchronizedConfig = true;
+
+            ConfigSync.AddConfigEntry(TailorEnabled).SynchronizedConfig = true;
+            ConfigSync.AddConfigEntry(TailorPriceCoins).SynchronizedConfig = true;
+            ConfigSync.AddConfigEntry(TailorMinArenaRating).SynchronizedConfig = true;
+            ConfigSync.AddConfigEntry(TailorArenaBracket).SynchronizedConfig = true;
 
             // Everything above is read where it is used (a new teleporter, a new listing, the
             // HUD every frame), so a reload takes effect on its own. The HUD offsets are the

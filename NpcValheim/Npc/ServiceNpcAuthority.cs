@@ -52,6 +52,7 @@ namespace NpcValheim.Npc
             "NpcValheim_WarJudge",
             "NpcValheim_Trainer",
             "NpcValheim_Barber",
+            "NpcValheim_Tailor",
             "NpcValheim_Season",
         };
 
@@ -82,6 +83,7 @@ namespace NpcValheim.Npc
             MountTrainer.Register(rpc);
             Trainer.Register(rpc);
             Barber.Register(rpc);
+            Tailor.Register(rpc);
             Season.Register(rpc);
             Plugin.Log.LogInfo("NpcValheim: server-authoritative service NPC RPCs registered");
         }

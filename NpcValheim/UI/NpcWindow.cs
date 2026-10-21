@@ -163,6 +163,9 @@ namespace NpcValheim.UI
                 case BarberNpc _:
                     AddTab("Barbeiro", new BarberView(), npc, player);
                     break;
+                case TailorNpc _:
+                    AddTab("Alfaiate", new TailorView(), npc, player);
+                    break;
                 case SeasonHeraldNpc _:
                     AddTab("Temporada", new SeasonView(), npc, player);
                     break;
