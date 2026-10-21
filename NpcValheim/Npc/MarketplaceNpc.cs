@@ -37,6 +37,10 @@ namespace NpcValheim.Npc
         /// not of one unit, so cheap goods can go for less than a coin each (50 Wood for 10).
         /// 1 is the old per-unit behaviour. WeeklyLimit still counts units.</summary>
         public int Lot = 1;
+
+        /// <summary>The boss whose pass this item requires (a prefab from [BossPass] Bosses),
+        /// or empty for anyone. Per item: one counter can sell open goods and locked ones.</summary>
+        public string Boss = "";
     }
 
     public class MarketplaceNpc : NpcBase
@@ -190,6 +194,7 @@ namespace NpcValheim.Npc
                 // The lock rides the same guard: a counter that silently reopens is the one
                 // failure of this setting nobody would notice.
                 RestoreIfDrifted(KeyRequiredBoss, ref _authoritativeBoss, "requires");
+                MigrateCounterLock();
             }
 
             if (Nview == null || !Nview.IsValid() || !Nview.IsOwner()) return;
@@ -292,17 +297,18 @@ namespace NpcValheim.Npc
             foreach (var line in packed.Split('\n'))
             {
                 var p = line.Split(';');
-                if ((p.Length != 2 && p.Length != 3) || !int.TryParse(p[1], out int price) || price <= 0) continue;
+                if (p.Length < 2 || p.Length > 4 || !int.TryParse(p[1], out int price) || price <= 0) continue;
                 // A lot that does not parse drops the whole entry rather than falling back to
                 // one unit: that fallback would pay the lot's price for every single item.
-                if (p.Length == 3 && !TryLot(p[2], out _)) continue;
+                if (p.Length >= 3 && !TryLot(p[2], out _)) continue;
                 result[p[0]] = price;
             }
             return result;
         }
 
-        /// <summary>The buy side's lots: "item;price;lot" lines, the third field written only
-        /// when the lot is above 1 (so a table without lots is byte-for-byte the old one).</summary>
+        /// <summary>The buy side's lots: "item;price;lot[;boss]" lines, the third field written
+        /// only when the lot is above 1 or a boss follows it (so a table without either is
+        /// byte-for-byte the old one).</summary>
         private static Dictionary<string, int> ParseLotTable(string packed)
         {
             var result = new Dictionary<string, int>();
@@ -311,17 +317,68 @@ namespace NpcValheim.Npc
             foreach (var line in packed.Split('\n'))
             {
                 var p = line.Split(';');
-                if (p.Length != 3 || !int.TryParse(p[1], out int price) || price <= 0) continue;
+                if (p.Length < 3 || p.Length > 4 || !int.TryParse(p[1], out int price) || price <= 0) continue;
                 if (TryLot(p[2], out int lot) && lot > 1) result[p[0]] = lot;
             }
             return result;
+        }
+
+        /// <summary>The buy side's per-item boss requirements, the fourth field.</summary>
+        private static Dictionary<string, string> ParseBuyBossTable(string packed)
+        {
+            var result = new Dictionary<string, string>();
+            if (string.IsNullOrEmpty(packed)) return result;
+
+            foreach (var line in packed.Split('\n'))
+            {
+                var p = line.Split(';');
+                if (p.Length != 4 || !int.TryParse(p[1], out int price) || price <= 0 || !TryLot(p[2], out _)) continue;
+                if (p[3].Length > 0) result[p[0]] = p[3];
+            }
+            return result;
+        }
+
+        /// <summary>Prefab name -> the boss whose pass selling this item to the merchant
+        /// requires, for the buy entries that have one.</summary>
+        public Dictionary<string, string> GetBuyBosses()
+        {
+            if (Nview == null || !Nview.IsValid()) return new Dictionary<string, string>();
+            return ParseBuyBossTable(Nview.GetZDO().GetString(KeyBuyPrices, ""));
+        }
+
+        /// <summary>
+        /// The pass an item asks for: its own, or -- for an item without one -- the lock the
+        /// whole counter had before requirements were per item. That old lock is moved onto
+        /// the items by the server (MigrateCounterLock); reading it here as well keeps a
+        /// counter locked on every client in the second before the move reaches them.
+        /// </summary>
+        internal string EffectiveBoss(string itemBoss) =>
+            !string.IsNullOrEmpty(itemBoss) ? itemBoss : HasShop ? RequiredBoss : "";
+
+        /// <summary>Every pass some item on this counter asks for: what a buyer may purchase
+        /// here (see DispatchServiceAction).</summary>
+        internal HashSet<string> BossesRequiredHere()
+        {
+            var bosses = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var offer in GetSellOffers().Values)
+            {
+                string boss = EffectiveBoss(offer.Boss);
+                if (boss.Length > 0) bosses.Add(boss);
+            }
+            var buyBosses = GetBuyBosses();
+            foreach (var item in GetBuyPrices().Keys)
+            {
+                string boss = EffectiveBoss(buyBosses.TryGetValue(item, out var own) ? own : "");
+                if (boss.Length > 0) bosses.Add(boss);
+            }
+            return bosses;
         }
 
         private static bool TryLot(string text, out int lot) =>
             int.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out lot) && lot >= 1 && lot <= MaxLot;
 
         /// <summary>
-        /// "item;gold;deadcoins;weeklyLimit[;lot]" per line (A3) -- the sell side's own format, richer
+        /// "item;gold;deadcoins;weeklyLimit[;lot[;boss]]" per line (A3) -- the sell side's own format, richer
         /// than the buy side's "item;price" because a sale can be priced in either currency and
         /// capped per week. gold=0 means not sold for Coins; deadcoins=0 means not sold for
         /// Deadcoins; weeklyLimit=0 means no cap; lot is written only when above 1, and both
@@ -337,17 +394,21 @@ namespace NpcValheim.Npc
             {
                 if (line.Length == 0) continue;
                 var p = line.Split(';');
-                if (p.Length != 4 && p.Length != 5) continue;
+                if (p.Length < 4 || p.Length > 6) continue;
                 string item = p[0];
                 if (string.IsNullOrEmpty(item)) continue;
                 if (!int.TryParse(p[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out int gold) || gold < 0) continue;
                 if (!int.TryParse(p[2], NumberStyles.Integer, CultureInfo.InvariantCulture, out int deadcoins) || deadcoins < 0) continue;
                 if (!int.TryParse(p[3], NumberStyles.Integer, CultureInfo.InvariantCulture, out int weeklyLimit) || weeklyLimit < 0) continue;
                 int lot = 1;
-                if (p.Length == 5 && !TryLot(p[4], out lot)) continue;
+                if (p.Length >= 5 && !TryLot(p[4], out lot)) continue;
+                string boss = p.Length == 6 ? p[5] : "";
                 if (gold <= 0 && deadcoins <= 0) continue;
 
-                result[item] = new SellOffer { ItemName = item, Gold = gold, Deadcoins = deadcoins, WeeklyLimit = weeklyLimit, Lot = lot };
+                result[item] = new SellOffer
+                {
+                    ItemName = item, Gold = gold, Deadcoins = deadcoins, WeeklyLimit = weeklyLimit, Lot = lot, Boss = boss,
+                };
             }
             return result;
         }
@@ -364,14 +425,16 @@ namespace NpcValheim.Npc
                 sb.Append(o.ItemName).Append(';').Append(o.Gold.ToString(CultureInfo.InvariantCulture)).Append(';')
                   .Append(o.Deadcoins.ToString(CultureInfo.InvariantCulture)).Append(';')
                   .Append(o.WeeklyLimit.ToString(CultureInfo.InvariantCulture));
-                if (o.Lot > 1) sb.Append(';').Append(o.Lot.ToString(CultureInfo.InvariantCulture));
+                bool locked = !string.IsNullOrEmpty(o.Boss) && o.Boss.IndexOf(';') < 0 && o.Boss.IndexOf('\n') < 0;
+                if (o.Lot > 1 || locked) sb.Append(';').Append(Mathf.Max(1, o.Lot).ToString(CultureInfo.InvariantCulture));
+                if (locked) sb.Append(';').Append(o.Boss);
             }
             return sb.ToString();
         }
 
         /// <summary>Admin sets a price. 0 removes the entry. `selling` picks which side of
         /// the counter it applies to; `lot` is how many units that price buys or pays for.</summary>
-        public void RequestSetPrice(Player requester, string itemName, int price, bool selling, int lot = 1)
+        public void RequestSetPrice(Player requester, string itemName, int price, bool selling, int lot = 1, string boss = "")
         {
             if (Nview == null || !Nview.IsValid()) return;
             if (!CanLocalPlayerAdminister())
@@ -386,9 +449,10 @@ namespace NpcValheim.Npc
             // The lot rides on the tagged name ("S:Wood;50"): ';' can never be part of a prefab
             // name on this counter (the tables are ';'-separated), and keeping the RPC's shape
             // means a server without lots refuses the unknown item instead of misreading it.
-            InvokeAuthoritativeRpc("RPC_SetPrice",
-                (selling ? "S:" : "B:") + (itemName ?? "") +
-                (lot > 1 ? ";" + lot.ToString(CultureInfo.InvariantCulture) : ""), price);
+            string tail = !string.IsNullOrEmpty(boss)
+                ? ";" + Mathf.Max(1, lot).ToString(CultureInfo.InvariantCulture) + ";" + boss
+                : lot > 1 ? ";" + lot.ToString(CultureInfo.InvariantCulture) : "";
+            InvokeAuthoritativeRpc("RPC_SetPrice", (selling ? "S:" : "B:") + (itemName ?? "") + tail, price);
         }
 
         /// <summary>Admin, sell side only (A3): the Deadcoins price and/or the weekly limit,
@@ -427,6 +491,9 @@ namespace NpcValheim.Npc
                     return true;
                 case "RPC_SetRequiredBoss" when arguments.Length == 1 && arguments[0] is string boss:
                     RPC_SetRequiredBoss(sender, boss);
+                    return true;
+                case "RPC_SetItemBoss" when arguments.Length == 2 && arguments[0] is string bossItem && arguments[1] is string itemBoss:
+                    RPC_SetItemBoss(sender, bossItem, itemBoss);
                     return true;
                 default:
                     return base.DispatchAdminMutation(sender, method, arguments);
@@ -478,6 +545,99 @@ namespace NpcValheim.Npc
                 : $"Loja trancada: exige o passe de {entry.Name} ({BossPassCatalog.ShopName(entry)}).");
         }
 
+        /// <summary>Admin: the pass one item requires, on whichever sides of the counter it is
+        /// (bought, sold or both), or "" to leave it open to everyone.</summary>
+        public void RequestSetItemBoss(Player requester, string itemName, string boss)
+        {
+            if (Nview == null || !Nview.IsValid()) return;
+            if (!CanLocalPlayerAdminister())
+            {
+                Player.m_localPlayer?.Message(MessageHud.MessageType.Center,
+                    "Seu cliente não considera você admin", 0, null);
+                return;
+            }
+            InvokeAuthoritativeRpc("RPC_SetItemBoss", itemName ?? "", boss ?? "");
+        }
+
+        private void RPC_SetItemBoss(long sender, string itemName, string boss)
+        {
+            Plugin.Log.LogInfo($"NpcValheim: 'shop-set-item-boss' from peer {sender} on '{GetHoverName()}': \"{itemName}\" = \"{boss}\"");
+            if (!CanAdminister(sender)) return;
+            if (!NpcRequestGuard.AllowRate(sender, "shop-set-boss", 6, 2f))
+            {
+                ServiceNpcAuthority.SendStatus(sender, "Muitos pedidos seguidos. Espere um instante.");
+                return;
+            }
+
+            itemName = (itemName ?? "").Trim();
+            boss = (boss ?? "").Trim();
+            BossPassEntry entry = null;
+            if (boss.Length > 0 && (entry = BossPassCatalog.Find(boss)) == null)
+            {
+                ServiceNpcAuthority.SendStatus(sender, $"'{boss}' não está em [BossPass] Bosses no servidor.");
+                return;
+            }
+
+            // The counter-wide lock is folded into the items first, so setting one item does
+            // not quietly open all the others that were riding on it.
+            MigrateCounterLock();
+
+            var offers = GetSellOffers();
+            var prices = GetPriceTable(KeyBuyPrices);
+            bool sold = offers.TryGetValue(itemName, out var offer);
+            bool bought = prices.ContainsKey(itemName);
+            if (!sold && !bought)
+            {
+                ServiceNpcAuthority.SendStatus(sender, $"{ItemNames.Display(itemName)} não está no balcão.");
+                return;
+            }
+
+            if (sold) { offer.Boss = boss; SaveSellTable(offers); }
+            if (bought)
+            {
+                var bosses = GetBuyBosses();
+                if (boss.Length > 0) bosses[itemName] = boss; else bosses.Remove(itemName);
+                SavePriceTable(KeyBuyPrices, prices, GetBuyLots(), bosses);
+            }
+            _lockedAt = Time.unscaledTime;
+
+            Plugin.Log.LogInfo($"NpcValheim: '{GetHoverName()}' item {itemName} now requires '{boss}' (peer {sender})");
+            ServiceNpcAuthority.SendStatus(sender, entry == null
+                ? $"{ItemNames.Display(itemName)}: livre para todos."
+                : $"{ItemNames.Display(itemName)}: exige o passe de {entry.Name}.");
+        }
+
+        /// <summary>
+        /// Server: moves a counter-wide lock (the one requirement a whole Mercador had before
+        /// they were per item, still what an old template or the old Admin button sets) onto
+        /// every item that has no requirement of its own, then clears it. Same goods locked
+        /// behind the same pass as before; from here on each item says so itself.
+        /// </summary>
+        private void MigrateCounterLock()
+        {
+            if (!HasShop || ZNet.instance == null || !ZNet.instance.IsServer()) return;
+            string counterBoss = RequiredBoss;
+            if (counterBoss.Length == 0) return;
+
+            var offers = GetSellOffers();
+            foreach (var offer in offers.Values)
+                if (string.IsNullOrEmpty(offer.Boss)) offer.Boss = counterBoss;
+            SaveSellTable(offers);
+
+            var prices = GetPriceTable(KeyBuyPrices);
+            var bosses = GetBuyBosses();
+            foreach (var item in prices.Keys)
+                if (!bosses.ContainsKey(item)) bosses[item] = counterBoss;
+            SavePriceTable(KeyBuyPrices, prices, GetBuyLots(), bosses);
+
+            // Through the ZDO directly rather than SetRequiredBoss: nothing a buyer could see
+            // changed, so this is not a fresh lock for RPC_BuyFromNpc's grace period.
+            Nview.GetZDO().Set(KeyRequiredBoss, "");
+            _authoritativeBoss = "";
+            PersistProfileSnapshot();
+            Plugin.Log.LogInfo($"NpcValheim: '{GetHoverName()}' counter lock '{counterBoss}' moved onto its items");
+        }
+
         private void SetRequiredBoss(string boss)
         {
             if (!string.Equals(RequiredBoss, boss ?? "", StringComparison.Ordinal)) _lockedAt = Time.unscaledTime;
@@ -490,10 +650,10 @@ namespace NpcValheim.Npc
         /// the NPC (see BossPass).</summary>
         public bool RequestBossPassStatus() => InvokeServiceAction(BossPass.ActionStatus, "");
 
-        /// <summary>Client: buy this counter's pass. The boss is not sent -- the server reads
-        /// it off its own copy of this NPC.</summary>
-        public bool RequestBossPass(string method, int shownPrice) =>
-            InvokeServiceAction(BossPass.ActionBuy, BossPass.BuyPayload(method, shownPrice));
+        /// <summary>Client: buy the pass an item on this counter requires. The server only
+        /// sells, here, a pass some item on its own copy of this counter asks for.</summary>
+        public bool RequestBossPass(string boss, string method, int shownPrice) =>
+            InvokeServiceAction(BossPass.ActionBuy, BossPass.ChosenBuyPayload(boss, method, shownPrice));
 
         /// <summary>Client, A3: how much of this week's limit each weekly-capped sell item has
         /// used, for this character.</summary>
@@ -512,8 +672,26 @@ namespace NpcValheim.Npc
                     BossPass.ServeStatus(sender);
                     return true;
                 case BossPass.ActionBuy:
-                    BossPass.ServePurchase(sender, HasShop ? RequiredBoss : "", $"'{GetHoverName()}'", payload ?? "");
+                {
+                    // "boss\nmethod\nprice" names the pass; "method\nprice" (a client from before
+                    // per-item passes) means the counter's own lock, as it always did.
+                    string text = payload ?? "";
+                    var lines = text.Split('\n');
+                    string boss = HasShop ? RequiredBoss : "";
+                    if (lines.Length == 3)
+                    {
+                        boss = lines[0];
+                        text = text.Substring(boss.Length + 1);
+                        if (!BossesRequiredHere().Contains(boss))
+                        {
+                            Plugin.Log.LogWarning($"NpcValheim: '{GetHoverName()}' refused a pass for '{boss}' to peer {sender}: no item here requires it");
+                            ServiceNpcAuthority.SendStatus(sender, "Este mercador não vende esse passe.");
+                            return true;
+                        }
+                    }
+                    BossPass.ServePurchase(sender, boss, $"'{GetHoverName()}'", text);
                     return true;
+                }
                 case MarketDeadcoinSale.ActionStatus:
                     MarketDeadcoinSale.ServeStatus(sender, this);
                     return true;
@@ -532,6 +710,18 @@ namespace NpcValheim.Npc
         /// same gate Coins does.</summary>
         internal bool CounterOpenFor(long playerId, out string refusal) =>
             BossPass.CanTrade(playerId, HasShop ? RequiredBoss : "", out refusal);
+
+        /// <summary>The same gate for one item: its own pass, or the counter's old lock for an
+        /// item without one (see EffectiveBoss). `refusal` names the item.</summary>
+        internal bool ItemOpenFor(long playerId, string itemName, string itemBoss, out string refusal)
+        {
+            string boss = EffectiveBoss(itemBoss);
+            if (BossPass.CanTrade(playerId, boss, out refusal)) return true;
+            var entry = BossPassCatalog.Find(boss);
+            if (entry != null && refusal != null && !refusal.StartsWith("O servidor", StringComparison.Ordinal))
+                refusal = $"{ItemNames.Display(itemName)} exige o passe de {entry.Name}: derrote o boss ou pague o passe.";
+            return false;
+        }
 
         /// <summary>
         /// Admin-side write to one half of the counter.
@@ -573,16 +763,28 @@ namespace NpcValheim.Npc
             bool selling = tagged[0] == 'S';
             string itemName = tagged.Substring(2);
             int lot = 1;
-            int lotAt = itemName.IndexOf(';');
-            if (lotAt >= 0)
+            string boss = "";
+            var fields = itemName.Split(';');
+            if (fields.Length > 3)
             {
-                if (!TryLot(itemName.Substring(lotAt + 1), out lot))
+                ServiceNpcAuthority.SendStatus(sender, "Pedido malformado.");
+                return;
+            }
+            if (fields.Length >= 2 && !TryLot(fields[1], out lot))
+            {
+                ServiceNpcAuthority.SendStatus(sender, $"Lote inválido: use de 1 a {MaxLot}.");
+                return;
+            }
+            if (fields.Length == 3)
+            {
+                boss = fields[2].Trim();
+                if (boss.Length > 0 && BossPassCatalog.Find(boss) == null)
                 {
-                    ServiceNpcAuthority.SendStatus(sender, $"Lote inválido: use de 1 a {MaxLot}.");
+                    ServiceNpcAuthority.SendStatus(sender, $"'{boss}' não está em [BossPass] Bosses no servidor.");
                     return;
                 }
-                itemName = itemName.Substring(0, lotAt);
             }
+            itemName = fields[0];
             if (ObjectDB.instance?.GetItemPrefab(itemName) == null)
             {
                 ServiceNpcAuthority.SendStatus(sender, $"O servidor não conhece o item '{itemName}'.");
@@ -603,7 +805,7 @@ namespace NpcValheim.Npc
                         {
                             ItemName = itemName, Gold = 0,
                             Deadcoins = existingOffer.Deadcoins, WeeklyLimit = existingOffer.WeeklyLimit,
-                            Lot = existingOffer.Lot,
+                            Lot = existingOffer.Lot, Boss = existingOffer.Boss,
                         };
                     else
                         offers.Remove(itemName);
@@ -614,8 +816,9 @@ namespace NpcValheim.Npc
                     {
                         ItemName = itemName, Gold = Mathf.Min(price, 1000000),
                         Deadcoins = existingOffer?.Deadcoins ?? 0, WeeklyLimit = existingOffer?.WeeklyLimit ?? 0,
-                        Lot = lot,
+                        Lot = lot, Boss = boss,
                     };
+                    if (!string.Equals(existingOffer?.Boss ?? "", boss, StringComparison.Ordinal)) _lockedAt = Time.unscaledTime;
                 }
                 else
                 {
@@ -629,24 +832,27 @@ namespace NpcValheim.Npc
             {
                 var prices = GetPriceTable(KeyBuyPrices);
                 var lots = GetBuyLots();
-                if (price <= 0) { prices.Remove(itemName); lots.Remove(itemName); }
+                var bosses = GetBuyBosses();
+                if (price <= 0) { prices.Remove(itemName); lots.Remove(itemName); bosses.Remove(itemName); }
                 else if (prices.Count < 60 || prices.ContainsKey(itemName))
                 {
                     prices[itemName] = Mathf.Min(price, 1000000);
                     if (lot > 1) lots[itemName] = lot; else lots.Remove(itemName);
+                    if (boss.Length > 0) bosses[itemName] = boss; else bosses.Remove(itemName);
                 }
                 else
                 {
                     ServiceNpcAuthority.SendStatus(sender, "Este lado do balcão já tem 60 itens.");
                     return;
                 }
-                SavePriceTable(KeyBuyPrices, prices, lots);
+                SavePriceTable(KeyBuyPrices, prices, lots, bosses);
             }
 
             string side = selling ? "vende" : "compra";
             Plugin.Log.LogInfo($"NpcValheim: '{GetHoverName()}' {side} {itemName} por {price}, lote {lot} (peer {sender})");
             ServiceNpcAuthority.SendStatus(sender, price > 0
-                ? $"O NPC {side} {ItemNames.Display(itemName)} por {price} moedas{PerLot(lot)}."
+                ? $"O NPC {side} {ItemNames.Display(itemName)} por {price} moedas{PerLot(lot)}" +
+                  (boss.Length > 0 ? $", com o passe de {BossPassCatalog.Find(boss)?.Name ?? boss}." : ".")
                 : $"{ItemNames.Display(itemName)} removido do balcão.");
         }
 
@@ -700,7 +906,7 @@ namespace NpcValheim.Npc
             offers[itemName] = new SellOffer
             {
                 ItemName = itemName, Gold = gold, Deadcoins = Mathf.Min(deadcoins, 1000000),
-                WeeklyLimit = Mathf.Min(weeklyLimit, 1000000), Lot = existing?.Lot ?? 1,
+                WeeklyLimit = Mathf.Min(weeklyLimit, 1000000), Lot = existing?.Lot ?? 1, Boss = existing?.Boss ?? "",
             };
             SaveSellTable(offers);
 
@@ -712,7 +918,8 @@ namespace NpcValheim.Npc
                 : $"{ItemNames.Display(itemName)}: Deadcoins desligado" + (weeklyLimit > 0 ? $", limite {weeklyLimit}/semana." : "."));
         }
 
-        private void SavePriceTable(string key, Dictionary<string, int> prices, Dictionary<string, int> lots = null)
+        private void SavePriceTable(string key, Dictionary<string, int> prices, Dictionary<string, int> lots = null,
+            Dictionary<string, string> bosses = null)
         {
             var sb = new StringBuilder();
             foreach (var kv in prices)
@@ -720,8 +927,11 @@ namespace NpcValheim.Npc
                 if (string.IsNullOrEmpty(kv.Key) || kv.Key.IndexOf(';') >= 0) continue;
                 if (sb.Length > 0) sb.Append('\n');
                 sb.Append(kv.Key).Append(';').Append(kv.Value.ToString(CultureInfo.InvariantCulture));
-                if (lots != null && lots.TryGetValue(kv.Key, out int lot) && lot > 1)
-                    sb.Append(';').Append(Mathf.Min(lot, MaxLot).ToString(CultureInfo.InvariantCulture));
+                int lot = lots != null && lots.TryGetValue(kv.Key, out int found) ? Mathf.Clamp(found, 1, MaxLot) : 1;
+                string boss = bosses != null && bosses.TryGetValue(kv.Key, out var b) &&
+                              !string.IsNullOrEmpty(b) && b.IndexOf(';') < 0 && b.IndexOf('\n') < 0 ? b : "";
+                if (lot > 1 || boss.Length > 0) sb.Append(';').Append(lot.ToString(CultureInfo.InvariantCulture));
+                if (boss.Length > 0) sb.Append(';').Append(boss);
             }
             string packed = sb.ToString();
             Nview.GetZDO().Set(key, packed);
@@ -822,20 +1032,21 @@ namespace NpcValheim.Npc
             // honest client does not get here, its panel shows the lock instead of the lists --
             // except when an admin locks the counter between the player reading it and this
             // running. That buyer gets the goods, as with a price changed in the same gap.
-            if (!CounterOpenFor(playerId, out string locked))
+            string itemBoss = EffectiveBoss(GetSellOffer(itemName)?.Boss);
+            if (!ItemOpenFor(playerId, itemName, itemBoss, out string locked))
             {
                 if (Time.unscaledTime - _lockedAt > ShownPriceSeconds)
                 {
                     Plugin.Log.LogWarning(
-                        $"NpcValheim: '{GetHoverName()}' refused a sale to {playerId}: no '{RequiredBoss}' pass " +
+                        $"NpcValheim: '{GetHoverName()}' refused {itemName} to {playerId}: no '{itemBoss}' pass " +
                         $"(the client claims {paid}; nothing paid back)");
                     ServiceNpcAuthority.SendStatus(sender, locked);
                     BroadcastMarketDataTo(sender);
                     return;
                 }
                 Plugin.Log.LogInfo(
-                    $"NpcValheim: '{GetHoverName()}' sells to {playerId} without the '{RequiredBoss}' pass: " +
-                    "the counter was locked moments ago");
+                    $"NpcValheim: '{GetHoverName()}' sells {itemName} to {playerId} without the '{itemBoss}' pass: " +
+                    "it was locked moments ago");
             }
 
             // A3: the item's own weekly cap, shared with the Deadcoins path (MarketDeadcoinSale)
@@ -1096,10 +1307,11 @@ namespace NpcValheim.Npc
             long playerId = GameApi.GetPlayerId(sender);
             if (playerId == 0L) return;
 
-            if (!CounterOpenFor(playerId, out string locked))
+            string buyBoss = GetBuyBosses().TryGetValue(itemName ?? "", out var ownBoss) ? ownBoss : "";
+            if (!ItemOpenFor(playerId, itemName, buyBoss, out string locked))
             {
-                Plugin.Log.LogInfo($"NpcValheim: '{GetHoverName()}' refused to buy from {playerId}: no '{RequiredBoss}' pass");
-                ReturnItem(sender, itemName, quality, amount, "Loja trancada");
+                Plugin.Log.LogInfo($"NpcValheim: '{GetHoverName()}' refused to buy {itemName} from {playerId}: no '{EffectiveBoss(buyBoss)}' pass");
+                ReturnItem(sender, itemName, quality, amount, "Item trancado");
                 ServiceNpcAuthority.SendStatus(sender, locked);
                 return;
             }
@@ -1453,17 +1665,20 @@ namespace NpcValheim.Npc
                 RequiredBoss = HasShop ? RequiredBoss : "",
             };
             var buyLots = GetBuyLots();
+            var buyBosses = GetBuyBosses();
             foreach (var kv in GetBuyPrices())
                 profile.Marketplace.Buys.Add(new ShopPrice
                 {
                     ItemName = kv.Key, Price = kv.Value,
                     Lot = buyLots.TryGetValue(kv.Key, out int lot) ? lot : 1,
+                    Boss = buyBosses.TryGetValue(kv.Key, out var boss) ? boss : "",
                 });
             foreach (var kv in GetSellOffers())
                 profile.Marketplace.Sells.Add(new ShopPrice
                 {
                     ItemName = kv.Key, Price = kv.Value.Gold,
                     Deadcoins = kv.Value.Deadcoins, WeeklyLimit = kv.Value.WeeklyLimit, Lot = kv.Value.Lot,
+                    Boss = kv.Value.Boss,
                 });
             return profile;
         }
@@ -1503,13 +1718,15 @@ namespace NpcValheim.Npc
             if (entries == null || entries.Count == 0) return;
             var prices = new Dictionary<string, int>();
             var lots = new Dictionary<string, int>();
+            var bosses = new Dictionary<string, string>();
             foreach (var entry in entries)
             {
                 if (entry == null || string.IsNullOrEmpty(entry.ItemName) || entry.Price <= 0) continue;
                 prices[entry.ItemName] = entry.Price;
                 if (entry.Lot > 1) lots[entry.ItemName] = Mathf.Min(entry.Lot, MaxLot);
+                if (!string.IsNullOrEmpty(entry.Boss)) bosses[entry.ItemName] = entry.Boss.Trim();
             }
-            SavePriceTable(KeyBuyPrices, prices, lots);
+            SavePriceTable(KeyBuyPrices, prices, lots, bosses);
         }
 
         /// <summary>A3: a template's sell list carries gold, Deadcoins and the weekly limit
@@ -1530,6 +1747,7 @@ namespace NpcValheim.Npc
                     Deadcoins = Mathf.Max(0, entry.Deadcoins),
                     WeeklyLimit = Mathf.Max(0, entry.WeeklyLimit),
                     Lot = Mathf.Clamp(entry.Lot, 1, MaxLot),
+                    Boss = (entry.Boss ?? "").Trim(),
                 };
             }
             SaveSellTable(offers);

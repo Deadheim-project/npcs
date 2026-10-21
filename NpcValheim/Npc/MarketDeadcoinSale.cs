@@ -13,7 +13,7 @@ namespace NpcValheim.Npc
     /// MountTrainer): the charge happens here, on the server, against the same ledger and the
     /// same log.txt as the Loja Deadcoins (F7) -- a purchase here and one there read the same
     /// balance and leave one trail. The boss lock on the counter (BossPass.CanTrade) gates this
-    /// exactly as it gates Coins, through <see cref="MarketplaceNpc.CounterOpenFor"/>.
+    /// exactly as it gates Coins, through <see cref="MarketplaceNpc.ItemOpenFor"/>.
     ///
     /// Delivery goes out through the NPC's own channel (RPC_DeliverItem), not a separate
     /// global one: unlike the boss pass's Coins flow, there is no quote-then-pay gap here for
@@ -134,15 +134,15 @@ namespace NpcValheim.Npc
                 return;
             }
 
-            if (!npc.CounterOpenFor(playerId, out string locked))
-            {
-                Refuse(sender, $"no '{npc.RequiredBoss}' pass", locked);
-                return;
-            }
-
             if (!npc.GetSellOffers().TryGetValue(item, out var offer) || offer.Deadcoins <= 0)
             {
                 Refuse(sender, $"'{item}' is not sold here for Deadcoins", $"{ItemNames.Display(item)} não é vendido por Deadcoins aqui.");
+                return;
+            }
+
+            if (!npc.ItemOpenFor(playerId, item, offer.Boss, out string locked))
+            {
+                Refuse(sender, $"no '{npc.EffectiveBoss(offer.Boss)}' pass", locked);
                 return;
             }
 

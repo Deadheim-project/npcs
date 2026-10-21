@@ -36,7 +36,9 @@ namespace NpcValheim.UI
         private const float WeeklyPollSeconds = 5f;
         private float _nextWeeklyPoll;
 
-        // The boss lock (BossPass): shown instead of the counter to a player without the pass.
+        // The boss pass (BossPass), per item: a locked row offers its pass, and this panel is
+        // what "Passe" opens in place of the lists -- for the boss in _lockBoss.
+        private string _lockBoss;
         private RectTransform _amountRow;
         private RectTransform _sellPane;
         private RectTransform _buyPane;
@@ -136,7 +138,37 @@ namespace NpcValheim.UI
             ValheimUi.SetWidth(_payDeadcoins.gameObject, 260f);
             _payDeadcoins.onClick.AddListener(PayDeadcoins);
 
+            var back = ValheimUi.CreateButton(buttons, "Voltar", 160f, 48f, 16);
+            ValheimUi.SetWidth(back.gameObject, 160f);
+            back.onClick.AddListener(() => { _lockBoss = null; _sellSignature = _buySignature = null; });
+
             _lock.gameObject.SetActive(false);
+        }
+
+        /// <summary>The boss whose pass this player still lacks for an item, or "" when the
+        /// item is open to them.</summary>
+        private static string MissingPass(MarketplaceNpc market, string itemBoss)
+        {
+            string boss = market.EffectiveBoss(itemBoss);
+            return boss.Length > 0 && !BossPass.HasLocalPass(boss) ? boss : "";
+        }
+
+        /// <summary>" · passe de Eikthyr" after the price of an item that requires one.</summary>
+        private static string PassText(MarketplaceNpc market, string itemBoss)
+        {
+            string boss = market.EffectiveBoss(itemBoss);
+            if (boss.Length == 0) return "";
+            string name = BossPassCatalog.Find(boss)?.Name ?? boss;
+            return BossPass.HasLocalPass(boss)
+                ? $" <color=#9a9188>· passe de {name}</color>"
+                : $" <color=#ee6b57>· requer o passe de {name}</color>";
+        }
+
+        /// <summary>In place of a locked item's buttons: opens that boss's pass panel.</summary>
+        private void PassButton(RectTransform row, string boss)
+        {
+            var open = ValheimUi.CreateButton(row, "Passe", 100f, 36f, 14);
+            open.onClick.AddListener(() => { _lockBoss = boss; _lockSignature = null; });
         }
 
         private RectTransform BuildColumn(string title, bool left, out TextMeshProUGUI empty, out RectTransform pane)
@@ -174,16 +206,19 @@ namespace NpcValheim.UI
 
             // The lock is the server's to enforce (RPC_BuyFromNpc / RPC_SellToNpc); this only
             // decides what to draw, from the passes the server says this character holds.
-            string boss = market.HasShop ? market.RequiredBoss : "";
-            if (boss.Length > 0 && Time.unscaledTime >= _nextPassPoll)
+            var required = market.BossesRequiredHere();
+            if (required.Count > 0 && Time.unscaledTime >= _nextPassPoll)
             {
-                // Often while shut, so a pass bought or won elsewhere opens it in place; rarely
-                // once open, only to notice an admin taking it away.
-                _nextPassPoll = Time.unscaledTime + (BossPass.HasLocalPass(boss) ? 30f : 5f);
+                // Often while something is shut, so a pass bought or won elsewhere opens it in
+                // place; rarely once all are open, only to notice an admin taking one away.
+                _nextPassPoll = Time.unscaledTime + (required.All(BossPass.HasLocalPass) ? 30f : 5f);
                 market.RequestBossPassStatus();
             }
 
-            bool locked = boss.Length > 0 && !BossPass.HasLocalPass(boss);
+            // The pass just arrived (bought here or won): back to the lists, item unlocked.
+            if (_lockBoss != null && BossPass.HasLocalPass(_lockBoss)) _lockBoss = null;
+            string boss = _lockBoss;
+            bool locked = boss != null;
             _lock.gameObject.SetActive(locked);
             _amountRow.gameObject.SetActive(!locked);
             _sellPane.gameObject.SetActive(!locked);
@@ -209,7 +244,8 @@ namespace NpcValheim.UI
 
             var sells = market.GetSellOffers();
             var sellSignature = string.Join("|", sells.Select(kv =>
-                $"{kv.Key}:{kv.Value.Gold}:{kv.Value.Deadcoins}:{kv.Value.WeeklyLimit}:{kv.Value.Lot}:{MarketDeadcoinSale.WeeklyUsedOf(kv.Key)}"));
+                $"{kv.Key}:{kv.Value.Gold}:{kv.Value.Deadcoins}:{kv.Value.WeeklyLimit}:{kv.Value.Lot}:{MarketDeadcoinSale.WeeklyUsedOf(kv.Key)}" +
+                $":{market.EffectiveBoss(kv.Value.Boss)}:{MissingPass(market, kv.Value.Boss)}")) + "|" + BossPass.Known;
             if (sellSignature != _sellSignature)
             {
                 _sellSignature = sellSignature;
@@ -220,12 +256,15 @@ namespace NpcValheim.UI
 
             var buys = market.GetBuyPrices();
             var buyLots = market.GetBuyLots();
+            var buyBosses = market.GetBuyBosses();
             var buySignature = string.Join("|", buys.Select(kv =>
-                $"{kv.Key}:{kv.Value}:{(buyLots.TryGetValue(kv.Key, out int lot) ? lot : 1)}"));
+                $"{kv.Key}:{kv.Value}:{(buyLots.TryGetValue(kv.Key, out int lot) ? lot : 1)}" +
+                $":{(buyBosses.TryGetValue(kv.Key, out var b) ? b : "")}:{MissingPass(market, buyBosses.TryGetValue(kv.Key, out var m) ? m : "")}")) +
+                "|" + BossPass.Known;
             if (buySignature != _buySignature)
             {
                 _buySignature = buySignature;
-                RebuildBuys(market, buys, buyLots);
+                RebuildBuys(market, buys, buyLots, buyBosses);
             }
             _buysEmpty.gameObject.SetActive(buys.Count == 0);
             _buysEmpty.text = "Este mercador não compra\nnada no momento.";
@@ -255,9 +294,16 @@ namespace NpcValheim.UI
                         ? $"{offer.Gold} moedas{perLot}"
                         : $"{offer.Deadcoins} Deadcoins{perLot}";
                 var label = ValheimUi.CreateLabel(row,
-                    $"{LotPrefix(offer.Lot)}{ItemNames.Display(item)}\n<size=12><color=#9a9188>{priceText}</color>{weeklyText}</size>",
+                    $"{LotPrefix(offer.Lot)}{ItemNames.Display(item)}\n<size=12><color=#9a9188>{priceText}</color>{weeklyText}{PassText(market, offer.Boss)}</size>",
                     15, ValheimUi.Beige, TextAlignmentOptions.Left);
                 Flexible(label.gameObject);
+
+                string missing = MissingPass(market, offer.Boss);
+                if (missing.Length > 0)
+                {
+                    PassButton(row, missing);
+                    continue;
+                }
 
                 bool maxedOut = offer.WeeklyLimit > 0 && MarketDeadcoinSale.WeeklyUsedOf(item) >= offer.WeeklyLimit;
                 if (maxedOut)
@@ -347,7 +393,8 @@ namespace NpcValheim.UI
             Say($"Comprando {amount}x {ItemNames.Display(item)}...");
         }
 
-        private void RebuildBuys(MarketplaceNpc market, Dictionary<string, int> buys, Dictionary<string, int> lots)
+        private void RebuildBuys(MarketplaceNpc market, Dictionary<string, int> buys, Dictionary<string, int> lots,
+            Dictionary<string, string> bosses)
         {
             foreach (var row in _buyRows) if (row != null) Object.Destroy(row);
             _buyRows.Clear();
@@ -357,14 +404,22 @@ namespace NpcValheim.UI
                 var item = kv.Key;
                 var price = kv.Value;
                 int lot = lots.TryGetValue(item, out int found) ? found : 1;
+                string itemBoss = bosses.TryGetValue(item, out var own) ? own : "";
                 var row = Row(_buys, 46f);
                 _buyRows.Add(row.gameObject);
 
                 ValheimUi.CreateItemIcon(row, item, 36f);
                 var label = ValheimUi.CreateLabel(row,
-                    $"{LotPrefix(lot)}{ItemNames.Display(item)}\n<size=12><color=#9a9188>{price} moedas{MarketplaceNpc.PerLot(lot)}</color></size>",
+                    $"{LotPrefix(lot)}{ItemNames.Display(item)}\n<size=12><color=#9a9188>{price} moedas{MarketplaceNpc.PerLot(lot)}</color>{PassText(market, itemBoss)}</size>",
                     15, ValheimUi.Beige, TextAlignmentOptions.Left);
                 Flexible(label.gameObject);
+
+                string missing = MissingPass(market, itemBoss);
+                if (missing.Length > 0)
+                {
+                    PassButton(row, missing);
+                    continue;
+                }
 
                 var sell = ValheimUi.CreateButton(row, "Vender", 110f, 36f, 14);
                 sell.onClick.AddListener(() =>
@@ -407,22 +462,22 @@ namespace NpcValheim.UI
 
             if (!BossPass.Known)
             {
-                _lockTitle.text = "Loja trancada";
+                _lockTitle.text = "Item trancado";
                 _lockBody.text = "Consultando o seu passe...";
                 return;
             }
             if (entry == null)
             {
-                _lockTitle.text = "Loja trancada";
-                _lockBody.text = $"Esta loja exige o passe de um boss ('{boss}') que o servidor não tem configurado.\n" +
+                _lockTitle.text = "Item trancado";
+                _lockBody.text = $"Este item exige o passe de um boss ('{boss}') que o servidor não tem configurado.\n" +
                                  "Fale com um admin.";
                 return;
             }
 
-            _lockTitle.text = $"{BossPassCatalog.ShopName(entry)} trancada";
+            _lockTitle.text = $"Passe de {entry.Name}";
             bool payable = entry.Gold > 0 || (entry.Deadcoins > 0 && deadcoinsUnlocked);
             _lockBody.text =
-                $"Para comprar e vender aqui você precisa do passe de {entry.Name}.\n\n" +
+                $"Os itens marcados com {entry.Name} só podem ser comprados e vendidos com o passe dele.\n\n" +
                 $"Ele é de graça para quem derrotar {entry.Name}: vale acertar um golpe nele ou estar " +
                 $"a até {radius:0} m quando ele morrer.\n\n" +
                 (payable
@@ -450,8 +505,10 @@ namespace NpcValheim.UI
         private void RequestPass(string method)
         {
             var market = Market;
-            string said = BossPass.BeginPurchase(BossPassCatalog.Find(market?.RequiredBoss), method,
-                price => market != null && market.RequestBossPass(method, price));
+            string boss = _lockBoss;
+            if (market == null || string.IsNullOrEmpty(boss)) return;
+            string said = BossPass.BeginPurchase(BossPassCatalog.Find(boss), method,
+                price => market.RequestBossPass(boss, method, price));
             if (said != null) Say(said);
         }
 

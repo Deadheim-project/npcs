@@ -43,6 +43,10 @@ namespace NpcValheim.UI
         private TMP_InputField _buyItem;
         private TMP_InputField _buyPrice;
         private TMP_InputField _buyLot;
+        // The pass requirement picked for the item in _buyItem ("" = anyone): sent with
+        // "Ele compra"/"Ele vende" and by the Requisito row's own Aplicar.
+        private List<string> _bossOptions;
+        private int _bossIndex;
         private TMP_InputField _sellDeadcoins;
         private TMP_InputField _sellWeeklyLimit;
         private TMP_InputField _questName;
@@ -269,6 +273,7 @@ namespace NpcValheim.UI
                     // picking a result fills it in.
                     Dim(column, "Digite o item acima para buscar; clique num resultado para preencher. " +
                                 "Preço e Deadcoins valem por lote (3º campo; 1 = por unidade). " +
+                                "O requisito acima vai junto com \"Ele compra\"/\"Ele vende\"; o Aplicar dele muda só o requisito do item. " +
                                 "\"Ele vende\" muda o preço em moedas e o lote; \"Definir (venda)\" só muda Deadcoins/limite.");
                     var searchArea = ValheimUi.CreateRect("SearchArea", column);
                     // 70 rather than 150: the boss lock and Deadcoins rows above took the
@@ -359,25 +364,26 @@ namespace NpcValheim.UI
         }
 
         /// <summary>
-        /// One row: which boss's pass this counter requires. Stepped with arrows through
-        /// "nenhum" plus the bosses in [BossPass] Bosses, and sent with Aplicar, so stepping
-        /// past a boss does not lock the counter on the way.
+        /// One row: which boss's pass the item in the box below requires. Per item, not per
+        /// counter: one Mercador can sell open goods next to locked ones. Stepped with arrows
+        /// through "nenhum" plus the bosses in [BossPass] Bosses; Aplicar sets it on an item
+        /// already on the counter, and "Ele compra"/"Ele vende" send it with the price.
         ///
-        /// A lock the config no longer lists still shows up in the list, under its prefab
-        /// name: hiding it would make the counter look open while the server keeps it shut.
+        /// A requirement the config no longer lists still shows up in the list, under its
+        /// prefab name: hiding it would make an item look open while the server keeps it shut.
         /// </summary>
         private void BuildBossLock(Transform column, MarketplaceNpc market)
         {
-            var options = new List<string> { "" };
-            options.AddRange(BossPassCatalog.Current().Select(e => e.Boss));
-            string current = market.RequiredBoss;
-            if (!options.Contains(current)) options.Add(current);
-            int index = options.IndexOf(current);
+            _bossOptions = new List<string> { "" };
+            _bossOptions.AddRange(BossPassCatalog.Current().Select(e => e.Boss));
+            foreach (var boss in market.BossesRequiredHere())
+                if (!_bossOptions.Contains(boss)) _bossOptions.Add(boss);
+            _bossIndex = 0;
 
             var row = Row(column, 38f);
-            ValheimUi.CreateLabel(row, "Requisito", 15, ValheimUi.Beige, TextAlignmentOptions.Left);
+            ValheimUi.CreateLabel(row, "Requisito do item", 15, ValheimUi.Beige, TextAlignmentOptions.Left);
             var previous = ValheimUi.CreateButton(row, "<", 34f, 34f, 16);
-            var label = ValheimUi.CreateLabel(row, DescribeLock(current), 14, ValheimUi.Yellow,
+            var label = ValheimUi.CreateLabel(row, DescribeLock(""), 14, ValheimUi.Yellow,
                 TextAlignmentOptions.Center);
             Flexible(label.gameObject);
             var next = ValheimUi.CreateButton(row, ">", 34f, 34f, 16);
@@ -385,22 +391,28 @@ namespace NpcValheim.UI
 
             void Step(int delta)
             {
-                index = (index + delta + options.Count) % options.Count;
-                label.text = DescribeLock(options[index]);
+                _bossIndex = (_bossIndex + delta + _bossOptions.Count) % _bossOptions.Count;
+                label.text = DescribeLock(_bossOptions[_bossIndex]);
             }
             previous.onClick.AddListener(() => Step(-1));
             next.onClick.AddListener(() => Step(1));
             apply.onClick.AddListener(() =>
             {
-                // The server answers with what it actually did, see RPC_SetRequiredBoss.
-                market.RequestSetRequiredBoss(Player, options[index]);
+                string item = _buyItem != null ? _buyItem.text?.Trim() ?? "" : "";
+                if (item.Length == 0) { Say("Digite o item do balcão no campo abaixo."); return; }
+                // The server answers with what it actually did, see RPC_SetItemBoss.
+                market.RequestSetItemBoss(Player, item, SelectedBoss());
+                _buySignature = null;
                 Say("Enviando o requisito ao servidor...");
             });
         }
 
+        private string SelectedBoss() =>
+            _bossOptions != null && _bossIndex >= 0 && _bossIndex < _bossOptions.Count ? _bossOptions[_bossIndex] : "";
+
         private static string DescribeLock(string boss)
         {
-            if (string.IsNullOrEmpty(boss)) return "Nenhum (loja aberta)";
+            if (string.IsNullOrEmpty(boss)) return "Nenhum (livre)";
             var entry = BossPassCatalog.Find(boss);
             return entry == null
                 ? $"{boss} (fora da config!)"
@@ -428,7 +440,7 @@ namespace NpcValheim.UI
             // answers with one either way (see MarketplaceNpc.RPC_SetPrice). Printing success
             // straight after the click is how an admin ends up staring at a merchant that
             // "não compra nada" right after being told it does.
-            market.RequestSetPrice(Player, item, price, selling, lot);
+            market.RequestSetPrice(Player, item, price, selling, lot, SelectedBoss());
             _buyItem.text = "";
             _buySignature = null;
         }
@@ -690,11 +702,14 @@ namespace NpcValheim.UI
 
             var buys = market.GetBuyPrices();
             var buyLots = market.GetBuyLots();
+            var buyBosses = market.GetBuyBosses();
             var sells = market.GetSellOffers();
             var signature = string.Join("|", buys.Select(kv =>
-                                $"B{kv.Key}:{kv.Value}:{(buyLots.TryGetValue(kv.Key, out int lot) ? lot : 1)}")) + "/" +
+                                $"B{kv.Key}:{kv.Value}:{(buyLots.TryGetValue(kv.Key, out int lot) ? lot : 1)}" +
+                                $":{(buyBosses.TryGetValue(kv.Key, out var boss) ? boss : "")}")) + "/" +
                             string.Join("|", sells.Select(kv =>
-                                $"S{kv.Key}:{kv.Value.Gold}:{kv.Value.Deadcoins}:{kv.Value.WeeklyLimit}:{kv.Value.Lot}"));
+                                $"S{kv.Key}:{kv.Value.Gold}:{kv.Value.Deadcoins}:{kv.Value.WeeklyLimit}:{kv.Value.Lot}:{kv.Value.Boss}")) +
+                            "/" + market.RequiredBoss;
             if (signature == _buySignature) return;
             _buySignature = signature;
 
@@ -708,7 +723,7 @@ namespace NpcValheim.UI
             }
 
             AddSellRows(market, sells);
-            AddPriceRows(market, buys, buyLots, selling: false);
+            AddPriceRows(market, buys, buyLots, buyBosses, selling: false);
         }
 
         /// <summary>A3: one row per sell item, both prices and the weekly limit together, with
@@ -730,7 +745,8 @@ namespace NpcValheim.UI
                 string price = gold.Length > 0 && dc.Length > 0 ? $"{gold} · {dc}" : gold + dc;
                 string weekly = offer.WeeklyLimit > 0 ? $" · limite {offer.WeeklyLimit}/semana" : "";
                 var label = ValheimUi.CreateLabel(row,
-                    ItemNames.Display(item) + "\n<size=11><color=#9a9188>vende: " + price + weekly + "</color></size>",
+                    ItemNames.Display(item) + "\n<size=11><color=#9a9188>vende: " + price + weekly +
+                    PassNote(market, offer.Boss) + "</color></size>",
                     15, ValheimUi.Orange, TextAlignmentOptions.Left);
                 Flexible(label.gameObject);
 
@@ -751,7 +767,15 @@ namespace NpcValheim.UI
             }
         }
 
-        private void AddPriceRows(MarketplaceNpc market, Dictionary<string, int> prices, Dictionary<string, int> lots, bool selling)
+        /// <summary>" · passe de Eikthyr" on a row whose item requires one.</summary>
+        private static string PassNote(MarketplaceNpc market, string itemBoss)
+        {
+            string boss = market.EffectiveBoss(itemBoss);
+            return boss.Length == 0 ? "" : " · passe de " + (BossPassCatalog.Find(boss)?.Name ?? boss);
+        }
+
+        private void AddPriceRows(MarketplaceNpc market, Dictionary<string, int> prices, Dictionary<string, int> lots,
+            Dictionary<string, string> bosses, bool selling)
         {
             foreach (var kv in prices)
             {
@@ -762,7 +786,8 @@ namespace NpcValheim.UI
                 ValheimUi.CreateItemIcon(row, kv.Key, 34f);
                 var label = ValheimUi.CreateLabel(row,
                     ItemNames.Display(kv.Key) + "\n<size=11><color=#9a9188>" +
-                    (selling ? "vende" : "compra") + " a " + kv.Value + MarketplaceNpc.PerLot(lot) + "</color></size>",
+                    (selling ? "vende" : "compra") + " a " + kv.Value + MarketplaceNpc.PerLot(lot) +
+                    PassNote(market, bosses.TryGetValue(kv.Key, out var boss) ? boss : "") + "</color></size>",
                     15, selling ? ValheimUi.Orange : ValheimUi.Beige, TextAlignmentOptions.Left);
                 Flexible(label.gameObject);
 

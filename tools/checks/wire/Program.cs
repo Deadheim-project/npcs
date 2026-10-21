@@ -859,6 +859,35 @@ class Program
         Check("a price of zero is never remembered as one somebody paid",
               ((List<int>)pricesFor.Invoke(shownPrices, new object[] { "Stone", 0f })).Count == 0);
 
+        // Lots and per-item boss passes ride extra ';' fields; a table without them must stay
+        // byte-for-byte what it was, and a field that does not parse must drop the entry
+        // rather than sell it per unit or unlocked.
+        var sells = (System.Collections.IDictionary)Merchant.GetMethod("ParseSellTable", BindingFlags.NonPublic | BindingFlags.Static)
+            .Invoke(null, new object[] { "Wood;10;0;0;50;Eikthyr\nStone;2;0;0\nResin;5;3;20;1;gd_king\nBad;5;0;0;0\nBad2;5;0;0;x;Eikthyr" });
+        SellOffer O(string k) => sells.Contains(k) ? (SellOffer)sells[k] : null;
+        Check("a sell line carries its lot and its boss",
+              O("Wood")?.Lot == 50 && O("Wood")?.Boss == "Eikthyr" && O("Resin")?.Lot == 1 && O("Resin")?.Boss == "gd_king");
+        Check("an old four-field sell line is one unit, open to anyone",
+              O("Stone")?.Lot == 1 && O("Stone")?.Boss == "");
+        Check("a sell line with a bad lot is dropped", O("Bad") == null && O("Bad2") == null,
+              string.Join(",", sells.Keys.Cast<string>()));
+        string formatted = (string)Merchant.GetMethod("FormatSellTable", BindingFlags.NonPublic | BindingFlags.Static)
+            .Invoke(null, new object[] { sells });
+        Check("the sell table writes back what it read",
+              formatted == "Wood;10;0;0;50;Eikthyr\nStone;2;0;0\nResin;5;3;20;1;gd_king", formatted.Replace("\n", "|"));
+
+        const string buyTable = "Wood;1;50;Eikthyr\nStone;2\nFlint;3;10\nBad;4;0";
+        var buyPrices = (Dictionary<string, int>)Merchant.GetMethod("ParsePriceTable", BindingFlags.NonPublic | BindingFlags.Static)
+            .Invoke(null, new object[] { buyTable });
+        var buyLots = (Dictionary<string, int>)Merchant.GetMethod("ParseLotTable", BindingFlags.NonPublic | BindingFlags.Static)
+            .Invoke(null, new object[] { buyTable });
+        var buyBosses = (Dictionary<string, string>)Merchant.GetMethod("ParseBuyBossTable", BindingFlags.NonPublic | BindingFlags.Static)
+            .Invoke(null, new object[] { buyTable });
+        Check("a buy line carries price, lot and boss",
+              buyPrices.Count == 3 && buyPrices["Wood"] == 1 && buyLots["Wood"] == 50 && buyBosses["Wood"] == "Eikthyr" &&
+              buyLots["Flint"] == 10 && !buyBosses.ContainsKey("Flint") && !buyLots.ContainsKey("Stone") && !buyPrices.ContainsKey("Bad"),
+              string.Join(",", buyPrices.Keys));
+
         // Structural: the purchase path has no coin payout left in it at all. The two
         // positive controls make sure the IL reader is actually finding calls and strings.
         Check("the reader sees the auction's refund call (control)",

@@ -305,5 +305,9 @@ namespace NpcValheim.Persistence
         /// <summary>Units the price is for, both sides: 50 with Price 10 is 50 of the item for
         /// 10 coins. 1 (the default, and what a template without it means) is per unit.</summary>
         public int Lot { get; set; } = 1;
+
+        /// <summary>The boss whose pass this item requires (a prefab from [BossPass] Bosses),
+        /// both sides, or empty for anyone.</summary>
+        public string Boss { get; set; } = "";
     }
 }

@@ -456,7 +456,7 @@ namespace BossPassTestDriver
 
             int revision = BossPass.MessageRevision;
             BossPass.TryBeginPurchase();
-            Check("deadcoins/pedido-enviado", market.RequestBossPass(BossPass.MethodDeadcoins, 500));
+            Check("deadcoins/pedido-enviado", market.RequestBossPass("gd_king", BossPass.MethodDeadcoins, 500));
             if (IsA)
             {
                 yield return WaitFor(() => BossPass.HasLocalPass("gd_king"), 15f);
@@ -486,7 +486,7 @@ namespace BossPassTestDriver
                 yield return new WaitForSeconds(0.5f);
                 int before = Coins;
                 BossPass.TryBeginPurchase();
-                market.RequestBossPass(BossPass.MethodGold, 1000);
+                market.RequestBossPass("gd_king", BossPass.MethodGold, 1000);
                 yield return WaitFor(() => BossPass.HasLocalPass("gd_king"), 20f);
                 Check("moedas/passe-comprado-em-duas-etapas", _waitOk, BossPass.LastMessage);
                 Check("moedas/1000-saem-da-bolsa", Coins == before - 1000, $"{before} -> {Coins}");
@@ -506,7 +506,7 @@ namespace BossPassTestDriver
                 int before = Coins;
                 int revision = BossPass.MessageRevision;
                 BossPass.TryBeginPurchase();
-                market.RequestBossPass(BossPass.MethodGold, 1000);
+                market.RequestBossPass("gd_king", BossPass.MethodGold, 1000);
                 yield return WaitMessage(revision, "já tem o passe", 10f);
                 Check("moedas/quem-ja-tem-e-recusado", _waitOk, BossPass.LastMessage);
                 yield return new WaitForSeconds(2f);
@@ -564,7 +564,7 @@ namespace BossPassTestDriver
             int coins = Coins;
             int revision = BossPass.MessageRevision;
             BossPass.TryBeginPurchase();
-            Market.RequestBossPass(BossPass.MethodGold, 9999);
+            Market.RequestBossPass("GoblinKing", BossPass.MethodGold, 9999);
             yield return WaitMessage(revision, "agora custa 10000 moedas", 10f);
             Check("preco-velho/recusado-com-o-preco-novo", _waitOk, BossPass.LastMessage);
             yield return new WaitForSeconds(1f);
