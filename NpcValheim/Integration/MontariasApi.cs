@@ -14,14 +14,16 @@ namespace NpcValheim.Integration
     /// nothing to sell and says so; nothing else changes.
     ///
     /// The other side is ValheimMontarias.MontariasApi, which keeps to primitive types for
-    /// exactly this. Its Version constant guards the shape: a version this file does not know
-    /// is treated as not installed rather than called into blind.
+    /// exactly this. Its Version constant guards the shape: a version older than this file
+    /// needs is treated as not installed rather than called into blind.
     /// </summary>
     internal static class MontariasApi
     {
         private const string AssemblyName = "ValheimMontarias";
         private const string TypeName = "ValheimMontarias.MontariasApi";
-        private const int KnownVersion = 1;
+        // Montarias only adds to its API (v2 added the estábulo calls); every version from
+        // this one up keeps what this file calls.
+        private const int MinVersion = 1;
 
         private static bool _resolved;
         private static bool _loggedMissing;
@@ -155,9 +157,9 @@ namespace NpcValheim.Integration
 
                 var api = assembly.GetType(TypeName);
                 var version = api?.GetField("Version", BindingFlags.Public | BindingFlags.Static)?.GetValue(null);
-                if (!(version is int v) || v != KnownVersion)
+                if (!(version is int v) || v < MinVersion)
                 {
-                    Plugin.Log.LogWarning($"NpcValheim: Montarias API version {version ?? "missing"} is not {KnownVersion}; skipping integration");
+                    Plugin.Log.LogWarning($"NpcValheim: Montarias API version {version ?? "missing"} is older than {MinVersion}; skipping integration");
                     _api = null;
                     _resolved = false;
                     return;
