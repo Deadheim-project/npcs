@@ -85,6 +85,7 @@ namespace NpcValheim.Npc
             Barber.Register(rpc);
             Tailor.Register(rpc);
             Season.Register(rpc);
+            PriceEditor.Register(rpc);
             Plugin.Log.LogInfo("NpcValheim: server-authoritative service NPC RPCs registered");
         }
 

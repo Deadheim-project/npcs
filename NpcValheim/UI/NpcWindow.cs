@@ -201,6 +201,8 @@ namespace NpcValheim.UI
                     AddTab("Arena (admin)", new ArenaAdminView(), npc, player);
                 if (npc is ArenaVendorNpc)
                     AddTab("Recompensas", new ArenaVendorAdminView(), npc, player);
+                if (PriceEditor.Applies(npc))
+                    AddTab("Preços", new PriceEditView(), npc, player);
                 if (npc is DeadcoinShopNpc)
                     AddTab("Itens (admin)", new DeadcoinShopAdminView(), npc, player);
             }

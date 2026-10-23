@@ -341,6 +341,7 @@ namespace NpcValheim
 
             ConfigSync.AddConfigEntry(TailorEnabled).SynchronizedConfig = true;
             ConfigSync.AddConfigEntry(TailorPriceCoins).SynchronizedConfig = true;
+            ConfigSync.AddConfigEntry(SeasonPrice).SynchronizedConfig = true;
             ConfigSync.AddConfigEntry(TailorMinArenaRating).SynchronizedConfig = true;
             ConfigSync.AddConfigEntry(TailorArenaBracket).SynchronizedConfig = true;
 
