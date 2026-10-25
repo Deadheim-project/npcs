@@ -89,13 +89,13 @@ namespace NpcValheim.UI
                 switch (match.Phase)
                 {
                     case "invited":
-                        return $"<color=#ffe300>A arena está pronta!</color>  [{key}] Entrar  ·  {left}s";
+                        return $"<color=#ffe300>{(match.IsChallenge ? "O desafio está pronto!" : "A arena está pronta!")}</color>  [{key}] Entrar  ·  {left}s";
                     case "prep":
                         return $"Preparação  ·  os portões abrem em {clock}";
                     case "live":
                         return match.Mine == "ko" ? $"{score}  ·  você foi derrotado" : $"{score}  ·  {clock}";
                     default:
-                        string outcome = match.Winner == ArenaSide.None ? "Empate"
+                        string outcome = match.Winner == ArenaSide.None ? match.IsChallenge ? "Desafio falhou" : "Empate"
                             : match.Winner == match.Side ? "<color=#73db6b>Vitória!</color>" : "<color=#ee6b57>Derrota</color>";
                         return $"{outcome}  ·  placar em [{key}]  ·  volta em {clock}";
                 }

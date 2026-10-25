@@ -69,6 +69,21 @@ namespace NpcValheim.Arena
         public static string Name(int side) => side == Gold ? "Ouro" : side == Green ? "Verde" : "-";
     }
 
+    /// <summary>
+    /// A challenge: a group of up to <see cref="ArenaTuning.ChallengeMaxPlayers"/> against one
+    /// strong creature, in an arena. The creature takes the Green start; the group, the Gold.
+    /// </summary>
+    internal sealed class ArenaChallengeDef
+    {
+        public string Name;
+        public string Prefab;
+        /// <summary>Stars + 1, as the game counts: 1 is a plain creature, 3 is two stars.</summary>
+        public int Level = 1;
+        /// <summary>On top of what the level already gives.</summary>
+        public float HealthMultiplier = 1f;
+        public readonly List<KeyValuePair<string, int>> Rewards = new List<KeyValuePair<string, int>>();
+    }
+
     /// <summary>One line of the arena vendor.</summary>
     internal sealed class ArenaOffer
     {
@@ -143,6 +158,21 @@ namespace NpcValheim.Arena
         public int ResetHourUtc = 15;
 
         public List<ArenaOffer> Offers = new List<ArenaOffer>();
+
+        // Challenge: a group against one creature, no rating.
+        public bool ChallengeEnabled = true;
+        public int ChallengeMaxPlayers = 3;
+        public float ChallengeTimeLimitSeconds = 10f * 60f;
+        /// <summary>After a win, how long before the same player is paid by that challenge again.</summary>
+        public float ChallengeCooldownSeconds = 60f * 60f;
+        /// <summary>Arenas a challenge may use; empty = any free one.</summary>
+        public List<string> ChallengeMaps = new List<string>();
+        public List<ArenaChallengeDef> Challenges = new List<ArenaChallengeDef>();
+
+        public ArenaChallengeDef ChallengeNamed(string name) =>
+            Challenges.FirstOrDefault(c => string.Equals(c.Name, (name ?? "").Trim(), StringComparison.OrdinalIgnoreCase));
+
+        public float TimeLimitOf(bool challenge) => challenge ? ChallengeTimeLimitSeconds : TimeLimitSeconds;
 
         /// <summary>Every bracket that is played: the cfg's, plus 1v1 when Solo is on.</summary>
         public List<int> ActiveBrackets => ArenaSettingsParser.WithSolo(Brackets, Solo);
@@ -454,6 +484,66 @@ namespace NpcValheim.Arena
             }
             return offers;
         }
+
+        /// <summary>
+        /// Creatures offered in the challenge's list in the Deadheim menu (prefab names), by
+        /// biome. No boss: killing one counts as a boss defeated. All checked against the game's
+        /// prefab manifest (1.0); a prefab the running game lacks is still refused on the rebuild.
+        /// </summary>
+        internal static readonly string[] ChallengeCreatures =
+        {
+            "Greydwarf_Elite", "Greydwarf_Shaman", "Troll", "Bjorn", "Skeleton_Poison",
+            "Draugr_Elite", "Abomination", "BlobElite", "Wraith",
+            "Wolf", "Fenring", "Fenring_Cultist", "Ulv", "StoneGolem",
+            "Lox", "Goblin", "GoblinBrute", "GoblinShaman", "Unbjorn", "Deathsquito",
+            "Seeker", "SeekerBrute", "Gjall", "Tick", "DvergerMage",
+            "Charred_Melee", "Charred_Archer", "Charred_Twitcher", "Asksvin", "Volture", "Morgen", "FallenValkyrie",
+        };
+
+        /// <summary>
+        /// One challenge from the fields of its block in the cfg ([Arena - Desafio N]). The
+        /// number fields come already limited by their ranges; what is checked here is what a
+        /// text field can get wrong. Null after naming the problem.
+        /// </summary>
+        internal static ArenaChallengeDef MakeChallenge(string slot, string name, string prefab, int level, float health,
+            string rewardItem, int rewardAmount, string extraRewards, List<string> problems)
+        {
+            prefab = (prefab ?? "").Trim();
+            if (prefab.Length == 0)
+            {
+                problems?.Add($"{slot}: escolha a criatura");
+                return null;
+            }
+            name = CleanMapName(name);
+            var def = new ArenaChallengeDef
+            {
+                Name = name.Length > 0 ? name : prefab,
+                Prefab = prefab,
+                Level = Mathf.Clamp(level, 1, 10),
+                HealthMultiplier = float.IsNaN(health) ? 1f : Mathf.Clamp(health, 0.1f, 100f),
+            };
+            rewardItem = (rewardItem ?? "").Trim();
+            if (rewardItem.Length > 0 && rewardAmount > 0)
+                def.Rewards.Add(new KeyValuePair<string, int>(rewardItem, rewardAmount));
+            foreach (var reward in (extraRewards ?? "").Split(new[] { ',', '|', ';' }, StringSplitOptions.RemoveEmptyEntries))
+            {
+                var pair = reward.Split(':');
+                int amount = 1;
+                if (pair[0].Trim().Length == 0 || pair.Length > 2 ||
+                    (pair.Length == 2 && (!int.TryParse(pair[1].Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out amount) || amount <= 0)))
+                {
+                    problems?.Add($"{slot}: recompensa extra '{reward.Trim()}' invalida (use item:qtd, separados por virgula)");
+                    return null;
+                }
+                def.Rewards.Add(new KeyValuePair<string, int>(pair[0].Trim(), amount));
+            }
+            return def;
+        }
+
+        /// <summary>"Arena1,Arena2" -> names, cleaned as map names are.</summary>
+        internal static List<string> ParseNames(string raw) =>
+            (raw ?? "").Split(new[] { ',', '|' }, StringSplitOptions.RemoveEmptyEntries)
+                .Select(CleanMapName).Where(n => n.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
 
         internal static bool TryParseDay(string raw, out DayOfWeek day)
         {

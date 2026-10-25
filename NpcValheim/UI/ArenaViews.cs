@@ -223,12 +223,14 @@ namespace NpcValheim.UI
             var match = s.Match;
             if (match != null)
             {
-                Heading($"Partida: {match.Map} · {ArenaRules.BracketName(match.Size)} {Kind(match.Rated)}");
+                Heading(match.IsChallenge
+                    ? $"Desafio: {match.Challenge} · {match.Map}"
+                    : $"Partida: {match.Map} · {ArenaRules.BracketName(match.Size)} {Kind(match.Rated)}");
                 switch (match.Phase)
                 {
                     case "invited":
-                        LiveLine(() => $"A arena está pronta! Você é do time {SideText(match.Side)}. Expira em {ArenaClient.SecondsLeft()}s.",
-                            16, ValheimUi.Yellow);
+                        LiveLine(() => (match.IsChallenge ? "O desafio está pronto!" : $"A arena está pronta! Você é do time {SideText(match.Side)}.") +
+                                       $" Expira em {ArenaClient.SecondsLeft()}s.", 16, ValheimUi.Yellow);
                         var row = ButtonRow();
                         Btn(row, "Entrar", 160f, () =>
                         {
@@ -238,13 +240,14 @@ namespace NpcValheim.UI
                         Cell(row, "Na ranqueada, deixar expirar conta como derrota.", 13, ValheimUi.Muted);
                         break;
                     case "prep":
-                        LiveLine(() => $"Preparação: os portões abrem em {Clock(ArenaClient.SecondsLeft())}. Você é do time {SideText(match.Side)}.", 16, ValheimUi.Yellow);
+                        LiveLine(() => $"Preparação: os portões abrem em {Clock(ArenaClient.SecondsLeft())}." +
+                                       (match.IsChallenge ? " A criatura chega quando abrirem." : $" Você é do time {SideText(match.Side)}."), 16, ValheimUi.Yellow);
                         Score(match);
                         LeaveButton("Sair da arena");
                         break;
                     case "live":
                         Score(match);
-                        LiveLine(() => $"Tempo até o empate: {Clock(ArenaClient.SecondsLeft())}" +
+                        LiveLine(() => $"{(match.IsChallenge ? "Tempo restante" : "Tempo até o empate")}: {Clock(ArenaClient.SecondsLeft())}" +
                                        (match.Mine == "ko" ? "   ·   <color=#ee6b57>você foi derrotado</color>" : ""), 15);
                         LeaveButton(match.Rated ? "Abandonar (conta como derrota)" : "Abandonar a partida");
                         break;
@@ -261,7 +264,7 @@ namespace NpcValheim.UI
             {
                 Heading("Fila");
                 if (queue.Status == "confirm")
-                    Line($"Confirmando o grupo para {ArenaRules.BracketName(queue.Size)} {Kind(queue.Rated)}...", 15, ValheimUi.Yellow);
+                    Line("Confirmando o grupo...", 15, ValheimUi.Yellow);
                 else
                 {
                     int since = queue.Waited;
@@ -320,9 +323,10 @@ namespace NpcValheim.UI
         /// the change, then every player.</summary>
         protected void ResultBlock(ArenaResult r)
         {
-            string outcome = r.Winner == ArenaSide.None ? "Empate: o tempo acabou"
-                : $"Vitória do time {SideText(r.Winner)}";
-            Heading($"Resultado · {r.Map} · {ArenaRules.BracketName(r.Size)} {Kind(r.Rated)}");
+            string outcome = r.IsChallenge
+                ? r.Winner == ArenaSide.Gold ? $"{r.Challenge} foi derrotado!" : r.Winner == ArenaSide.Green ? $"{r.Challenge} venceu" : "O desafio terminou sem vencedor"
+                : r.Winner == ArenaSide.None ? "Empate: o tempo acabou" : $"Vitória do time {SideText(r.Winner)}";
+            Heading(r.IsChallenge ? $"Resultado · Desafio {r.Challenge} · {r.Map}" : $"Resultado · {r.Map} · {ArenaRules.BracketName(r.Size)} {Kind(r.Rated)}");
             Line($"{outcome}  ·  {Clock(r.Duration)}", 17, ValheimUi.Yellow, 28f);
             foreach (var side in r.Sides)
             {
@@ -640,7 +644,48 @@ namespace NpcValheim.UI
                     : $"Ranqueada: grupo de exatamente {Size} do mesmo time, rating em jogo. Escaramuça: sozinho ou em grupo, sem rating.",
                 13, ValheimUi.Muted, 22f);
             Gap();
+            ChallengeBlock(busy, group.Count);
             StatusBlocks(withResult: true);
+        }
+
+        /// <summary>The challenges the server offers: the group (up to MaxPlayers) against one
+        /// creature, no queue, no rating. Read from the synced cfg.</summary>
+        private void ChallengeBlock(bool busy, int groupSize)
+        {
+            if (!(ArenaConfig.ChallengeEnabled?.Value ?? false)) return;
+            var challenges = ArenaConfig.ChallengeDefs(null, checkWorld: false);
+            if (challenges.Count == 0) return;
+            int max = Mathf.Clamp(ArenaConfig.ChallengeMaxPlayers?.Value ?? 3, 1, 10);
+
+            Heading("Desafio");
+            Line($"Você e o seu grupo (até {max}) contra uma criatura forte. Sem rating; a recompensa vai pelo correio.", 14, ValheimUi.Muted);
+            foreach (var c in challenges)
+            {
+                var def = c;
+                var row = ButtonRow(40f);
+                string stars = def.Level > 1 ? $" (nível {def.Level})" : "";
+                string reward = def.Rewards.Count == 0 ? "sem recompensa"
+                    : string.Join(", ", def.Rewards.Select(r => $"{r.Value}x {ItemNames.Display(r.Key)}"));
+                Cell(row, $"{def.Name}{stars}  ·  {reward}", 15);
+                var go = Btn(row, "Desafiar", 140f, () => JoinChallenge(def.Name), 15);
+                go.interactable = !busy && groupSize <= max;
+            }
+            if (groupSize > max) Line($"O seu grupo tem {groupSize}: o desafio aceita até {max}.", 13, ValheimUi.Muted, 22f);
+            Gap();
+        }
+
+        private void JoinChallenge(string name)
+        {
+            var group = ArenaGroups.Members();
+            if (group.Count > 1 && !ArenaGroups.IsLeader())
+            {
+                Say("Só o líder do grupo pode chamar o desafio.");
+                return;
+            }
+            long me = ZDOMan.GetSessionID();
+            string peers = string.Join(",", group.Where(m => m.Peer != me).Select(m => m.Peer.ToString(CultureInfo.InvariantCulture)));
+            Ask(ArenaWire.ActChallengeJoin, $"{name}\n{peers}");
+            Say("Chamando o desafio...");
         }
 
         private void Join(bool rated)

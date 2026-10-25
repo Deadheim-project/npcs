@@ -27,6 +27,16 @@ namespace NpcValheim.Arena
         void Send(long playerId, string kind, string payload);
         void MailItem(long playerId, string subject, string prefab, int amount);
         void MailLetter(long playerId, string subject, string body);
+        /// <summary>Challenge: puts the match's creature in the world; false when it could not.</summary>
+        bool SpawnCreature(long matchId, ArenaChallengeDef def, Vector3 at, float yaw);
+        /// <summary>Whether the match's creature still exists -- false once it died.</summary>
+        bool CreatureAlive(long matchId);
+        /// <summary>The creature's health from 0 to 1, or -1 when it is not known here.</summary>
+        float CreatureHealth(long matchId);
+        void DespawnCreature(long matchId);
+        /// <summary>Removes challenge creatures left in the world by matches that are gone (a
+        /// server that stopped mid-challenge).</summary>
+        void SweepCreatures(IEnumerable<string> prefabs, Func<long, bool> live);
         void Log(string text);
         void Warn(string text);
     }
@@ -79,6 +89,14 @@ namespace NpcValheim.Arena
         public double LeaveAt;
         public int Winner = -1;
         public int Announced;
+        /// <summary>Set on a challenge: one side of players against this creature, which stands
+        /// in for the Green side.</summary>
+        public ArenaChallengeDef Challenge;
+        public bool CreatureSpawned;
+        public bool CreatureDead;
+        public int CreatureHealthShown = -1;
+
+        public bool IsChallenge => Challenge != null;
         public readonly ArenaSideInfo[] Sides = { null, new ArenaSideInfo(), new ArenaSideInfo() };
         public readonly List<ArenaSeat> Seats = new List<ArenaSeat>();
 
@@ -107,6 +125,8 @@ namespace NpcValheim.Arena
         public long Leader;
         public int Size;
         public bool Rated;
+        /// <summary>Set when the group is going to a challenge, not to the queue.</summary>
+        public ArenaChallengeDef Challenge;
         public double Expires;
         public readonly List<long> Members = new List<long>();
         public readonly HashSet<long> Confirmed = new HashSet<long>();
@@ -162,6 +182,10 @@ namespace NpcValheim.Arena
         private readonly Dictionary<long, ArenaMatch> _matches = new Dictionary<long, ArenaMatch>();
         private readonly Dictionary<long, TeamInvite> _teamInvites = new Dictionary<long, TeamInvite>();
         private readonly Dictionary<long, List<SignRequest>> _signRequests = new Dictionary<long, List<SignRequest>>();
+        /// <summary>Player and challenge -> when that challenge pays them again. In memory: a
+        /// restart forgets it.</summary>
+        private readonly Dictionary<string, double> _challengeCooldowns = new Dictionary<string, double>();
+        private bool _swept;
 
         private long _nextMatchId;
         private long _nextQueueId;
@@ -268,6 +292,10 @@ namespace NpcValheim.Arena
                 case ActQueueJoin:
                     if (where != AtBattlemaster) return;
                     JoinQueue(me, Int(f, 0), Int(f, 1) == 1, Str(f, 2));
+                    return;
+                case ActChallengeJoin:
+                    if (where != AtBattlemaster) return;
+                    JoinChallenge(me, Str(f, 0), Str(f, 1));
                     return;
                 case ActQueueLeave: LeaveQueue(playerId); return;
                 case ActGroupConfirm: ConfirmGroup(playerId, Str(f, 0), Int(f, 1) == 1); return;
@@ -778,25 +806,8 @@ namespace NpcValheim.Arena
             else if (!rated && !_t.Skirmish) refusal = "Escaramuça está desligada neste servidor.";
             if (refusal != null) { Say(id, refusal, alert: true); return; }
 
-            var members = new List<long> { id };
-            foreach (var part in (peerList ?? "").Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries))
-            {
-                if (!long.TryParse(part.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out long peer)) continue;
-                long member = _host.PlayerOfPeer(peer);
-                if (member == 0L)
-                {
-                    Say(id, "Um membro do grupo não foi encontrado no servidor.", alert: true);
-                    return;
-                }
-                if (!members.Contains(member)) members.Add(member);
-            }
-
-            foreach (var member in members)
-            {
-                refusal = QueueRefusal(member);
-                if (refusal == null && !_host.IsOnline(member)) refusal = $"{NameOf(member)} não está online.";
-                if (refusal != null) { Say(id, refusal, alert: true); return; }
-            }
+            var members = GroupOf(id, peerList);
+            if (members == null) return;
 
             if (rated && _t.IsSolo(size))
             {
@@ -846,6 +857,32 @@ namespace NpcValheim.Arena
             SendState(id);
         }
 
+        /// <summary>The leader and the members their client named (peer ids from the Groups
+        /// mod), each free to play and online; null after telling the leader why not.</summary>
+        private List<long> GroupOf(long id, string peerList)
+        {
+            var members = new List<long> { id };
+            foreach (var part in (peerList ?? "").Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries))
+            {
+                if (!long.TryParse(part.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out long peer)) continue;
+                long member = _host.PlayerOfPeer(peer);
+                if (member == 0L)
+                {
+                    Say(id, "Um membro do grupo não foi encontrado no servidor.", alert: true);
+                    return null;
+                }
+                if (!members.Contains(member)) members.Add(member);
+            }
+
+            foreach (var member in members)
+            {
+                string refusal = QueueRefusal(member);
+                if (refusal == null && !_host.IsOnline(member)) refusal = $"{NameOf(member)} não está online.";
+                if (refusal != null) { Say(id, refusal, alert: true); return null; }
+            }
+            return members;
+        }
+
         private void ConfirmGroup(long playerId, string ticket, bool ok)
         {
             if (!_pending.TryGetValue(ticket ?? "", out var pending) || !pending.Members.Contains(playerId)) return;
@@ -872,8 +909,135 @@ namespace NpcValheim.Arena
                         return;
                     }
                 }
-                Enqueue(pending.Leader, pending.Members, pending.Size, pending.Rated);
+                if (pending.Challenge != null) CreateChallenge(pending.Leader, pending.Members, pending.Challenge);
+                else Enqueue(pending.Leader, pending.Members, pending.Size, pending.Rated);
             }
+        }
+
+        // ------------------------------------------------------------------------ challenges
+
+        /// <summary>
+        /// A challenge at the Battlemaster: the leader and up to ChallengeMaxPlayers - 1 of their
+        /// group against one strong creature. There is no queue and no rating: the match is made
+        /// at once when an arena is free, and the group goes in through the same invitation.
+        /// </summary>
+        private void JoinChallenge(ArenaPlayerRecord me, string challengeName, string peerList)
+        {
+            long id = me.PlayerId;
+            var def = _t.ChallengeNamed(challengeName);
+            string refusal = null;
+            if (!_t.ChallengeEnabled) refusal = "Os desafios estão desligados neste servidor.";
+            else if (def == null) refusal = "Esse desafio não existe aqui.";
+            else if (_t.Maps.Count == 0) refusal = "Nenhuma arena foi configurada ainda. Fale com um admin.";
+            if (refusal != null) { Say(id, refusal, alert: true); return; }
+
+            var members = GroupOf(id, peerList);
+            if (members == null) return;
+            if (members.Count > _t.ChallengeMaxPlayers)
+            {
+                Say(id, $"O seu grupo tem {members.Count} jogadores; o desafio aceita até {_t.ChallengeMaxPlayers}.", alert: true);
+                return;
+            }
+            if (FreeMap(def) == null)
+            {
+                Say(id, BusyText, alert: true);
+                return;
+            }
+
+            if (members.Count == 1)
+            {
+                CreateChallenge(id, members, def);
+                return;
+            }
+
+            var pending = new PendingQueue
+            {
+                Ticket = Guid.NewGuid().ToString("N").Substring(0, 12),
+                Leader = id,
+                Size = members.Count,
+                Challenge = def,
+                Expires = _host.Now + _t.GroupConfirmSeconds,
+            };
+            pending.Members.AddRange(members);
+            pending.Confirmed.Add(id);
+            _pending[pending.Ticket] = pending;
+            foreach (var member in members.Where(m => m != id))
+                _host.Send(member, Confirm, Record(pending.Ticket, L(id), I(members.Count), "0"));
+            Say(id, "Confirmando o grupo...");
+            SendState(id);
+        }
+
+        private const string BusyText = "Todas as arenas do desafio estão ocupadas. Tente de novo em instantes.";
+
+        private void CreateChallenge(long leader, List<long> members, ArenaChallengeDef def)
+        {
+            var map = FreeMap(def);
+            if (map == null)
+            {
+                foreach (var m in members)
+                {
+                    Say(m, BusyText, alert: true);
+                    SendState(m);
+                }
+                return;
+            }
+
+            var match = new ArenaMatch
+            {
+                Id = ++_nextMatchId,
+                Size = members.Count,
+                Rated = false,
+                Map = map,
+                Status = MatchStatus.WaitJoin,
+                CreatedAt = _host.Now,
+                InviteExpires = _host.Now + _t.InviteAcceptSeconds,
+                Challenge = def,
+            };
+            match.Sides[ArenaSide.Gold].TeamName = "Grupo de " + NameOf(leader);
+            match.Sides[ArenaSide.Green].TeamName = def.Name;
+            foreach (var m in members)
+                match.Seats.Add(new ArenaSeat { PlayerId = m, Name = NameOf(m), Side = ArenaSide.Gold, State = SeatState.Invited });
+            _matches[match.Id] = match;
+
+            _host.Log($"Arena: desafio #{match.Id} \"{def.Name}\" ({def.Prefab} nivel {def.Level}, vida x{def.HealthMultiplier}) em {map.Name}: " +
+                      string.Join(", ", match.Seats.Select(s => s.Name)));
+            foreach (var seat in match.Seats)
+            {
+                Say(seat.PlayerId, $"O desafio \"{def.Name}\" está pronto! Abra a Arena [H] e clique Entrar ({Mathf.RoundToInt(_t.InviteAcceptSeconds)}s).", alert: true);
+                SendState(seat.PlayerId);
+            }
+        }
+
+        private static string CooldownKey(long playerId, ArenaChallengeDef def) =>
+            L(playerId) + ":" + def.Name.ToLowerInvariant();
+
+        /// <summary>Everyone still in the arena when the creature falls is paid, knocked out or
+        /// not, unless that challenge already paid them within ChallengeCooldownSeconds.</summary>
+        private void PayChallenge(ArenaMatch match)
+        {
+            var def = match.Challenge;
+            foreach (var seat in match.Seats.Where(s => s.Present))
+            {
+                string key = CooldownKey(seat.PlayerId, def);
+                if (_challengeCooldowns.TryGetValue(key, out double until) && _host.Now < until)
+                {
+                    int minutes = Mathf.Max(1, Mathf.CeilToInt((float)((until - _host.Now) / 60.0)));
+                    Say(seat.PlayerId, $"\"{def.Name}\" já pagou você há pouco: a próxima recompensa sai em {minutes} min.");
+                    continue;
+                }
+                if (def.Rewards.Count == 0) continue;
+                _challengeCooldowns[key] = _host.Now + _t.ChallengeCooldownSeconds;
+                foreach (var reward in def.Rewards)
+                    _host.MailItem(seat.PlayerId, "Desafio: " + def.Name, reward.Key, reward.Value);
+                Say(seat.PlayerId, $"Recompensa do desafio \"{def.Name}\" enviada pelo correio.");
+            }
+        }
+
+        private void DespawnCreature(ArenaMatch match)
+        {
+            if (!match.IsChallenge || !match.CreatureSpawned || match.CreatureDead) return;
+            match.CreatureDead = true;
+            _host.DespawnCreature(match.Id);
         }
 
         private void Enqueue(long leader, List<long> members, int size, bool rated)
@@ -1023,11 +1187,14 @@ namespace NpcValheim.Arena
             }
         }
 
-        private ArenaMapDef FreeMap()
+        /// <summary>A free arena; for a challenge, one of ChallengeMaps when that list is set.</summary>
+        private ArenaMapDef FreeMap(ArenaChallengeDef challenge = null)
         {
             var busy = new HashSet<string>(_matches.Values.Where(m => m.Status != MatchStatus.Closed).Select(m => m.Map.Name),
                 StringComparer.OrdinalIgnoreCase);
-            var free = _t.Maps.Where(m => !busy.Contains(m.Name)).ToList();
+            var free = _t.Maps.Where(m => !busy.Contains(m.Name) &&
+                                          (challenge == null || _t.ChallengeMaps.Count == 0 ||
+                                           _t.ChallengeMaps.Contains(m.Name, StringComparer.OrdinalIgnoreCase))).ToList();
             return free.Count == 0 ? null : free[_random.Next(free.Count)];
         }
 
@@ -1228,7 +1395,7 @@ namespace NpcValheim.Arena
             }
             else
             {
-                Feed(match, $"{seat.Name} foi derrotado.");
+                Feed(match, match.IsChallenge ? $"{seat.Name} foi derrotado por {match.Challenge.Name}." : $"{seat.Name} foi derrotado.");
             }
 
             var map = MapOf(match);
@@ -1297,6 +1464,14 @@ namespace NpcValheim.Arena
         private void CheckWin(ArenaMatch match)
         {
             if (match.Status != MatchStatus.InProgress) return;
+            if (match.IsChallenge)
+            {
+                // The creature is the Green side: it falls, the group wins; nobody of the group
+                // standing (knocked out, gone, offline), the creature does.
+                if (match.CreatureDead) EndMatch(match, ArenaSide.Gold);
+                else if (match.AliveCount(ArenaSide.Gold) == 0) EndMatch(match, ArenaSide.Green);
+                return;
+            }
             int goldAlive = match.AliveCount(ArenaSide.Gold), greenAlive = match.AliveCount(ArenaSide.Green);
             int goldPresent = match.PresentCount(ArenaSide.Gold), greenPresent = match.PresentCount(ArenaSide.Green);
 
@@ -1309,11 +1484,25 @@ namespace NpcValheim.Arena
         {
             match.Status = MatchStatus.InProgress;
             match.StartedAt = _host.Now;
+            if (match.IsChallenge)
+            {
+                // The creature comes in with the gates opening, at the Green start, so nothing
+                // can hurt the group during the preparation.
+                var map = match.Map;
+                match.CreatureSpawned = _host.SpawnCreature(match.Id, match.Challenge, map.SpawnOf(ArenaSide.Green), map.YawOf(ArenaSide.Green));
+                if (!match.CreatureSpawned)
+                {
+                    _host.Warn($"Arena: desafio #{match.Id}: não foi possível criar '{match.Challenge.Prefab}'");
+                    Announce(match, "A criatura não pôde ser chamada. O desafio foi cancelado.");
+                    EndMatch(match, ArenaSide.None);
+                    return;
+                }
+            }
             foreach (var seat in match.Seats.Where(s => s.Present))
             {
                 seat.Alive = true;
                 _host.Send(seat.PlayerId, Start, L(match.Id));
-                Say(seat.PlayerId, "A batalha na Arena começou!", alert: true);
+                Say(seat.PlayerId, match.IsChallenge ? $"O desafio começou: derrote {match.Challenge.Name}!" : "A batalha na Arena começou!", alert: true);
             }
             _host.Log($"Arena: partida #{match.Id} começou ({match.PresentCount(ArenaSide.Gold)} x {match.PresentCount(ArenaSide.Green)})");
             CheckWin(match);
@@ -1335,6 +1524,7 @@ namespace NpcValheim.Arena
 
             if (match.Rated)
                 SettleRated(match, winner);
+            DespawnCreature(match);
 
             foreach (var seat in match.Seats.Where(s => s.State == SeatState.Entered))
                 seat.Alive = seat.Alive && seat.Present;
@@ -1345,10 +1535,11 @@ namespace NpcValheim.Arena
                 _host.Send(seat.PlayerId, Result, summary);
                 if (seat.State == SeatState.Entered)
                     Say(seat.PlayerId, winner == ArenaSide.None
-                        ? "Tempo esgotado: a partida terminou sem vencedor."
+                        ? match.IsChallenge ? "O desafio terminou sem vencedor." : "Tempo esgotado: a partida terminou sem vencedor."
                         : winner == seat.Side ? "Vitória!" : "Derrota.", alert: true);
             }
 
+            if (match.IsChallenge && winner == ArenaSide.Gold) PayChallenge(match);
             Celebrate(match, winner);
 
             _db.SaveMatch(new ArenaMatchRecord
@@ -1502,7 +1693,8 @@ namespace NpcValheim.Arena
             var lines = new List<string>
             {
                 Record("R", L(match.Id), I(match.Size), match.Rated ? "1" : "0", I(match.Winner), match.Map.Name,
-                    I(Mathf.RoundToInt((float)(_host.Now - (match.StartedAt > 0 ? match.StartedAt : match.CreatedAt))))),
+                    I(Mathf.RoundToInt((float)(_host.Now - (match.StartedAt > 0 ? match.StartedAt : match.CreatedAt)))),
+                    match.IsChallenge ? match.Challenge.Name : ""),
             };
             for (int side = ArenaSide.Gold; side <= ArenaSide.Green; side++)
             {
@@ -1564,6 +1756,12 @@ namespace NpcValheim.Arena
         /// <summary>Once a second: who is gone, who left the arena on foot or through a portal.</summary>
         private void SlowTick()
         {
+            if (!_swept && _t.Challenges.Count > 0)
+            {
+                _swept = true;
+                _host.SweepCreatures(_t.Challenges.Select(c => c.Prefab).Distinct(),
+                    id => _matches.TryGetValue(id, out var m) && m.Status == MatchStatus.InProgress);
+            }
             foreach (var entry in _queue.ToList())
             {
                 var gone = entry.Players.FirstOrDefault(p => !_host.IsOnline(p));
@@ -1581,6 +1779,24 @@ namespace NpcValheim.Arena
             {
                 if (match.Status != MatchStatus.WaitJoin && match.Status != MatchStatus.InProgress) continue;
                 bool changed = false;
+                if (match.IsChallenge && match.Status == MatchStatus.InProgress && match.CreatureSpawned && !match.CreatureDead)
+                {
+                    if (!_host.CreatureAlive(match.Id))
+                    {
+                        match.CreatureDead = true;
+                        Feed(match, $"{match.Challenge.Name} foi derrotado!");
+                        _host.Log($"Arena: desafio #{match.Id}: {match.Challenge.Name} morreu");
+                        CheckWin(match);
+                        SendMatchState(match);
+                        continue;
+                    }
+                    int hp = Mathf.RoundToInt(_host.CreatureHealth(match.Id) * 100f);
+                    if (hp >= 0 && Math.Abs(hp - match.CreatureHealthShown) >= 5)
+                    {
+                        match.CreatureHealthShown = hp;
+                        changed = true;
+                    }
+                }
                 foreach (var seat in match.Seats.Where(s => s.State == SeatState.Entered))
                 {
                     if (!_host.IsOnline(seat.PlayerId))
@@ -1651,7 +1867,7 @@ namespace NpcValheim.Arena
                             if (left <= 0) StartMatch(match);
                         }
                     }
-                    else if (now - match.CreatedAt >= _t.TimeLimitSeconds)
+                    else if (now - match.CreatedAt >= _t.TimeLimitOf(match.IsChallenge))
                     {
                         EndMatch(match, ArenaSide.None);
                     }
@@ -1689,6 +1905,7 @@ namespace NpcValheim.Arena
         private void CloseMatch(ArenaMatch match, string why)
         {
             match.Status = MatchStatus.Closed;
+            DespawnCreature(match);
             _matches.Remove(match.Id);
             if (why != null) _host.Log($"Arena: partida #{match.Id} cancelada: {why}");
             foreach (var seat in match.Seats) SendState(seat.PlayerId);
@@ -1935,16 +2152,26 @@ namespace NpcValheim.Arena
                     case MatchStatus.WaitJoin:
                         phase = "prep"; left = match.PrepEndsAt > 0 ? match.PrepEndsAt - _host.Now : _t.PreparationSeconds; break;
                     case MatchStatus.InProgress:
-                        phase = "live"; left = match.CreatedAt + _t.TimeLimitSeconds - _host.Now; break;
+                        phase = "live"; left = match.CreatedAt + _t.TimeLimitOf(match.IsChallenge) - _host.Now; break;
                     default:
                         phase = "ended"; left = match.LeaveAt - _host.Now; break;
                 }
                 string mine = seat.State == SeatState.Invited ? "invited" : !seat.Alive ? "ko" : "alive";
                 lines.Add(Record("X", L(match.Id), I(match.Size), match.Rated ? "1" : "0", match.Map.Name, I(seat.Side), phase,
-                    I(Mathf.Max(0, Mathf.RoundToInt((float)left))), mine, I(match.Winner)));
-                lines.Add(Record("A", I(match.AliveCount(ArenaSide.Gold)), I(match.SeatCount(ArenaSide.Gold)),
-                    I(match.AliveCount(ArenaSide.Green)), I(match.SeatCount(ArenaSide.Green)),
-                    match.Sides[ArenaSide.Gold].TeamName, match.Sides[ArenaSide.Green].TeamName));
+                    I(Mathf.Max(0, Mathf.RoundToInt((float)left))), mine, I(match.Winner),
+                    match.IsChallenge ? match.Challenge.Name : ""));
+                if (match.IsChallenge)
+                {
+                    // The creature is the Green side's one "player", with its health beside the name.
+                    string creature = match.Challenge.Name + (match.CreatureHealthShown >= 0 && !match.CreatureDead
+                        ? $" ({match.CreatureHealthShown}%)" : "");
+                    lines.Add(Record("A", I(match.AliveCount(ArenaSide.Gold)), I(match.SeatCount(ArenaSide.Gold)),
+                        I(match.CreatureDead ? 0 : 1), "1", match.Sides[ArenaSide.Gold].TeamName, creature));
+                }
+                else
+                    lines.Add(Record("A", I(match.AliveCount(ArenaSide.Gold)), I(match.SeatCount(ArenaSide.Gold)),
+                        I(match.AliveCount(ArenaSide.Green)), I(match.SeatCount(ArenaSide.Green)),
+                        match.Sides[ArenaSide.Gold].TeamName, match.Sides[ArenaSide.Green].TeamName));
             }
             return Lines(lines);
         }

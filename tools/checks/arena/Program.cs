@@ -70,6 +70,32 @@ class Program
         public void Log(string text) => Logs.Add(text);
         public void Warn(string text) => Logs.Add("WARN " + text);
 
+        // The challenge creature: match id -> health from 0 to 1. Killing it is removing it.
+        public readonly Dictionary<long, float> Creatures = new Dictionary<long, float>();
+        public readonly List<(long Match, string Prefab, Vector3 At)> Spawned = new List<(long, string, Vector3)>();
+        public readonly List<long> Despawned = new List<long>();
+        public bool SpawnFails;
+        public int Sweeps;
+
+        public bool SpawnCreature(long matchId, ArenaChallengeDef def, Vector3 at, float yaw)
+        {
+            if (SpawnFails) return false;
+            Creatures[matchId] = 1f;
+            Spawned.Add((matchId, def.Prefab, at));
+            return true;
+        }
+
+        public bool CreatureAlive(long matchId) => Creatures.ContainsKey(matchId);
+        public float CreatureHealth(long matchId) => Creatures.TryGetValue(matchId, out var h) ? h : -1f;
+
+        public void DespawnCreature(long matchId)
+        {
+            Creatures.Remove(matchId);
+            Despawned.Add(matchId);
+        }
+
+        public void SweepCreatures(IEnumerable<string> prefabs, Func<long, bool> live) => Sweeps++;
+
         public string Last(long to, string kind) =>
             Sent.LastOrDefault(s => s.To == to && s.Kind == kind).Payload;
 
@@ -161,6 +187,7 @@ class Program
             Vendor();
             TeamManagement();
             Persistence();
+            Challenge();
         }
         catch (Exception ex)
         {
@@ -840,6 +867,160 @@ class Program
         Do(e, B, "", ArenaWire.ActQueueLeave);
         Do(e, B, "", ArenaWire.ActTeamDisband, "2");
         Check("out of the queue, the captain disbands", e.TeamOf(B, 2) == null && e.TeamOf(C, 2) == null && !e.Teams.Any());
+    }
+
+    static ArenaTuning ChallengeTuning()
+    {
+        var t = Tuning();
+        var problems = new List<string>();
+        t.Challenges = new List<ArenaChallengeDef>
+        {
+            ArenaSettingsParser.MakeChallenge("Desafio 1", "Troll Furioso", "Troll", 3, 2f, "Coins", 300, "TrophyFrostTroll:1", problems),
+        };
+        t.ChallengeMaxPlayers = 3;
+        t.ChallengeTimeLimitSeconds = 600f;
+        t.ChallengeCooldownSeconds = 3600f;
+        return t;
+    }
+
+    /// <summary>The leader calls the challenge with the group; each member's client confirms.</summary>
+    static void CallChallenge(ArenaEngine e, long leader, params long[] members)
+    {
+        Do(e, leader, ArenaEngine.AtBattlemaster, ArenaWire.ActChallengeJoin,
+            "Troll Furioso\n" + string.Join(",", members.Select(m => (m + 1000000).ToString())));
+        var pending = e.PendingOf(leader);
+        if (pending != null)
+            foreach (var m in members) Do(e, m, "", ArenaWire.ActGroupConfirm, $"{pending.Ticket}\n1");
+    }
+
+    static ArenaMatch StartChallenge(ArenaEngine e, FakeHost h, long leader, params long[] members)
+    {
+        CallChallenge(e, leader, members);
+        var match = e.MatchOf(leader);
+        if (match == null) return null;
+        EnterAll(e, match);
+        Advance(e, h, 61);
+        return match;
+    }
+
+    static void Challenge()
+    {
+        Section("challenge: a group against one creature");
+
+        var problems = new List<string>();
+        var full = ArenaSettingsParser.MakeChallenge("Desafio 1", " Troll Furioso ", "Troll", 3, 2f, "Coins", 300, "TrophyTroll:1, MeadHealthMajor:5", problems);
+        Check("fields: name, level, health", full != null && full.Name == "Troll Furioso" && full.Level == 3 && Math.Abs(full.HealthMultiplier - 2f) < 1e-6f);
+        Check("fields: reward plus the extras", full != null && full.Rewards.Count == 3 && full.Rewards[0].Key == "Coins" && full.Rewards[0].Value == 300 &&
+                                                full.Rewards[2].Key == "MeadHealthMajor" && full.Rewards[2].Value == 5);
+        var bare = ArenaSettingsParser.MakeChallenge("Desafio 2", "", "Wolf", 0, 500f, "", 10, "", problems);
+        Check("fields: no name takes the creature's, out-of-range numbers clamp, no reward", bare != null && bare.Name == "Wolf" &&
+                                                                                             bare.Level == 1 && Math.Abs(bare.HealthMultiplier - 100f) < 1e-6f && bare.Rewards.Count == 0);
+        Check("fields: amount 0 drops the reward", ArenaSettingsParser.MakeChallenge("Desafio 3", "X", "Troll", 1, 1f, "Coins", 0, "", problems).Rewards.Count == 0);
+        Check("fields: no problems so far", problems.Count == 0, string.Join(" / ", problems));
+        Check("fields: a bad extra refuses the challenge", ArenaSettingsParser.MakeChallenge("Desafio 4", "X", "Troll", 1, 1f, "Coins", 1, "Trophy:abc", problems) == null &&
+                                                           problems.Count == 1 && problems[0].StartsWith("Desafio 4"));
+        Check("fields: no creature refuses it", ArenaSettingsParser.MakeChallenge("Desafio 5", "X", " ", 1, 1f, "", 0, "", problems) == null && problems.Count == 2);
+        Check("the menu's creature list has no duplicate and no boss", ArenaSettingsParser.ChallengeCreatures.Distinct().Count() == ArenaSettingsParser.ChallengeCreatures.Length &&
+                                                                       !ArenaSettingsParser.ChallengeCreatures.Intersect(new[] { "Eikthyr", "gd_king", "Bonemass", "Dragon", "GoblinKing", "SeekerQueen", "Fader" }).Any());
+
+        // Alone: the match is made at once, no queue.
+        var (e, h, _) = NewEngine(ChallengeTuning());
+        Do(e, A, ArenaEngine.AtBattlemaster, ArenaWire.ActChallengeJoin, "Troll Furioso\n");
+        var solo = e.MatchOf(A);
+        Check("alone: invited at once", solo != null && solo.IsChallenge && solo.Seats.Count == 1 && solo.Seats[0].Side == ArenaSide.Gold);
+        Check("alone: not in any queue", e.QueueOf(A) == null);
+        Do(e, B, ArenaEngine.AtBattlemaster, ArenaWire.ActChallengeJoin, "Troll Furioso\n");
+        Check("the only arena is taken: refused", e.MatchOf(B) == null && h.Got(B, ArenaWire.Alert, "ocupadas"));
+        Do(e, B, ArenaEngine.AtBattlemaster, ArenaWire.ActQueueJoin, "2\n0\n");
+        Do(e, C, ArenaEngine.AtBattlemaster, ArenaWire.ActQueueJoin, "2\n0\n");
+        Advance(e, h, 2);
+        Check("a skirmish waits for the arena the challenge holds", e.MatchOf(B) == null && e.QueueOf(B) != null);
+        Do(e, D, "", ArenaWire.ActChallengeJoin, "Troll Furioso\n");
+        Check("only at the Battlemaster", e.MatchOf(D) == null);
+        Do(e, D, ArenaEngine.AtBattlemaster, ArenaWire.ActChallengeJoin, "Hidra\n");
+        Check("unknown challenge refused", e.MatchOf(D) == null && h.Got(D, ArenaWire.Alert, "não existe"));
+
+        // A group of four is one too many.
+        (e, h, _) = NewEngine(ChallengeTuning());
+        CallChallenge(e, A, B, C, D);
+        Check("four players: refused", e.MatchOf(A) == null && e.PendingOf(A) == null && h.Got(A, ArenaWire.Alert, "até 3"));
+
+        // Three: confirmed by the members' own clients, then invited together.
+        CallChallenge(e, A, B, C);
+        var match = e.MatchOf(A);
+        Check("three players: one match, all on Gold", match != null && match.Seats.Count == 3 && match.Seats.All(s => s.Side == ArenaSide.Gold));
+        Check("nobody is rated", match != null && !match.Rated);
+        EnterAll(e, match);
+        Advance(e, h, 30);
+        Check("no creature during the preparation", h.Spawned.Count == 0 && match.Status == MatchStatus.WaitJoin);
+        Advance(e, h, 31);
+        Check("gates open: live", match.Status == MatchStatus.InProgress);
+        Check("the creature comes in at the Green start", h.Spawned.Count == 1 && h.Spawned[0].Prefab == "Troll" &&
+                                                          h.Spawned[0].At == new Vector3(140, 30, 100));
+        Check("the old creatures were swept once", h.Sweeps == 1);
+
+        h.Creatures[match.Id] = 0.5f;
+        Advance(e, h, 1.5);
+        Check("its health shows on the scoreboard", h.Last(A, ArenaWire.State)?.Contains("Troll Furioso (50%)") == true, h.Last(A, ArenaWire.State));
+
+        Do(e, B, "", ArenaWire.ActKo, "0");
+        Check("a knockout by the creature", h.Got(A, ArenaWire.Feed, "Bravo foi derrotado por Troll Furioso") && match.Status == MatchStatus.InProgress);
+
+        h.Creatures.Remove(match.Id);
+        Advance(e, h, 1.5);
+        Check("the creature falls: the group wins", match.Winner == ArenaSide.Gold && match.Status == MatchStatus.WaitLeave);
+        Check("everyone still there is paid, knocked out or not",
+            new[] { A, B, C }.All(p => h.Items.Count(i => i.To == p) == 2 && h.Items.Any(i => i.To == p && i.Prefab == "Coins" && i.Amount == 300)));
+        Check("a dead creature is not despawned again", !h.Despawned.Contains(match.Id));
+        Check("the result names the challenge", h.Last(A, ArenaWire.Result)?.Contains("Troll Furioso") == true);
+        Advance(e, h, 121);
+        Check("then everyone goes back", e.MatchOf(A) == null && h.Got(A, ArenaWire.Return));
+
+        // The same challenge again within the cooldown: played, not paid.
+        int paid = h.Items.Count;
+        var again = StartChallenge(e, h, A, B, C);
+        h.Creatures.Remove(again.Id);
+        Advance(e, h, 1.5);
+        Check("won again within the cooldown: no second reward", again.Winner == ArenaSide.Gold && h.Items.Count == paid &&
+                                                                h.Got(A, ArenaWire.Notice, "já pagou"));
+        Advance(e, h, 121);
+
+        // Everyone down: the creature wins and leaves.
+        var lost = StartChallenge(e, h, A, B);
+        Do(e, A, "", ArenaWire.ActKo, "0");
+        Do(e, B, "", ArenaWire.ActKo, "0");
+        Check("all knocked out: the creature wins", lost.Winner == ArenaSide.Green);
+        Check("and is taken out of the world", h.Despawned.Contains(lost.Id) && !h.Creatures.ContainsKey(lost.Id));
+        Check("a loss pays nothing", h.Items.Count == paid);
+        Advance(e, h, 121);
+
+        // The clock.
+        var slow = StartChallenge(e, h, C);
+        Advance(e, h, 600);
+        Check("time up: no winner, creature gone", slow.Winner == ArenaSide.None && h.Despawned.Contains(slow.Id));
+        Advance(e, h, 121);
+
+        // Running away leaves the creature to the others; the last one out ends it.
+        var fled = StartChallenge(e, h, A, B);
+        Do(e, A, "", ArenaWire.ActLeave);
+        Check("one leaves, the other fights on", fled.Status == MatchStatus.InProgress);
+        Do(e, B, "", ArenaWire.ActLeave);
+        Check("the last leaves: lost, creature gone", fled.Winner == ArenaSide.Green && h.Despawned.Contains(fled.Id));
+        Advance(e, h, 121);
+
+        // The creature cannot be made: the challenge ends with nobody hurt.
+        h.SpawnFails = true;
+        var broken = StartChallenge(e, h, D);
+        Check("spawn failed: cancelled", broken.Winner == ArenaSide.None && h.Got(D, ArenaWire.Alert, "não pôde"));
+        h.SpawnFails = false;
+        Advance(e, h, 121);
+
+        // Off in the cfg.
+        var off = ChallengeTuning();
+        off.ChallengeEnabled = false;
+        e.SetTuning(off);
+        Do(e, E, ArenaEngine.AtBattlemaster, ArenaWire.ActChallengeJoin, "Troll Furioso\n");
+        Check("disabled: refused", e.MatchOf(E) == null && h.Got(E, ArenaWire.Alert, "desligados"));
     }
 
     static void Persistence()

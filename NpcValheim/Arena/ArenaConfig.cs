@@ -66,6 +66,38 @@ namespace NpcValheim.Arena
 
         internal static ConfigEntry<string> VendorItems;
 
+        internal static ConfigEntry<bool> ChallengeEnabled;
+        internal static ConfigEntry<int> ChallengeMaxPlayers;
+        internal static ConfigEntry<float> ChallengeTimeLimitMinutes;
+        internal static ConfigEntry<float> ChallengeCooldownMinutes;
+        internal static ConfigEntry<string> ChallengeMaps;
+
+        /// <summary>One challenge as its own block of the cfg, so the Deadheim menu (Ajustes)
+        /// edits it field by field: a box to tick, the creature from a list, +/- on the numbers.</summary>
+        internal sealed class ChallengeSlot
+        {
+            public ConfigEntry<bool> On;
+            public ConfigEntry<string> Name;
+            public ConfigEntry<string> Creature;
+            public ConfigEntry<int> Level;
+            public ConfigEntry<float> Health;
+            public ConfigEntry<string> RewardItem;
+            public ConfigEntry<int> RewardAmount;
+            public ConfigEntry<string> ExtraRewards;
+        }
+
+        internal const int ChallengeSlotCount = 5;
+        internal static readonly List<ChallengeSlot> ChallengeSlots = new List<ChallengeSlot>();
+
+        private static readonly (bool On, string Name, string Creature, int Level, float Health, int Coins)[] ChallengeDefaults =
+        {
+            (true, "Troll Furioso", "Troll", 3, 2f, 300),
+            (true, "Fenring Alfa", "Fenring", 3, 3f, 500),
+            (false, "Abominacao Antiga", "Abomination", 3, 2f, 400),
+            (false, "Rei Goblin", "GoblinBrute", 3, 3f, 600),
+            (false, "Buscador Gigante", "SeekerBrute", 3, 3f, 800),
+        };
+
         private static ConfigSync _sync;
         private static bool _dirty = true;
         private static float _nextRebuild;
@@ -181,9 +213,85 @@ namespace NpcValheim.Arena
                 "O que o Intendente da Arena vende: prefab=<item>;amount=<qtd>;points=<pontos>;rating=<minimo>;bracket=<tamanho>, " +
                 "separados por |. rating = o menor entre pessoal e do time, num time do tamanho 'bracket' ou maior " +
                 "(0 = sem requisito). O item vai pelo correio. Tambem se edita no jogo, na aba Recompensas do Intendente.");
+
+            const string challenge = "Arena - Desafio";
+            ChallengeEnabled = S(config, challenge, "Enabled", true,
+                "Desafio: no Mestre da Arena, um grupo enfrenta uma criatura forte dentro de uma arena. Sem fila e sem rating. " +
+                "O grupo nasce no inicio Ouro e a criatura no inicio Verde quando os portoes abrem.");
+            ChallengeMaxPlayers = S(config, challenge, "MaxPlayers", 3,
+                "Jogadores por desafio (o lider e o grupo dele no mod Groups), de 1 a 10.");
+            ChallengeTimeLimitMinutes = S(config, challenge, "TimeLimitMinutes", 10f,
+                "Sem matar a criatura ate aqui (contando a preparacao), o desafio falha.");
+            ChallengeCooldownMinutes = S(config, challenge, "CooldownMinutes", 60f,
+                "Depois de receber a recompensa de um desafio, quanto tempo ate o mesmo jogador receber de novo desse desafio. " +
+                "Fica na memoria do servidor: um restart zera.");
+            ChallengeMaps = S(config, challenge, "Maps", "",
+                "Arenas (nomes de Maps) que os desafios podem usar, separadas por virgula. Vazio = qualquer arena livre.");
+
+            ChallengeSlots.Clear();
+            for (int i = 0; i < ChallengeSlotCount; i++)
+            {
+                var d = ChallengeDefaults[i];
+                string section = "Arena - Desafio " + (i + 1);
+                ChallengeSlots.Add(new ChallengeSlot
+                {
+                    On = S(config, section, "Ativo", d.On,
+                        "Liga este desafio no Mestre da Arena."),
+                    Name = S(config, section, "Nome", d.Name,
+                        "Nome que os jogadores veem no botao e no placar."),
+                    Creature = S(config, section, "Criatura", d.Creature, new ConfigDescription(
+                        "Criatura que o grupo enfrenta. Sem chefes: matar um contaria como chefe derrotado.",
+                        new AcceptableValueList<string>(ArenaSettingsParser.ChallengeCreatures))),
+                    Level = S(config, section, "Nivel", d.Level, new ConfigDescription(
+                        "Nivel do jogo: 1 = sem estrela, 2 = uma estrela, 3 = duas estrelas; acima disso a vida e o dano sobem mais.",
+                        new AcceptableValueRange<int>(1, 10))),
+                    Health = S(config, section, "Vida", d.Health, new ConfigDescription(
+                        "Multiplicador de vida por cima do nivel (2 = o dobro).",
+                        new AcceptableValueRange<float>(0.1f, 100f))),
+                    RewardItem = S(config, section, "Recompensa", "Coins",
+                        "Item (prefab) que cada jogador recebe pelo correio quando a criatura cai. Coins = moedas. Vazio = nenhum."),
+                    RewardAmount = S(config, section, "Quantidade", d.Coins, new ConfigDescription(
+                        "Quantidade da recompensa, por jogador.",
+                        new AcceptableValueRange<int>(0, 9999))),
+                    ExtraRewards = S(config, section, "RecompensasExtras", "",
+                        "Mais itens, opcional: item:qtd separados por virgula (ex.: TrophyTroll:1,MeadHealthMajor:5)."),
+                });
+            }
         }
 
-        private static ConfigEntry<T> S<T>(ConfigFile config, string section, string key, T value, string description)
+        /// <summary>The challenges switched on, in slot order. With checkWorld, each creature
+        /// and reward is also checked against the running game.</summary>
+        internal static List<ArenaChallengeDef> ChallengeDefs(List<string> problems, bool checkWorld)
+        {
+            var result = new List<ArenaChallengeDef>();
+            var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            for (int i = 0; i < ChallengeSlots.Count; i++)
+            {
+                var s = ChallengeSlots[i];
+                if (!s.On.Value) continue;
+                string slot = "Desafio " + (i + 1);
+                var def = ArenaSettingsParser.MakeChallenge(slot, s.Name.Value, s.Creature.Value, s.Level.Value, s.Health.Value,
+                    s.RewardItem.Value, s.RewardAmount.Value, s.ExtraRewards.Value, problems);
+                if (def == null) continue;
+                if (!names.Add(def.Name))
+                {
+                    problems?.Add($"{slot}: o nome \"{def.Name}\" ja e de outro desafio");
+                    continue;
+                }
+                if (checkWorld && !ArenaChallengeCreature.Usable(def, out string why))
+                {
+                    problems?.Add($"{slot} ({def.Name}): {why}");
+                    continue;
+                }
+                result.Add(def);
+            }
+            return result;
+        }
+
+        private static ConfigEntry<T> S<T>(ConfigFile config, string section, string key, T value, string description) =>
+            S(config, section, key, value, new ConfigDescription(description));
+
+        private static ConfigEntry<T> S<T>(ConfigFile config, string section, string key, T value, ConfigDescription description)
         {
             var entry = config.Bind(section, key, value, description);
             _sync.AddConfigEntry(entry).SynchronizedConfig = true;
@@ -301,6 +409,13 @@ namespace NpcValheim.Arena
                 }
                 t.Offers.Add(offer);
             }
+
+            t.ChallengeEnabled = ChallengeEnabled.Value;
+            t.ChallengeMaxPlayers = Mathf.Clamp(ChallengeMaxPlayers.Value, 1, 10);
+            t.ChallengeTimeLimitSeconds = Mathf.Clamp(ChallengeTimeLimitMinutes.Value, 1f, 120f) * 60f;
+            t.ChallengeCooldownSeconds = Mathf.Max(0f, ChallengeCooldownMinutes.Value) * 60f;
+            t.ChallengeMaps = ArenaSettingsParser.ParseNames(ChallengeMaps.Value);
+            t.Challenges = ChallengeDefs(problems, checkWorld);
             return t;
         }
 

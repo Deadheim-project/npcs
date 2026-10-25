@@ -43,7 +43,8 @@ namespace NpcValheim.Arena
             if (ZNet.instance == null || !ZNet.instance.IsServer()) return;
             // Nothing that has to happen at an NPC may come this way.
             if (action == ArenaWire.ActCharterBuy || action == ArenaWire.ActCharterTurnIn ||
-                action == ArenaWire.ActQueueJoin || action == ArenaWire.ActVendorBuy) return;
+                action == ArenaWire.ActQueueJoin || action == ArenaWire.ActChallengeJoin ||
+                action == ArenaWire.ActVendorBuy) return;
             ArenaServer.Handle(sender, "", action, payload);
         }
 
@@ -401,6 +402,33 @@ namespace NpcValheim.Arena
 
             public void MailLetter(long playerId, string subject, string body) =>
                 MailDatabase.SendMessage(playerId, 0L, "Mestre da Arena", subject, body);
+
+            private readonly Dictionary<long, ZDOID> _creatures = new Dictionary<long, ZDOID>();
+
+            public bool SpawnCreature(long matchId, ArenaChallengeDef def, Vector3 at, float yaw)
+            {
+                var id = ArenaChallengeCreature.Spawn(matchId, def, at, yaw);
+                if (id.IsNone()) return false;
+                _creatures[matchId] = id;
+                return true;
+            }
+
+            /// <summary>The ZDO goes when the creature dies on whichever machine owns it.</summary>
+            public bool CreatureAlive(long matchId) =>
+                _creatures.TryGetValue(matchId, out var id) && ZDOMan.instance?.GetZDO(id) != null;
+
+            public float CreatureHealth(long matchId) =>
+                _creatures.TryGetValue(matchId, out var id) ? ArenaChallengeCreature.Health(id) : -1f;
+
+            public void DespawnCreature(long matchId)
+            {
+                if (!_creatures.TryGetValue(matchId, out var id)) return;
+                _creatures.Remove(matchId);
+                ArenaChallengeCreature.Despawn(id);
+            }
+
+            public void SweepCreatures(IEnumerable<string> prefabs, Func<long, bool> live) =>
+                ArenaChallengeCreature.Sweep(prefabs, live);
 
             public void Log(string text) => Plugin.Log.LogInfo("NpcValheim " + text);
             public void Warn(string text) => Plugin.Log.LogWarning("NpcValheim " + text);

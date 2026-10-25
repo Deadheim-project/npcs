@@ -42,6 +42,7 @@ namespace NpcValheim.Arena
         internal const string ActTeamDisband = "team.disband";
         internal const string ActQueueJoin = "queue.join";
         internal const string ActQueueLeave = "queue.leave";
+        internal const string ActChallengeJoin = "challenge.join";
         internal const string ActGroupConfirm = "group.confirm";
         internal const string ActEnter = "match.enter";
         internal const string ActEnterFailed = "match.enterfailed";

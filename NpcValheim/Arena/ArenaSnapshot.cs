@@ -78,6 +78,9 @@ namespace NpcValheim.Arena
         /// <summary>invited, alive, ko.</summary>
         public string Mine;
         public int Winner;
+        /// <summary>The challenge's name when the match is one, empty otherwise.</summary>
+        public string Challenge = "";
+        public bool IsChallenge => !string.IsNullOrEmpty(Challenge);
         public int GoldAlive;
         public int GoldTotal;
         public int GreenAlive;
@@ -148,6 +151,7 @@ namespace NpcValheim.Arena
                         {
                             Id = Long(f, 1), Size = Int(f, 2), Rated = Str(f, 3) == "1", Map = Str(f, 4), Side = Int(f, 5),
                             Phase = Str(f, 6), SecondsLeft = Int(f, 7), Mine = Str(f, 8), Winner = Int(f, 9, -1),
+                            Challenge = Str(f, 10),
                         };
                         break;
                     case "A":
@@ -194,6 +198,8 @@ namespace NpcValheim.Arena
         public int Winner;
         public string Map;
         public int Duration;
+        public string Challenge = "";
+        public bool IsChallenge => !string.IsNullOrEmpty(Challenge);
         public readonly List<ArenaResultSide> Sides = new List<ArenaResultSide>();
         public readonly List<ArenaResultPlayer> Players = new List<ArenaResultPlayer>();
 
@@ -211,6 +217,7 @@ namespace NpcValheim.Arena
                         r.Winner = Int(f, 4);
                         r.Map = Str(f, 5);
                         r.Duration = Int(f, 6);
+                        r.Challenge = Str(f, 7);
                         break;
                     case "S":
                         r.Sides.Add(new ArenaResultSide
