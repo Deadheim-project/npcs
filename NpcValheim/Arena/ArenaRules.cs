@@ -122,6 +122,10 @@ namespace NpcValheim.Arena
         internal static int PurchaseRating(int personalRating, int teamRating) =>
             Math.Min(personalRating, teamRating);
 
-        internal static string BracketName(int size) => $"{size}v{size}";
+        /// <summary>The size a free-for-all goes by in the queue, the match and the wire:
+        /// no team has a size there, everyone is on their own.</summary>
+        internal const int FfaSize = 0;
+
+        internal static string BracketName(int size) => size == FfaSize ? "FFA" : $"{size}v{size}";
     }
 }

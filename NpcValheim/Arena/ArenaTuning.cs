@@ -35,18 +35,34 @@ namespace NpcValheim.Arena
         public bool Contains(Vector3 position) =>
             Area != null ? Area.Contains(position, ArenaZone.Slack) : Vector3.Distance(position, Center) <= Radius;
 
-        public Vector3 SpawnOf(int side) => side == ArenaSide.Gold ? Gold : Green;
-        public float YawOf(int side) => side == ArenaSide.Gold ? GoldYaw : GreenYaw;
+        public Vector3 SpawnOf(int side) => ArenaSide.SpawnSide(side) == ArenaSide.Gold ? Gold : Green;
+        public float YawOf(int side) => ArenaSide.SpawnSide(side) == ArenaSide.Gold ? GoldYaw : GreenYaw;
+
+        /// <summary>Where a side stands at the start. Sides 1 and 2 stand on the starts; in a
+        /// free-for-all the others share them, each a step aside on a ring inside the gate,
+        /// so nobody lands on someone else.</summary>
+        public Vector3 SpawnFor(int side)
+        {
+            var start = SpawnOf(side);
+            int slot = (Mathf.Max(1, side) - 1) / 2;
+            if (slot == 0) return start;
+            float angle = slot * 137.5f * Mathf.Deg2Rad;
+            const float ring = 2.5f;
+            return start + new Vector3(Mathf.Cos(angle) * ring, 0f, Mathf.Sin(angle) * ring);
+        }
 
         /// <summary>What the arena is for: the team sizes it hosts and whether challenges (PvE)
         /// may use it. Nothing marked = everything, as every arena was before the field.</summary>
         public readonly HashSet<int> Sizes = new HashSet<int>();
         public bool AnyPvp;
+        public bool Ffa;
         public bool Pve;
 
-        public bool Restricted => AnyPvp || Pve || Sizes.Count > 0;
+        public bool Restricted => AnyPvp || Ffa || Pve || Sizes.Count > 0;
 
-        public bool ServesPvp(int size) => !Restricted || AnyPvp || Sizes.Contains(size);
+        /// <summary>A PvP match of this size; <see cref="ArenaRules.FfaSize"/> is the free-for-all.</summary>
+        public bool ServesPvp(int size) =>
+            !Restricted || AnyPvp || (size == ArenaRules.FfaSize ? Ffa : Sizes.Contains(size));
 
         public bool ServesPve => !Restricted || Pve;
 
@@ -58,14 +74,20 @@ namespace NpcValheim.Arena
                 if (!Restricted) return "";
                 var parts = new List<string>();
                 if (AnyPvp) parts.Add("pvp");
-                else parts.AddRange(Sizes.OrderBy(s => s).Select(s => ArenaRules.BracketName(s)));
+                else
+                {
+                    parts.AddRange(Sizes.OrderBy(s => s).Select(s => ArenaRules.BracketName(s)));
+                    if (Ffa) parts.Add("ffa");
+                }
                 if (Pve) parts.Add("pve");
                 return string.Join(",", parts);
             }
         }
 
         /// <summary>The usage for people: "todos" when unrestricted.</summary>
-        public string UsageLabel => Restricted ? UsageText.Replace("pvp", "PvP (todos)").Replace("pve", "PvE (desafio)") : "todos";
+        public string UsageLabel => Restricted
+            ? UsageText.Replace("pvp", "PvP (todos)").Replace("ffa", "FFA").Replace("pve", "PvE (desafio)")
+            : "todos";
     }
 
     /// <summary>One entry of Deadheim's ArenaZones: a circle on the ground, any height.</summary>
@@ -96,6 +118,10 @@ namespace NpcValheim.Arena
 
         public static int Other(int side) => side == Gold ? Green : Gold;
         public static string Name(int side) => side == Gold ? "Ouro" : side == Green ? "Verde" : "-";
+
+        /// <summary>The start a side comes in at. In a free-for-all every player is a side of
+        /// their own (1, 2, 3...): odd ones take the Gold start, even ones the Green.</summary>
+        public static int SpawnSide(int side) => side <= None ? None : side % 2 == 1 ? Gold : Green;
     }
 
     /// <summary>
@@ -134,7 +160,7 @@ namespace NpcValheim.Arena
     {
         public bool Enabled = true;
         /// <summary>Team sizes that exist. WoW: 2v2, 3v3, 5v5.</summary>
-        public List<int> Brackets = new List<int> { 2, 3, 5 };
+        public List<int> Brackets = new List<int> { 2 };
         /// <summary>1v1 with no team to make: the player queues alone and the queue keeps a
         /// one-person team for them behind the scenes. WoW never had it.</summary>
         public bool Solo = true;
@@ -185,8 +211,27 @@ namespace NpcValheim.Arena
         public int MaxPoints = 10000;
         public DayOfWeek ResetDay = DayOfWeek.Tuesday;
         public int ResetHourUtc = 15;
+        /// <summary>Hours between two distributions, counted from ResetDay at ResetHourUtc:
+        /// 168 = weekly (WoW), 24 = daily. 1 to 2016 (twelve weeks).</summary>
+        public int ResetIntervalHours = 168;
+
+        internal const int MinResetIntervalHours = 1;
+        internal const int MaxResetIntervalHours = 2016;
 
         public List<ArenaOffer> Offers = new List<ArenaOffer>();
+
+        /// <summary>Points at the end of a match, by mode ("1v1", "2v2", "ffa", "pve"):
+        /// (win, loss). A draw pays the loss. Missing mode = nothing.</summary>
+        public Dictionary<string, (int Win, int Loss)> MatchPoints = ArenaSettingsParser.ParseMatchPoints(ArenaSettingsParser.DefaultMatchPoints, null);
+        /// <summary>Most match points one player earns per UTC day; 0 = no cap.</summary>
+        public int MatchPointsDailyCap = 300;
+
+        // Free-for-all: everyone alone against everyone, no rating. The queue starts a match
+        // at MaxPlayers, or at MinPlayers once the first in line has waited WaitSeconds.
+        public bool FfaEnabled = true;
+        public int FfaMinPlayers = 3;
+        public int FfaMaxPlayers = 8;
+        public float FfaWaitSeconds = 60f;
 
         // Challenge: a group against one creature, no rating.
         public bool ChallengeEnabled = true;
@@ -223,18 +268,30 @@ namespace NpcValheim.Arena
 
         /// <summary>A stable text of the reset schedule: when it changes, the next reset is
         /// worked out again instead of waiting for the old one.</summary>
-        public string ResetKey => ResetDay + "@" + ResetHourUtc;
+        public string ResetKey => ResetDay + "@" + ResetHourUtc + "/" + Interval + "h";
 
-        /// <summary>The first reset strictly after <paramref name="utc"/>.</summary>
+        private int Interval => Mathf.Clamp(ResetIntervalHours, MinResetIntervalHours, MaxResetIntervalHours);
+
+        /// <summary>
+        /// The first reset strictly after <paramref name="utc"/>. Resets fall every
+        /// ResetIntervalHours from a fixed anchor -- the first ResetDay at ResetHourUtc of 2026 --
+        /// so every machine and every restart lands on the same times; weekly is that day and
+        /// hour every week, as before.
+        /// </summary>
         public DateTime NextResetAfter(DateTime utc)
         {
             int hour = Mathf.Clamp(ResetHourUtc, 0, 23);
-            var candidate = new DateTime(utc.Year, utc.Month, utc.Day, hour, 0, 0, DateTimeKind.Utc);
-            int days = ((int)ResetDay - (int)candidate.DayOfWeek + 7) % 7;
-            candidate = candidate.AddDays(days);
-            if (candidate <= utc) candidate = candidate.AddDays(7);
-            return candidate;
+            var anchor = new DateTime(2026, 1, 1, hour, 0, 0, DateTimeKind.Utc);
+            anchor = anchor.AddDays(((int)ResetDay - (int)anchor.DayOfWeek + 7) % 7);
+            if (utc < anchor) return anchor;
+            long step = TimeSpan.FromHours(Interval).Ticks;
+            long periods = (utc.Ticks - anchor.Ticks) / step + 1;
+            return new DateTime(anchor.Ticks + periods * step, DateTimeKind.Utc);
         }
+
+        /// <summary>The interval as people read it: "semanal", "diária", "a cada 12 h".</summary>
+        public string IntervalText =>
+            Interval == 168 ? "semanal" : Interval == 24 ? "diária" : Interval % 24 == 0 ? $"a cada {Interval / 24} dias" : $"a cada {Interval} h";
     }
 
     /// <summary>The text formats of the arena cfg, read without the game so the checks can
@@ -245,8 +302,74 @@ namespace NpcValheim.Arena
             "prefab=WeaponKit1;amount=1;points=100;rating=0|prefab=ArmorKit1;amount=1;points=100;rating=0|" +
             "prefab=WeaponKit2;amount=1;points=250;rating=0|prefab=ArmorKit2;amount=1;points=250;rating=0|" +
             "prefab=WeaponKit3;amount=1;points=500;rating=1200|prefab=ArmorKit3;amount=1;points=500;rating=1200|" +
-            "prefab=WeaponKit4;amount=1;points=1000;rating=1500;bracket=3|prefab=ArmorKit4;amount=1;points=1000;rating=1500;bracket=3|" +
+            "prefab=WeaponKit4;amount=1;points=1000;rating=1500;bracket=2|prefab=ArmorKit4;amount=1;points=1000;rating=1500;bracket=2|" +
             "prefab=MeadHealthMajor;amount=5;points=60;rating=0|prefab=MeadStaminaLingering;amount=5;points=60;rating=0";
+
+        internal const string DefaultMatchPoints = "1v1=15/5|2v2=20/8|ffa=25/5|pve=10/0";
+
+        /// <summary>The modes match points know, in the order the cfg and the admin page show them.</summary>
+        internal static readonly string[] MatchPointModes = { "1v1", "2v2", "ffa", "pve" };
+
+        /// <summary>The match-points key of a match: "pve" for a challenge, "ffa", or the bracket ("2v2").</summary>
+        internal static string MatchPointsMode(bool challenge, int size) =>
+            challenge ? "pve" : size == ArenaRules.FfaSize ? "ffa" : ArenaRules.BracketName(size);
+
+        /// <summary>
+        /// "1v1=15/5|2v2=20/8|ffa=25/5|pve=10/0" -- win/loss per mode. A mode is 1v1, x1, 1 (any
+        /// size up to 10), ffa or pve (desafio). A bare number pays win and loss the same. A bad
+        /// entry is left out by name; the rest still counts.
+        /// </summary>
+        internal static Dictionary<string, (int Win, int Loss)> ParseMatchPoints(string raw, List<string> problems)
+        {
+            var result = new Dictionary<string, (int, int)>(StringComparer.OrdinalIgnoreCase);
+            foreach (var part in (raw ?? "").Split(new[] { '|', ';' }, StringSplitOptions.RemoveEmptyEntries))
+            {
+                var text = part.Trim();
+                if (text.Length == 0) continue;
+                int eq = text.IndexOf('=');
+                string mode = eq > 0 ? MatchPointsKey(text.Substring(0, eq)) : null;
+                var values = eq > 0 ? text.Substring(eq + 1).Split('/') : new string[0];
+                int win = 0, loss = 0;
+                bool ok = mode != null && values.Length >= 1 && values.Length <= 2 &&
+                          int.TryParse(values[0].Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out win) &&
+                          (values.Length == 1 || int.TryParse(values[1].Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out loss)) &&
+                          win >= 0 && loss >= 0 && win <= 100000 && loss <= 100000;
+                if (!ok)
+                {
+                    problems?.Add($"PorPartida: '{text}' ignorado (formato modo=vitoria/derrota, modo 1v1, 2v2, ffa ou pve)");
+                    continue;
+                }
+                if (values.Length == 1) loss = win;
+                result[mode] = (win, loss);
+            }
+            return result;
+        }
+
+        /// <summary>A mode as the cfg may write it, as the key it is stored under, or null.</summary>
+        private static string MatchPointsKey(string raw)
+        {
+            string t = (raw ?? "").Trim().ToLowerInvariant();
+            if (t == "ffa" || t == "todoscontratodos") return "ffa";
+            if (t == "pve" || t == "desafio") return "pve";
+            if (t.StartsWith("x")) t = t.Substring(1);
+            else
+            {
+                int v = t.IndexOf('v');
+                if (v > 0)
+                {
+                    if (t.Substring(0, v) != t.Substring(v + 1)) return null;
+                    t = t.Substring(0, v);
+                }
+            }
+            return int.TryParse(t, NumberStyles.Integer, CultureInfo.InvariantCulture, out int size) && size >= 1 && size <= 10
+                ? ArenaRules.BracketName(size) : null;
+        }
+
+        /// <summary>The match points as the cfg writes them, in the usual mode order.</summary>
+        internal static string FormatMatchPoints(Dictionary<string, (int Win, int Loss)> points) =>
+            string.Join("|", points.OrderBy(kv => Array.IndexOf(MatchPointModes, kv.Key.ToLowerInvariant()) is int i && i >= 0 ? i : 99)
+                .ThenBy(kv => kv.Key, StringComparer.OrdinalIgnoreCase)
+                .Select(kv => string.Format(CultureInfo.InvariantCulture, "{0}={1}/{2}", kv.Key, kv.Value.Win, kv.Value.Loss)));
 
         internal static List<int> ParseBrackets(string raw, List<string> problems)
         {
@@ -336,7 +459,7 @@ namespace NpcValheim.Arena
                     {
                         if (!TryUsage(usage, map, out string why))
                         {
-                            problems?.Add($"Maps: {name}: uso invalido ({why}). Use 1v1, 2v2, 3v3, 5v5, pvp, pve ou todos");
+                            problems?.Add($"Maps: {name}: uso invalido ({why}). Use 1v1, 2v2, ffa, pve, pvp ou todos");
                             bad = true;
                         }
                     }
@@ -395,7 +518,8 @@ namespace NpcValheim.Arena
         }
 
         /// <summary>
-        /// "1v1,2v2,pve" into the map. A size is NvN, xN or N (1 to 10); pvp = every size;
+        /// "1v1,2v2,pve" into the map. A size is NvN, xN or N (1 to 10); ffa = todos contra
+        /// todos; pvp = every size and the ffa;
         /// pve (or desafio) = the challenges; todos (or empty) = everything. One unknown word
         /// refuses the whole usage: an arena meant only for PvE must not quietly take 5v5s.
         /// </summary>
@@ -403,13 +527,14 @@ namespace NpcValheim.Arena
         {
             why = null;
             map.Sizes.Clear();
-            map.AnyPvp = map.Pve = false;
+            map.AnyPvp = map.Ffa = map.Pve = false;
             bool all = false;
             foreach (var token in (raw ?? "").Split(new[] { ',', ' ', '+', '/' }, StringSplitOptions.RemoveEmptyEntries))
             {
                 string t = token.Trim().ToLowerInvariant();
                 if (t == "todos" || t == "todas" || t == "all" || t == "*") { all = true; continue; }
                 if (t == "pvp") { map.AnyPvp = true; continue; }
+                if (t == "ffa" || t == "todoscontratodos") { map.Ffa = true; continue; }
                 if (t == "pve" || t == "desafio" || t == "desafios") { map.Pve = true; continue; }
 
                 string digits = t;
@@ -433,9 +558,13 @@ namespace NpcValheim.Arena
             if (all)
             {
                 map.Sizes.Clear();
-                map.AnyPvp = map.Pve = false;
+                map.AnyPvp = map.Ffa = map.Pve = false;
             }
-            if (map.AnyPvp) map.Sizes.Clear();
+            if (map.AnyPvp)
+            {
+                map.Sizes.Clear();
+                map.Ffa = false;
+            }
             return true;
         }
 
@@ -451,13 +580,15 @@ namespace NpcValheim.Arena
             foreach (int size in t.ActiveBrackets)
                 if (!t.Maps.Any(m => t.MapServes(m, size)))
                     result.Add($"Maps: nenhuma arena com uso {ArenaRules.BracketName(size)}: a fila {ArenaRules.BracketName(size)} recusa todo mundo");
+            if (t.FfaEnabled && !t.Maps.Any(m => t.MapServes(m, ArenaRules.FfaSize)))
+                result.Add("Maps: nenhuma arena com uso ffa: a fila FFA recusa todo mundo");
             if (t.ChallengeEnabled && t.Challenges.Count > 0 && !t.Maps.Any(t.MapServesChallenge))
                 result.Add("Maps: nenhuma arena com uso pve" + (t.ChallengeMaps.Count > 0 ? " (e em Desafio.Maps)" : "") +
                            ": os desafios recusam todo mundo");
             foreach (var map in t.Maps)
                 foreach (int size in map.Sizes.OrderBy(s => s))
                     if (!t.HasBracket(size))
-                        result.Add($"Maps: {map.Name}: uso {ArenaRules.BracketName(size)}, mas esse tamanho nao e jogado (Brackets/Solo)");
+                        result.Add($"Maps: {map.Name}: uso {ArenaRules.BracketName(size)}, mas a arena so tem 1v1, 2v2, ffa e pve");
             return result;
         }
 

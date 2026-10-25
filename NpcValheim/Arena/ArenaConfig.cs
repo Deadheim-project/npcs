@@ -15,11 +15,9 @@ namespace NpcValheim.Arena
     internal static class ArenaConfig
     {
         internal static ConfigEntry<bool> Enabled;
-        internal static ConfigEntry<string> Brackets;
         internal static ConfigEntry<bool> Skirmish;
         internal static ConfigEntry<bool> VipCelebration;
         internal static ConfigEntry<float> CelebrationSeconds;
-        internal static ConfigEntry<bool> Solo;
         internal static ConfigEntry<KeyCode> PanelKey;
 
         internal static ConfigEntry<string> CharterCost;
@@ -61,10 +59,18 @@ namespace NpcValheim.Arena
         internal static ConfigEntry<int> ParticipationPercent;
         internal static ConfigEntry<float> PointsRate;
         internal static ConfigEntry<int> MaxPoints;
+        internal static ConfigEntry<string> MatchPoints;
+        internal static ConfigEntry<int> MatchPointsDailyCap;
         internal static ConfigEntry<string> ResetDay;
         internal static ConfigEntry<int> ResetHourUtc;
+        internal static ConfigEntry<int> ResetIntervalHours;
 
         internal static ConfigEntry<string> VendorItems;
+
+        internal static ConfigEntry<bool> FfaEnabled;
+        internal static ConfigEntry<int> FfaMinPlayers;
+        internal static ConfigEntry<int> FfaMaxPlayers;
+        internal static ConfigEntry<float> FfaWaitSeconds;
 
         internal static ConfigEntry<bool> ChallengeEnabled;
         internal static ConfigEntry<int> ChallengeMaxPlayers;
@@ -110,11 +116,6 @@ namespace NpcValheim.Arena
             const string general = "Arena";
             Enabled = S(config, general, "Enabled", true,
                 "Liga a arena (NPCs Organizador, Mestre e Intendente da Arena).");
-            Brackets = S(config, general, "Brackets", "2,3,5",
-                "Tamanhos de time que existem. WoW: 2,3,5. Acrescente 1 para ter 1v1 (o WoW nunca teve).");
-            Solo = S(config, general, "Solo", true,
-                "Arena 1v1 sem time: o jogador entra sozinho na fila do Mestre da Arena, sem carta nem assinaturas. " +
-                "O rating 1v1 e' dele. Liga o 1v1 mesmo que Brackets nao tenha o 1.");
             Skirmish = S(config, general, "Skirmish", true,
                 "Escaramuca: fila sem time e sem rating, sozinho ou em grupo.");
             VipCelebration = S(config, general, "VipCelebration", true,
@@ -125,7 +126,7 @@ namespace NpcValheim.Arena
                 "Tecla que abre o painel da Arena (convites, fila, times, ranking). Preferencia de cada jogador, nao sincroniza.");
 
             const string teams = "Arena - Times";
-            CharterCost = S(config, teams, "CharterCost", "2:80,3:120,5:200",
+            CharterCost = S(config, teams, "CharterCost", "2:80",
                 "Moedas cobradas pela carta de time no Organizador, por tamanho (tamanho:moedas). WoW: 80/120/200 de ouro.");
             SignaturesRequired = S(config, teams, "SignaturesRequired", -1,
                 "Assinaturas para registrar o time. -1 = tamanho do time menos 1, como no WoW (2v2: 1, 3v3: 2, 5v5: 4).");
@@ -155,12 +156,24 @@ namespace NpcValheim.Arena
             InviteAcceptSeconds = S(config, queue, "InviteAcceptSeconds", 60f,
                 "Tempo para clicar Entrar quando a arena e chamada. Na ranqueada, deixar expirar conta como derrota.");
 
+            const string ffa = "Arena - FFA";
+            FfaEnabled = S(config, ffa, "Enabled", true,
+                "FFA (todos contra todos): fila solo no Mestre da Arena, cada um por si, sem time e sem rating. " +
+                "Vence o ultimo de pe. So usa arenas com uso ffa (ou pvp, ou sem uso marcado). Metade nasce no inicio " +
+                "Ouro e metade no Verde, lado a lado dentro do portao.");
+            FfaMinPlayers = S(config, ffa, "MinPlayers", 3,
+                "Minimo de jogadores para a partida FFA comecar (2 a 16).");
+            FfaMaxPlayers = S(config, ffa, "MaxPlayers", 8,
+                "Maximo de jogadores numa partida FFA (2 a 16). Com tantos na fila, a partida sai na hora.");
+            FfaWaitSeconds = S(config, ffa, "WaitSeconds", 60f,
+                "Com o minimo na fila, quanto o primeiro espera por mais gente antes de a partida sair.");
+
             const string match = "Arena - Partida";
             Maps = S(config, match, "Maps", "",
                 "Arenas: Nome;x,y,z,giro;x,y,z,giro[;x,y,z][;uso=...]|... = inicio do time Ouro, inicio do time Verde e, opcional, " +
-                "onde fica quem foi derrotado e para que a arena serve: uso=1v1,2v2,3v3,5v5 (tamanhos de partida PvP; " +
-                "x1, x2... tambem valem), pvp (qualquer tamanho), pve (os desafios contra criatura) ou todos. Sem uso = todos. " +
-                "Ex.: Coliseu;100,30,100,90;140,30,100,270;uso=1v1,2v2|Covil;300,30,0,0;320,30,0,180;uso=pve. Os inicios precisam estar dentro de uma area de arena (ArenaZones do " +
+                "onde fica quem foi derrotado e para que a arena serve: uso=1v1,2v2 (tamanhos de partida PvP; x1, x2 " +
+                "tambem valem), ffa (todos contra todos), pve (os desafios contra criatura), pvp (1v1, 2v2 e ffa) ou todos. " +
+                "Sem uso = todos. Ex.: Coliseu;100,30,100,90;140,30,100,270;uso=1v1,2v2|Covil;300,30,0,0;320,30,0,180;uso=pve. Os inicios precisam estar dentro de uma area de arena (ArenaZones do " +
                 "Deadheim: PvP sempre, sem perda de skill), que se marca na aba Admin do Mestre da Arena; quem sai da " +
                 "area durante a partida fugiu. Uma partida por arena de cada vez. " +
                 "Tambem se monta no jogo, na aba Arena (admin) do Mestre da Arena (Ouro aqui / Verde aqui / Salvar).");
@@ -200,13 +213,26 @@ namespace NpcValheim.Arena
 
             const string points = "Arena - Pontos";
             GamesPerWeek = S(config, points, "GamesPerWeek", 10,
-                "Partidas que o time precisa jogar na semana para receber Pontos de Arena.");
+                "Partidas que o time precisa jogar no periodo (entre duas distribuicoes) para receber Pontos de Arena.");
             ParticipationPercent = S(config, points, "ParticipationPercent", 30,
                 "Parte das partidas do time que o jogador precisa ter jogado para receber (%).");
             PointsRate = S(config, points, "PointsRate", 1f, "Multiplicador dos Pontos de Arena (Rate.ArenaPoints).");
             MaxPoints = S(config, points, "MaxPoints", 10000, "Teto do saldo de Pontos de Arena.");
+            MatchPoints = S(config, points, "PorPartida", ArenaSettingsParser.DefaultMatchPoints,
+                "Pontos de Arena ganhos no fim de cada partida, por modo: modo=vitoria/derrota separados por |. " +
+                "Modos: 1v1, 2v2, ffa, pve (desafio). Empate conta como derrota. So recebe quem terminou dentro da arena " +
+                "(quem fugiu ou abandonou nao recebe). Vale para ranqueada e escaramuca. Modo fora da lista = 0. " +
+                "Tambem se edita no jogo, na aba Arena (admin) do Mestre da Arena. Isto soma com a distribuicao periodica " +
+                "(PointsRate 0 desliga a periodica).");
+            MatchPointsDailyCap = S(config, points, "PorPartidaTetoDiario", 300,
+                "Maximo de pontos por partida que um jogador ganha por dia (UTC). 0 = sem teto.");
+            ResetIntervalHours = S(config, points, "IntervaloHoras", 168,
+                "De quanto em quanto tempo os Pontos de Arena sao distribuidos, em horas: 168 = semanal (WoW), " +
+                "24 = diario, 12 = duas vezes por dia. De 1 a 2016 (12 semanas). Os jogos do periodo (GamesPerWeek) " +
+                "zeram a cada distribuicao. Tambem se edita no jogo, na aba Arena (admin) do Mestre da Arena.");
             ResetDay = S(config, points, "ResetDay", "Tuesday",
-                "Dia da distribuicao semanal (Tuesday, Wednesday... ou terca, quarta...).");
+                "Dia da primeira distribuicao (Tuesday, Wednesday... ou terca, quarta...); as seguintes vem a cada " +
+                "IntervaloHoras a partir dele. Semanal = todo esse dia.");
             ResetHourUtc = S(config, points, "ResetHourUtc", 15,
                 "Hora UTC da distribuicao. 15 = 12h de Brasilia, o reset das Americas.");
 
@@ -344,8 +370,6 @@ namespace NpcValheim.Arena
             var t = new ArenaTuning
             {
                 Enabled = Enabled.Value,
-                Brackets = ArenaSettingsParser.ParseBrackets(Brackets.Value, problems),
-                Solo = Solo.Value,
                 Skirmish = Skirmish.Value,
                 VipCelebration = VipCelebration.Value,
                 CelebrationSeconds = Mathf.Clamp(CelebrationSeconds.Value, 1f, 10f),
@@ -372,13 +396,11 @@ namespace NpcValheim.Arena
                 ParticipationPercent = Mathf.Clamp(ParticipationPercent.Value, 0, 100),
                 PointsRate = Mathf.Max(0f, PointsRate.Value),
                 MaxPoints = Mathf.Max(0, MaxPoints.Value),
+                MatchPoints = ArenaSettingsParser.ParseMatchPoints(MatchPoints.Value, problems),
+                MatchPointsDailyCap = Mathf.Max(0, MatchPointsDailyCap.Value),
                 ResetHourUtc = Mathf.Clamp(ResetHourUtc.Value, 0, 23),
+                ResetIntervalHours = Mathf.Clamp(ResetIntervalHours.Value, ArenaTuning.MinResetIntervalHours, ArenaTuning.MaxResetIntervalHours),
             };
-            if (t.Brackets.Count == 0 && !t.Solo)
-            {
-                problems.Add("Brackets vazio: usando 2,3,5");
-                t.Brackets = new List<int> { 2, 3, 5 };
-            }
             if (ArenaSettingsParser.TryParseDay(ResetDay.Value, out var day)) t.ResetDay = day;
             else problems.Add($"ResetDay '{ResetDay.Value}' nao e um dia da semana: usando terca");
 
@@ -412,6 +434,11 @@ namespace NpcValheim.Arena
                 }
                 t.Offers.Add(offer);
             }
+
+            t.FfaEnabled = FfaEnabled.Value;
+            t.FfaMaxPlayers = Mathf.Clamp(FfaMaxPlayers.Value, 2, 16);
+            t.FfaMinPlayers = Mathf.Clamp(FfaMinPlayers.Value, 2, t.FfaMaxPlayers);
+            t.FfaWaitSeconds = Mathf.Max(0f, FfaWaitSeconds.Value);
 
             t.ChallengeEnabled = ChallengeEnabled.Value;
             t.ChallengeMaxPlayers = Mathf.Clamp(ChallengeMaxPlayers.Value, 1, 10);

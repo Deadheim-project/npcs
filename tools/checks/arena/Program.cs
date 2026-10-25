@@ -110,9 +110,11 @@ class Program
         { E, "Echo" }, { F, "Foxtrot" }, { G, "Golf" }, { H, "Hotel" },
     };
 
+    /// <summary>The engine with every WoW bracket on (2, 3, 5), so 3v3 and 5v5 stay covered
+    /// even though the server default is only 1v1 and 2v2.</summary>
     static ArenaTuning Tuning()
     {
-        var t = new ArenaTuning();
+        var t = new ArenaTuning { Brackets = new List<int> { 2, 3, 5 } };
         t.Maps.Add(new ArenaMapDef
         {
             Name = "Anel", Gold = new Vector3(100, 30, 100), GoldYaw = 90, Green = new Vector3(140, 30, 100), GreenYaw = 270,
@@ -189,6 +191,8 @@ class Program
             Persistence();
             Challenge();
             MapUsage();
+            FreeForAll();
+            MatchPointsChecks();
         }
         catch (Exception ex)
         {
@@ -260,6 +264,20 @@ class Program
             t.NextResetAfter(resetMoment) == new DateTime(2026, 10, 13, 15, 0, 0, DateTimeKind.Utc));
         Check("Tuesday morning resets the same day",
             t.NextResetAfter(new DateTime(2026, 10, 6, 9, 0, 0, DateTimeKind.Utc)) == resetMoment);
+        var daily = new ArenaTuning { ResetIntervalHours = 24 };
+        Check("daily: Thursday morning resets at 15:00 the same day",
+            daily.NextResetAfter(new DateTime(2026, 10, 1, 9, 0, 0, DateTimeKind.Utc)) == new DateTime(2026, 10, 1, 15, 0, 0, DateTimeKind.Utc));
+        Check("daily: at the reset moment the next one is a day later",
+            daily.NextResetAfter(new DateTime(2026, 10, 1, 15, 0, 0, DateTimeKind.Utc)) == new DateTime(2026, 10, 2, 15, 0, 0, DateTimeKind.Utc));
+        var twice = new ArenaTuning { ResetIntervalHours = 12 };
+        Check("every 12 h: 15:00 and 03:00",
+            twice.NextResetAfter(new DateTime(2026, 10, 1, 16, 0, 0, DateTimeKind.Utc)) == new DateTime(2026, 10, 2, 3, 0, 0, DateTimeKind.Utc));
+        var fortnight = new ArenaTuning { ResetIntervalHours = 336 };
+        var f1 = fortnight.NextResetAfter(new DateTime(2026, 10, 1, 0, 0, 0, DateTimeKind.Utc));
+        Check("every 2 weeks: on a Tuesday, then 14 days later",
+            f1.DayOfWeek == DayOfWeek.Tuesday && f1.Hour == 15 && fortnight.NextResetAfter(f1) == f1.AddDays(14), f1.ToString("o"));
+        Check("the interval changes the schedule key", daily.ResetKey != t.ResetKey);
+        Check("the interval reads as people say it", t.IntervalText == "semanal" && daily.IntervalText == "diária" && twice.IntervalText == "a cada 12 h");
     }
 
     static void Parsers()
@@ -788,12 +806,147 @@ class Program
         noPve.Maps.Clear();
         noPve.Maps.Add(UsageMap("Duelo", "1v1,2v2,3v3,5v5", 300));
         noPve.Challenges = ChallengeTuning().Challenges;
+        noPve.FfaEnabled = false;
         var gaps = ArenaSettingsParser.UsageProblems(noPve);
         Check("the server names a usage gap: no PvE arena for the challenges", gaps.Count == 1 && gaps[0].Contains("pve"), string.Join(" / ", gaps));
         noPve.Maps[0] = UsageMap("Duelo", "1v1,4v4,pve", 300);
         gaps = ArenaSettingsParser.UsageProblems(noPve);
         Check("and brackets with no arena, and a size nobody plays",
             gaps.Count == 4 && gaps.Count(g => g.Contains("nenhuma arena com uso")) == 3 && gaps.Any(g => g.Contains("4v4")), string.Join(" / ", gaps));
+    }
+
+    // ------------------------------------------------------------------- free-for-all
+
+    static ArenaTuning FfaTuning(params ArenaMapDef[] maps)
+    {
+        var t = Tuning();
+        t.Maps.Clear();
+        t.Maps.AddRange(maps.Length > 0 ? maps : new[] { UsageMap("Poço", "ffa", 100) });
+        t.FfaMinPlayers = 3;
+        t.FfaMaxPlayers = 4;
+        t.FfaWaitSeconds = 60f;
+        return t;
+    }
+
+    static void FreeForAll()
+    {
+        Section("FFA: everyone against everyone");
+        Check("the server default is 1v1 and 2v2 only", string.Join(",", new ArenaTuning().ActiveBrackets) == "1,2");
+        Check("the FFA goes by its own name", ArenaRules.BracketName(ArenaRules.FfaSize) == "FFA");
+
+        var poco = UsageMap("Poço", "ffa", 100);
+        Check("sides 1 and 2 stand on the starts", poco.SpawnFor(1) == poco.Gold && poco.SpawnFor(2) == poco.Green);
+        Check("odd sides share Gold, even ones Green, each a step aside inside the gate",
+            Vector3.Distance(poco.SpawnFor(3), poco.Gold) > 2f && Vector3.Distance(poco.SpawnFor(3), poco.Gold) < 3f &&
+            Vector3.Distance(poco.SpawnFor(4), poco.Green) > 2f && Vector3.Distance(poco.SpawnFor(5), poco.SpawnFor(3)) > 1f &&
+            poco.YawOf(4) == poco.GreenYaw);
+
+        var maps = ArenaSettingsParser.ParseMaps("A;1,2,3,0;10,2,3,180;uso=ffa,pve|B;1,2,3,0;10,2,3,180;uso=pvp|C;1,2,3,0;10,2,3,180;uso=2v2", null);
+        Check("uso=ffa serves the FFA and nothing else PvP", maps[0].ServesPvp(ArenaRules.FfaSize) && !maps[0].ServesPvp(2) && maps[0].ServesPve);
+        Check("pvp includes the FFA; 2v2 alone does not", maps[1].ServesPvp(ArenaRules.FfaSize) && !maps[2].ServesPvp(ArenaRules.FfaSize));
+        Check("ffa is written back", ArenaSettingsParser.FormatMap(maps[0]).EndsWith(";uso=ffa,pve"), ArenaSettingsParser.FormatMap(maps[0]));
+
+        var (e, h, _) = NewEngine(FfaTuning(UsageMap("Duelo", "1v1", 300)));
+        Do(e, A, ArenaEngine.AtBattlemaster, ArenaWire.ActFfaJoin);
+        Check("no arena with uso ffa: refused at the door", e.QueueOf(A) == null && h.Got(A, ArenaWire.Alert, "FFA"));
+
+        (e, h, _) = NewEngine(FfaTuning());
+        Do(e, A, "", ArenaWire.ActFfaJoin);
+        Check("only at the Battlemaster", e.QueueOf(A) == null);
+        Do(e, A, ArenaEngine.AtBattlemaster, ArenaWire.ActFfaJoin);
+        Do(e, B, ArenaEngine.AtBattlemaster, ArenaWire.ActFfaJoin);
+        Check("two in line wait for the minimum", e.QueueOf(A) != null && e.QueueOf(A).Size == ArenaRules.FfaSize && !e.Matches.Any());
+        Do(e, C, ArenaEngine.AtBattlemaster, ArenaWire.ActFfaJoin);
+        Advance(e, h, 30);
+        Check("three, before WaitSeconds: still waiting for more", !e.Matches.Any());
+        Advance(e, h, 31);
+        var m = e.Matches.SingleOrDefault();
+        Check("three after WaitSeconds: the match is made", m != null && m.IsFfa && !m.Rated && m.Seats.Count == 3);
+        Check("each one is a side of their own", m != null && m.Seats.Select(s => s.Side).Distinct().Count() == 3 && m.Seats.All(s => s.Side >= 1 && s.Side <= 3));
+
+        EnterAll(e, m);
+        Check("they come in at their own spots", h.Sent.Count(s => s.Kind == ArenaWire.Enter) == 3);
+        Advance(e, h, 61);
+        Check("the gates open", m.Status == MatchStatus.InProgress);
+        Do(e, A, "", ArenaWire.ActKo, B.ToString());
+        Check("one down, two standing: still on", m.Status == MatchStatus.InProgress && m.Seat(B).Kos == 1);
+        Do(e, C, "", ArenaWire.ActKo, B.ToString());
+        Check("the last one standing wins", m.Status == MatchStatus.WaitLeave && m.Winner == m.Seat(B).Side);
+        Check("the winner hears Vitória, the others Derrota",
+            h.Got(B, ArenaWire.Alert, "Vitória") && h.Got(A, ArenaWire.Alert, "Derrota") && h.Got(C, ArenaWire.Alert, "Derrota"));
+        Check("no rating, no team", e.Teams.Count() == 0);
+
+        (e, h, _) = NewEngine(FfaTuning());
+        foreach (var p in new[] { A, B, C, D, E }) Do(e, p, ArenaEngine.AtBattlemaster, ArenaWire.ActFfaJoin);
+        m = e.Matches.SingleOrDefault();
+        Check("MaxPlayers in line: the match is made at once, with the first four", m != null && m.Seats.Count == 4 && m.Seat(E) == null && e.QueueOf(E) != null);
+        Do(e, F, ArenaEngine.AtBattlemaster, ArenaWire.ActFfaJoin);
+        Do(e, G, ArenaEngine.AtBattlemaster, ArenaWire.ActFfaJoin);
+        Advance(e, h, 30);
+        Check("with the only FFA arena busy, the next three wait", e.Matches.Count() == 1 && e.QueueOf(G) != null);
+
+        var off = FfaTuning();
+        off.FfaEnabled = false;
+        (e, h, _) = NewEngine(off);
+        Do(e, A, ArenaEngine.AtBattlemaster, ArenaWire.ActFfaJoin);
+        Check("FFA off: refused", e.QueueOf(A) == null && h.Got(A, ArenaWire.Alert, "desligado"));
+        Check("the server names an FFA with no arena", ArenaSettingsParser.UsageProblems(FfaTuning(UsageMap("Duelo", "1v1,2v2,3v3,5v5", 0))).Any(g => g.Contains("ffa")));
+    }
+
+    // ------------------------------------------------------------------- points per match
+
+    static void MatchPointsChecks()
+    {
+        Section("Arena Points per match (PorPartida)");
+        var problems = new List<string>();
+        var parsed = ArenaSettingsParser.ParseMatchPoints("x1=15/5|2v2=20|FFA=25/5|desafio=10/0|3v4=1/1|pve=abc|ffa=-1/0", problems);
+        Check("modes read in any spelling; a bare number pays both", parsed.Count == 4 && parsed["1v1"] == (15, 5) && parsed["2v2"] == (20, 20) &&
+                                                                      parsed["ffa"] == (25, 5) && parsed["pve"] == (10, 0));
+        Check("bad entries are named and left out", problems.Count == 3, string.Join(" / ", problems));
+        Check("written back in the usual order",
+            ArenaSettingsParser.FormatMatchPoints(parsed) == "1v1=15/5|2v2=20/20|ffa=25/5|pve=10/0", ArenaSettingsParser.FormatMatchPoints(parsed));
+        Check("the default line reads whole", ArenaSettingsParser.ParseMatchPoints(ArenaSettingsParser.DefaultMatchPoints, null).Count == 4);
+
+        // 1v1 skirmish: the winner gets the win, the loser the loss.
+        var t = Tuning();
+        t.MatchPoints = ArenaSettingsParser.ParseMatchPoints("1v1=15/5", null);
+        t.MatchPointsDailyCap = 25;
+        var (e, h, _) = NewEngine(t);
+        ArenaMatch Duel()
+        {
+            Do(e, A, ArenaEngine.AtBattlemaster, ArenaWire.ActQueueJoin, "1\n0\n");
+            Do(e, B, ArenaEngine.AtBattlemaster, ArenaWire.ActQueueJoin, "1\n0\n");
+            var duel = e.MatchOf(A);
+            EnterAll(e, duel);
+            Advance(e, h, 61);
+            Do(e, B, "", ArenaWire.ActKo, A.ToString());
+            Advance(e, h, 125);
+            return duel;
+        }
+        Duel();
+        Check("winner +15, loser +5", e.PlayerRecord(A).Points == 15 && e.PlayerRecord(B).Points == 5,
+            $"A={e.PlayerRecord(A).Points} B={e.PlayerRecord(B).Points}");
+        Duel();
+        Check("the daily cap stops the win at 25", e.PlayerRecord(A).Points == 25 && e.PlayerRecord(B).Points == 10,
+            $"A={e.PlayerRecord(A).Points} B={e.PlayerRecord(B).Points}");
+        h.Utc = h.Utc.AddDays(1);
+        Duel();
+        Check("a new UTC day, a new cap", e.PlayerRecord(A).Points == 40, $"A={e.PlayerRecord(A).Points}");
+
+        // Someone who walks out before the end gets nothing; a mode left out pays nothing.
+        t = FfaTuning();
+        t.MatchPoints = ArenaSettingsParser.ParseMatchPoints("ffa=25/5", null);
+        (e, h, _) = NewEngine(t);
+        foreach (var p in new[] { A, B, C }) Do(e, p, ArenaEngine.AtBattlemaster, ArenaWire.ActFfaJoin);
+        Advance(e, h, 61);
+        var m = e.Matches.Single();
+        EnterAll(e, m);
+        Advance(e, h, 61);
+        Do(e, C, "", ArenaWire.ActLeave);
+        Do(e, A, "", ArenaWire.ActKo, B.ToString());
+        Check("FFA: winner 25, the knocked-out who stayed 5, the one who left 0",
+            e.PlayerRecord(B).Points == 25 && e.PlayerRecord(A).Points == 5 && e.PlayerRecord(C).Points == 0,
+            $"A={e.PlayerRecord(A).Points} B={e.PlayerRecord(B).Points} C={e.PlayerRecord(C).Points}");
     }
 
     // ------------------------------------------------------------------- points

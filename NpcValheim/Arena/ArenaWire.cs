@@ -43,6 +43,7 @@ namespace NpcValheim.Arena
         internal const string ActQueueJoin = "queue.join";
         internal const string ActQueueLeave = "queue.leave";
         internal const string ActChallengeJoin = "challenge.join";
+        internal const string ActFfaJoin = "ffa.join";
         internal const string ActGroupConfirm = "group.confirm";
         internal const string ActEnter = "match.enter";
         internal const string ActEnterFailed = "match.enterfailed";
@@ -59,6 +60,7 @@ namespace NpcValheim.Arena
         internal const string ActAdminMapRemove = "admin.map.del";
         internal const string ActAdminOfferSet = "admin.offer.set";
         internal const string ActAdminOfferRemove = "admin.offer.del";
+        internal const string ActAdminPointsSet = "admin.points.set";
 
         internal static string Clean(string text) =>
             string.IsNullOrEmpty(text) ? "" : text.Replace('\t', ' ').Replace('\n', ' ').Replace('\r', ' ');

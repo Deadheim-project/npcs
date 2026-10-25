@@ -113,6 +113,30 @@ namespace NpcValheim
         internal static ConfigEntry<float> QuestButtonX;
         internal static ConfigEntry<float> QuestButtonY;
 
+        /// <summary>
+        /// Keys the mod no longer binds (the arena's Brackets and Solo, say) stay in the cfg as
+        /// orphans and are written back on every save. With every entry bound above, whatever is
+        /// still orphaned is gone from the code, so it goes from the file too.
+        /// </summary>
+        private static void PruneOrphans(ConfigFile config)
+        {
+            try
+            {
+                var orphans = AccessTools.Property(typeof(ConfigFile), "OrphanedEntries")?.GetValue(config, null)
+                    as System.Collections.Generic.Dictionary<ConfigDefinition, string>;
+                if (orphans == null || orphans.Count == 0) return;
+                var names = new System.Collections.Generic.List<string>();
+                foreach (var key in orphans.Keys) names.Add($"[{key.Section}] {key.Key}");
+                orphans.Clear();
+                config.Save();
+                Log.LogInfo($"NpcValheim: {names.Count} entrada(s) que o mod nao usa mais sairam do cfg: {string.Join(", ", names)}");
+            }
+            catch (System.Exception e)
+            {
+                Log.LogWarning("NpcValheim: nao foi possivel limpar as entradas orfas do cfg: " + e.Message);
+            }
+        }
+
         private void Awake()
         {
             Log = Logger;
@@ -349,6 +373,7 @@ namespace NpcValheim
             // HUD every frame), so a reload takes effect on its own. The HUD offsets are the
             // exception and QuestTracker/QuestHudButton rebuild themselves when they change.
             // Teleporters already placed keep the cost stored on them.
+            PruneOrphans(Config);
             Deadheim.Shared.ConfigWatcher.Watch(Config, Name);
 
             var databaseDirectory = NpcStoragePaths.DatabaseDirectory;

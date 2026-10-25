@@ -50,6 +50,9 @@ namespace NpcValheim.Arena
         /// <summary>How many times the gates pulled this player back (for the in-game test).</summary>
         internal static int GatePulls { get; private set; }
         private static Vector3 _spawn;
+        /// <summary>Centre of this player's gate: the start itself. In a free-for-all the
+        /// spawn is a step aside from it, and the gate stays where its wall is drawn.</summary>
+        private static Vector3 _gate;
         private static float _spawnYaw;
         private static float _gateRadius = 6f;
 
@@ -210,8 +213,13 @@ namespace NpcValheim.Arena
             Side = Int(f, 5);
             MapName = Str(f, 6);
             _gateRadius = Mathf.Max(2f, Float(f, 7, 6f));
+            var map = Side > ArenaSide.Green
+                ? ArenaSettingsParser.ParseMaps(ArenaConfig.Maps?.Value, null)
+                    .FirstOrDefault(m => string.Equals(m.Name, MapName, System.StringComparison.OrdinalIgnoreCase))
+                : null;
+            _gate = map != null ? map.SpawnOf(Side) : _spawn;
             SetPhase(PhasePrep);
-            ArenaGate.Show(MapName, Side, _spawn, _gateRadius);
+            ArenaGate.Show(MapName, Side, _gate, _gateRadius);
 
             UI.UiRoot.RequestClose();
             if (!player.TeleportTo(_spawn, Quaternion.Euler(0f, _spawnYaw, 0f), true) && !player.IsTeleporting())
@@ -328,11 +336,11 @@ namespace NpcValheim.Arena
         private static void HoldAtGate(Player player)
         {
             var here = player.transform.position;
-            var flat = new Vector2(here.x - _spawn.x, here.z - _spawn.z);
+            var flat = new Vector2(here.x - _gate.x, here.z - _gate.z);
             if (flat.magnitude <= _gateRadius + 0.5f) return;
 
-            var back = _spawn + (new Vector3(flat.x, 0f, flat.y).normalized * Mathf.Max(0f, _gateRadius - 1f));
-            back.y = Mathf.Max(_spawn.y, here.y);
+            var back = _gate + (new Vector3(flat.x, 0f, flat.y).normalized * Mathf.Max(0f, _gateRadius - 1f));
+            back.y = Mathf.Max(_gate.y, here.y);
             // Both: the character's Rigidbody would put it back where it was otherwise.
             player.transform.position = back;
             var body = player.GetComponent<Rigidbody>();

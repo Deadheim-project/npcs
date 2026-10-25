@@ -46,22 +46,21 @@ namespace NpcValheim.UI
             ArenaClient.RequestData();
         }
 
-        protected static bool SoloOn => ArenaConfig.Solo?.Value ?? true;
+        /// <summary>1v1 is always on: the arena is 1v1, 2v2, FFA and PvE.</summary>
+        protected static bool SoloOn => true;
 
         protected static bool IsSolo(int size) => SoloOn && size == 1;
 
         protected static List<int> Brackets()
         {
-            var list = ArenaSettingsParser.ParseBrackets(ArenaConfig.Brackets?.Value ?? "2,3,5", null);
-            if (list.Count == 0 && !SoloOn) list = new List<int> { 2, 3, 5 };
-            return ArenaSettingsParser.WithSolo(list, SoloOn);
+            return new ArenaTuning().ActiveBrackets;
         }
 
         /// <summary>The brackets this page offers; the Organizer leaves out the solo 1v1.</summary>
         protected virtual List<int> Sizes() => Brackets();
 
         protected virtual string Signature() =>
-            $"{ArenaClient.Revision}:{ArenaClient.ResultRevision}:{Size}:{ArenaConfig.Brackets?.Value}:{SoloOn}";
+            $"{ArenaClient.Revision}:{ArenaClient.ResultRevision}:{Size}";
 
         protected abstract void Rebuild();
 
@@ -206,6 +205,10 @@ namespace NpcValheim.UI
 
         protected static string Kind(bool rated) => rated ? "Ranqueada" : "Escaramuça";
 
+        /// <summary>A queue as people read it: "2v2 Ranqueada", "FFA".</summary>
+        protected static string QueueName(int size, bool rated) =>
+            size == ArenaRules.FfaSize ? "FFA (todos contra todos)" : $"{ArenaRules.BracketName(size)} {Kind(rated)}";
+
         /// <summary>My personal rating in a team, from the snapshot.</summary>
         protected static int PersonalIn(ArenaTeamView team)
         {
@@ -225,11 +228,15 @@ namespace NpcValheim.UI
             {
                 Heading(match.IsChallenge
                     ? $"Desafio: {match.Challenge} · {match.Map}"
-                    : $"Partida: {match.Map} · {ArenaRules.BracketName(match.Size)} {Kind(match.Rated)}");
+                    : match.Size == ArenaRules.FfaSize
+                        ? $"Partida: {match.Map} · FFA (todos contra todos)"
+                        : $"Partida: {match.Map} · {ArenaRules.BracketName(match.Size)} {Kind(match.Rated)}");
                 switch (match.Phase)
                 {
                     case "invited":
-                        LiveLine(() => (match.IsChallenge ? "O desafio está pronto!" : $"A arena está pronta! Você é do time {SideText(match.Side)}.") +
+                        LiveLine(() => (match.IsChallenge ? "O desafio está pronto!"
+                                           : match.Size == ArenaRules.FfaSize ? "O FFA está pronto! Cada um por si."
+                                           : $"A arena está pronta! Você é do time {SideText(match.Side)}.") +
                                        $" Expira em {ArenaClient.SecondsLeft()}s.", 16, ValheimUi.Yellow);
                         var row = ButtonRow();
                         Btn(row, "Entrar", 160f, () =>
@@ -241,7 +248,9 @@ namespace NpcValheim.UI
                         break;
                     case "prep":
                         LiveLine(() => $"Preparação: os portões abrem em {Clock(ArenaClient.SecondsLeft())}." +
-                                       (match.IsChallenge ? " A criatura chega quando abrirem." : $" Você é do time {SideText(match.Side)}."), 16, ValheimUi.Yellow);
+                                       (match.IsChallenge ? " A criatura chega quando abrirem."
+                                           : match.Size == ArenaRules.FfaSize ? " Todos contra todos: vence o último de pé."
+                                           : $" Você é do time {SideText(match.Side)}."), 16, ValheimUi.Yellow);
                         Score(match);
                         LeaveButton("Sair da arena");
                         break;
@@ -269,7 +278,7 @@ namespace NpcValheim.UI
                 {
                     int since = queue.Waited;
                     float at = ArenaClient.SnapshotAt;
-                    LiveLine(() => $"Na fila: {ArenaRules.BracketName(queue.Size)} {Kind(queue.Rated)} · esperando {Clock(since + Mathf.FloorToInt(Time.realtimeSinceStartup - at))}", 15, ValheimUi.Yellow);
+                    LiveLine(() => $"Na fila: {QueueName(queue.Size, queue.Rated)} · esperando {Clock(since + Mathf.FloorToInt(Time.realtimeSinceStartup - at))}", 15, ValheimUi.Yellow);
                 }
                 var row = ButtonRow();
                 Btn(row, "Sair da fila", 160f, () => Ask(ArenaWire.ActQueueLeave));
@@ -309,6 +318,11 @@ namespace NpcValheim.UI
 
         private void Score(ArenaMatchView match)
         {
+            if (match.Size == ArenaRules.FfaSize)
+            {
+                Line($"Todos contra todos: {match.GoldAlive}/{match.GoldTotal} de pé", 17, ValheimUi.Beige, 28f);
+                return;
+            }
             Line($"<color=#ffd140>{match.GoldName}</color>  {match.GoldAlive}/{match.GoldTotal} de pé     ×     " +
                  $"<color=#73db6b>{match.GreenName}</color>  {match.GreenAlive}/{match.GreenTotal} de pé", 17, ValheimUi.Beige, 28f);
         }
@@ -323,10 +337,13 @@ namespace NpcValheim.UI
         /// the change, then every player.</summary>
         protected void ResultBlock(ArenaResult r)
         {
+            bool ffa = !r.IsChallenge && r.Size == ArenaRules.FfaSize;
             string outcome = r.IsChallenge
                 ? r.Winner == ArenaSide.Gold ? $"{r.Challenge} foi derrotado!" : r.Winner == ArenaSide.Green ? $"{r.Challenge} venceu" : "O desafio terminou sem vencedor"
-                : r.Winner == ArenaSide.None ? "Empate: o tempo acabou" : $"Vitória do time {SideText(r.Winner)}";
-            Heading(r.IsChallenge ? $"Resultado · Desafio {r.Challenge} · {r.Map}" : $"Resultado · {r.Map} · {ArenaRules.BracketName(r.Size)} {Kind(r.Rated)}");
+                : r.Winner == ArenaSide.None ? "Empate: o tempo acabou"
+                : ffa ? $"Vitória de {r.Players.FirstOrDefault(p => p.Side == r.Winner)?.Name ?? "?"}"
+                : $"Vitória do time {SideText(r.Winner)}";
+            Heading(r.IsChallenge ? $"Resultado · Desafio {r.Challenge} · {r.Map}" : $"Resultado · {r.Map} · {QueueName(r.Size, r.Rated)}");
             Line($"{outcome}  ·  {Clock(r.Duration)}", 17, ValheimUi.Yellow, 28f);
             foreach (var side in r.Sides)
             {
@@ -337,15 +354,18 @@ namespace NpcValheim.UI
             }
             var header = ButtonRow(24f);
             Cell(header, "Jogador", 13, ValheimUi.Muted);
-            Cell(header, "Time", 13, ValheimUi.Muted, 80f);
+            if (!ffa) Cell(header, "Time", 13, ValheimUi.Muted, 80f);
             Cell(header, "Abates", 13, ValheimUi.Muted, 70f);
             Cell(header, "Situação", 13, ValheimUi.Muted, 110f);
             if (r.Rated) Cell(header, "Pessoal", 13, ValheimUi.Muted, 130f);
-            foreach (var p in r.Players.OrderBy(p => p.Side).ThenByDescending(p => p.Kos))
+            var players = ffa
+                ? r.Players.OrderByDescending(p => p.Side == r.Winner).ThenByDescending(p => p.Kos)
+                : r.Players.OrderBy(p => p.Side).ThenByDescending(p => p.Kos);
+            foreach (var p in players)
             {
                 var row = ButtonRow(24f);
                 Cell(row, p.Name, 15);
-                Cell(row, SideText(p.Side), 15, null, 80f);
+                if (!ffa) Cell(row, SideText(p.Side), 15, null, 80f);
                 Cell(row, p.Kos.ToString(CultureInfo.InvariantCulture), 15, null, 70f);
                 Cell(row, p.Status, 15, null, 110f);
                 if (r.Rated)
@@ -466,7 +486,8 @@ namespace NpcValheim.UI
                 }
             }
             Gap();
-            Line($"Para receber Pontos de Arena: o time joga {ArenaConfig.GamesPerWeek?.Value ?? 10}+ partidas na semana e você joga " +
+            Line($"Para receber Pontos de Arena: o time joga {ArenaConfig.GamesPerWeek?.Value ?? 10}+ partidas no período " +
+                 $"({ArenaConfig.Current.IntervalText}) e você joga " +
                  $"{ArenaConfig.ParticipationPercent?.Value ?? 30}% delas.", 13, ValheimUi.Muted, 22f);
 
             if (solo) return;
@@ -644,8 +665,28 @@ namespace NpcValheim.UI
                     : $"Ranqueada: grupo de exatamente {Size} do mesmo time, rating em jogo. Escaramuça: sozinho ou em grupo, sem rating.",
                 13, ValheimUi.Muted, 22f);
             Gap();
+            FfaBlock(busy);
             ChallengeBlock(busy, group.Count);
             StatusBlocks(withResult: true);
+        }
+
+        /// <summary>The free-for-all: always alone, even in a group; no team, no rating.</summary>
+        private void FfaBlock(bool busy)
+        {
+            if (!(ArenaConfig.FfaEnabled?.Value ?? false)) return;
+            int max = Mathf.Clamp(ArenaConfig.FfaMaxPlayers?.Value ?? 8, 2, 16);
+            int min = Mathf.Clamp(ArenaConfig.FfaMinPlayers?.Value ?? 3, 2, max);
+            Heading("FFA (todos contra todos)");
+            Line($"Cada um por si, de {min} a {max} jogadores. Vence o último de pé. Você entra sozinho, mesmo em grupo. Sem rating.",
+                14, ValheimUi.Muted);
+            var row = ButtonRow(40f);
+            var go = Btn(row, "Entrar: FFA", 210f, () =>
+            {
+                Ask(ArenaWire.ActFfaJoin);
+                Say("Entrando na fila do FFA...");
+            }, 15);
+            go.interactable = !busy;
+            Gap();
         }
 
         /// <summary>The challenges the server offers: the group (up to MaxPlayers) against one
@@ -765,7 +806,8 @@ namespace NpcValheim.UI
         {
             var s = ArenaClient.Snapshot;
             Line($"<color=#9a9188>Seus Pontos de Arena:</color> {s.Points}", 18, ValheimUi.Yellow, 30f);
-            Line("Os itens chegam pela Caixa Postal. A distribuição de pontos é semanal.", 13, ValheimUi.Muted, 22f);
+            Line($"Os itens chegam pela Caixa Postal. A distribuição de pontos é {ArenaConfig.Current.IntervalText}; " +
+                 "cada partida também dá pontos.", 13, ValheimUi.Muted, 22f);
             Gap();
 
             var offers = ArenaSettingsParser.ParseOffers(ArenaConfig.VendorItems?.Value, null)
@@ -897,6 +939,9 @@ namespace NpcValheim.UI
         private TMP_InputField _zoneName;
         private TMP_InputField _zoneRadius;
         private TMP_InputField _mapName;
+        private TMP_InputField _matchPoints;
+        private TMP_InputField _matchPointsCap;
+        private TMP_InputField _interval;
 
         // The arena being put together: each start is taken where the admin stands when the
         // button is pressed, and nothing reaches the server until Salvar.
@@ -960,7 +1005,51 @@ namespace NpcValheim.UI
             ValheimUi.CreateButton(arena, "Verde aqui", 104f, 34f, 14).onClick.AddListener(() => Capture(ArenaSide.Green));
             ValheimUi.CreateButton(arena, "Espectador", 104f, 34f, 14).onClick.AddListener(() => Capture(ArenaSide.None));
             ValheimUi.CreateButton(arena, "Salvar", 90f, 34f, 14).onClick.AddListener(SaveMap);
-            CreateList(Vector2.zero, new Vector2(0f, -134f));
+
+            var pts = ValheimUi.CreateRect("Points", Root);
+            ValheimUi.Anchor(pts, new Vector2(0f, 1f), new Vector2(1f, 1f), new Vector2(0f, -172f), new Vector2(0f, -132f));
+            var ptsLayout = pts.gameObject.AddComponent<HorizontalLayoutGroup>();
+            ptsLayout.spacing = 8f;
+            ptsLayout.childControlWidth = true;
+            ptsLayout.childControlHeight = true;
+            ptsLayout.childForceExpandWidth = false;
+            var ptsHint = ValheimUi.CreateLabel(pts, "Pontos/partida:", 15, ValheimUi.Muted, TextAlignmentOptions.Left);
+            ValheimUi.SetWidth(ptsHint.gameObject, 120f);
+            _matchPoints = ValheimUi.CreateInputField(pts, ArenaConfig.MatchPoints?.Value ?? ArenaSettingsParser.DefaultMatchPoints, 0f, 34f);
+            Flexible(_matchPoints.gameObject);
+            var capHint = ValheimUi.CreateLabel(pts, "teto/dia:", 15, ValheimUi.Muted, TextAlignmentOptions.Left);
+            ValheimUi.SetWidth(capHint.gameObject, 70f);
+            _matchPointsCap = ValheimUi.CreateInputField(pts,
+                (ArenaConfig.MatchPointsDailyCap?.Value ?? 300).ToString(CultureInfo.InvariantCulture), 70f, 34f);
+            var intervalHint = ValheimUi.CreateLabel(pts, "distribuir a cada (h):", 15, ValheimUi.Muted, TextAlignmentOptions.Left);
+            ValheimUi.SetWidth(intervalHint.gameObject, 150f);
+            _interval = ValheimUi.CreateInputField(pts,
+                (ArenaConfig.ResetIntervalHours?.Value ?? 168).ToString(CultureInfo.InvariantCulture), 70f, 34f);
+            ValheimUi.CreateButton(pts, "Salvar", 90f, 34f, 14).onClick.AddListener(SavePoints);
+            CreateList(Vector2.zero, new Vector2(0f, -178f));
+        }
+
+        private void SavePoints()
+        {
+            var problems = new List<string>();
+            var points = ArenaSettingsParser.ParseMatchPoints(_matchPoints.text, problems);
+            if (problems.Count > 0) { Say(problems[0]); return; }
+            Ask(ArenaWire.ActAdminPointsSet,
+                ArenaSettingsParser.FormatMatchPoints(points) + "\n" + _matchPointsCap.text.Trim() + "\n" + _interval.text.Trim());
+            Say("Salvando os pontos por partida...");
+        }
+
+        /// <summary>The points per match as people read them.</summary>
+        private static string DescribePoints()
+        {
+            var points = ArenaSettingsParser.ParseMatchPoints(ArenaConfig.MatchPoints?.Value, null);
+            var parts = ArenaSettingsParser.MatchPointModes.Select(mode =>
+            {
+                string label = mode == "ffa" ? "FFA" : mode == "pve" ? "PvE" : mode;
+                return points.TryGetValue(mode, out var p) ? $"{label}: vitória {p.Win}, derrota {p.Loss}" : $"{label}: nada";
+            });
+            int cap = ArenaConfig.MatchPointsDailyCap?.Value ?? 0;
+            return string.Join(" · ", parts) + $" · teto por dia {(cap > 0 ? cap.ToString(CultureInfo.InvariantCulture) : "nenhum")}";
         }
 
         /// <summary>Takes one point of the arena being built where the admin stands, facing
@@ -1021,6 +1110,7 @@ namespace NpcValheim.UI
             to.Sizes.Clear();
             to.Sizes.UnionWith(from.Sizes);
             to.AnyPvp = from.AnyPvp;
+            to.Ffa = from.Ffa;
             to.Pve = from.Pve;
         }
 
@@ -1032,7 +1122,9 @@ namespace NpcValheim.UI
             {
                 _usage.AnyPvp = false;
                 _usage.Sizes.UnionWith(ArenaConfig.Current.ActiveBrackets);
+                _usage.Ffa = true;
             }
+            if (size < 0) return;
             if (!_usage.Sizes.Remove(size)) _usage.Sizes.Add(size);
             Say($"Uso: {_usage.UsageLabel}");
         }
@@ -1062,7 +1154,9 @@ namespace NpcValheim.UI
         }
 
         protected override string Signature() =>
-            base.Signature() + ":" + ArenaConfig.Maps?.Value + ":" + ArenaDeadheim.ZonesText;
+            base.Signature() + ":" + ArenaConfig.Maps?.Value + ":" + ArenaDeadheim.ZonesText + ":" +
+            ArenaConfig.MatchPoints?.Value + ":" + ArenaConfig.MatchPointsDailyCap?.Value + ":" + ArenaConfig.ResetIntervalHours?.Value + ":" +
+            ArenaConfig.ResetDay?.Value + ":" + ArenaConfig.ResetHourUtc?.Value;
 
         private static string Here(Player player) =>
             ArenaConfig.Describe(player.transform.position, player.transform.eulerAngles.y);
@@ -1096,6 +1190,19 @@ namespace NpcValheim.UI
             }
             Gap();
 
+            Heading("Pontos de Arena por partida");
+            Line("Quanto cada modo dá no fim da partida, a quem terminou dentro da arena: modo=vitória/derrota, " +
+                 "separados por | (ex.: 1v1=15/5|2v2=20/8|ffa=25/5|pve=10/0). Empate paga a derrota. Edite acima e clique Salvar.",
+                13, ValheimUi.Muted, 40f);
+            Line(DescribePoints(), 14, ValheimUi.Beige, 40f);
+            if (_matchPoints != null && !_matchPoints.isFocused && ArenaConfig.MatchPoints != null)
+                _matchPoints.text = ArenaConfig.MatchPoints.Value;
+            if (_matchPointsCap != null && !_matchPointsCap.isFocused && ArenaConfig.MatchPointsDailyCap != null)
+                _matchPointsCap.text = ArenaConfig.MatchPointsDailyCap.Value.ToString(CultureInfo.InvariantCulture);
+            if (_interval != null && !_interval.isFocused && ArenaConfig.ResetIntervalHours != null)
+                _interval.text = ArenaConfig.ResetIntervalHours.Value.ToString(CultureInfo.InvariantCulture);
+            Gap();
+
             Heading("Montar arena");
             Line("Escreva o nome, fique no início de cada time (olhando para onde ele deve olhar) e clique Ouro aqui / " +
                  "Verde aqui; Espectador (opcional) é onde fica quem foi derrotado. Salvar com o mesmo nome muda a arena. " +
@@ -1110,14 +1217,20 @@ namespace NpcValheim.UI
                 _mapName.text = "";
                 Say("Rascunho limpo.");
             });
-            Line("Uso: para que a arena serve. Clique os tamanhos de partida PvP e/ou PvE (desafio contra criatura); " +
-                 "Todos = qualquer partida. Cada fila só usa arenas do seu uso.", 13, ValheimUi.Muted, 40f);
+            Line("Uso: para que a arena serve. Clique 1v1/2v2, FFA (todos contra todos) e/ou PvE (desafio contra criatura); " +
+                 "Só PvP = 1v1, 2v2 e FFA; Todos = qualquer partida. Cada fila só usa arenas do seu uso.", 13, ValheimUi.Muted, 40f);
             var usageRow = ButtonRow();
             foreach (int size in ArenaConfig.Current.ActiveBrackets)
             {
                 int picked = size;
                 Btn(usageRow, ArenaRules.BracketName(size), 64f, () => ToggleSize(picked));
             }
+            Btn(usageRow, "FFA", 64f, () =>
+            {
+                if (_usage.AnyPvp) ToggleSize(-1);
+                _usage.Ffa = !_usage.Ffa;
+                Say($"Uso: {_usage.UsageLabel}");
+            });
             Btn(usageRow, "PvE", 64f, () =>
             {
                 _usage.Pve = !_usage.Pve;
@@ -1127,6 +1240,7 @@ namespace NpcValheim.UI
             {
                 _usage.Sizes.Clear();
                 _usage.AnyPvp = true;
+                _usage.Ffa = false;
                 _usage.Pve = false;
                 Say($"Uso: {_usage.UsageLabel}");
             });
@@ -1196,9 +1310,14 @@ namespace NpcValheim.UI
             Gap();
 
             Heading("Pontos de Arena");
+            var tuning = ArenaConfig.Current;
+            Line($"Distribuição {tuning.IntervalText} (a cada {tuning.ResetIntervalHours} h, contando de {tuning.ResetDay} " +
+                 $"{tuning.ResetHourUtc:00}:00 UTC). Próxima: {tuning.NextResetAfter(DateTime.UtcNow).ToLocalTime():dd/MM HH:mm} (seu horário). " +
+                 "O intervalo se muda na linha de pontos acima.", 13, ValheimUi.Beige, 40f);
             var actions = ButtonRow();
-            Btn(actions, "Distribuir os pontos da semana agora", 360f, () => Ask(ArenaWire.ActAdminDistribute));
-            Line("Paga a semana como a distribuição automática (10 jogos, 30%) e zera os jogos da semana.", 13, ValheimUi.Muted, 22f);
+            Btn(actions, "Distribuir os pontos do período agora", 360f, () => Ask(ArenaWire.ActAdminDistribute));
+            Line($"Paga o período como a distribuição automática ({tuning.GamesPerWeek} jogos, {tuning.ParticipationPercent}%) e zera os jogos do período.",
+                13, ValheimUi.Muted, 22f);
         }
     }
 }

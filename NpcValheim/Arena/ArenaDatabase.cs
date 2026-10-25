@@ -52,6 +52,9 @@ namespace NpcValheim.Arena
         public long PlayerId { get; set; }
         public string Name { get; set; }
         public int Points { get; set; }
+        /// <summary>The UTC day (yyyyMMdd) <see cref="DayPoints"/> counts, for the daily cap of match points.</summary>
+        public int PointsDay { get; set; }
+        public int DayPoints { get; set; }
         public Dictionary<string, int> Mmr { get; set; } = new Dictionary<string, int>();
         public bool HasReturn { get; set; }
         public float ReturnX { get; set; }

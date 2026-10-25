@@ -43,7 +43,7 @@ namespace NpcValheim.Arena
             if (ZNet.instance == null || !ZNet.instance.IsServer()) return;
             // Nothing that has to happen at an NPC may come this way.
             if (action == ArenaWire.ActCharterBuy || action == ArenaWire.ActCharterTurnIn ||
-                action == ArenaWire.ActQueueJoin || action == ArenaWire.ActChallengeJoin ||
+                action == ArenaWire.ActQueueJoin || action == ArenaWire.ActChallengeJoin || action == ArenaWire.ActFfaJoin ||
                 action == ArenaWire.ActVendorBuy) return;
             ArenaServer.Handle(sender, "", action, payload);
         }
@@ -128,7 +128,8 @@ namespace NpcValheim.Arena
                     return;
                 }
                 if (action == ArenaWire.ActAdminMapSet || action == ArenaWire.ActAdminMapRemove ||
-                    action == ArenaWire.ActAdminOfferSet || action == ArenaWire.ActAdminOfferRemove)
+                    action == ArenaWire.ActAdminOfferSet || action == ArenaWire.ActAdminOfferRemove ||
+                    action == ArenaWire.ActAdminPointsSet)
                 {
                     HandleCfgEdit(sender, name, admin, action, payload ?? "");
                     return;
@@ -288,6 +289,42 @@ namespace NpcValheim.Arena
                     }
                     ArenaConfig.VendorItems.Value = after;
                     done = $"Intendente: {ItemNames.Display(prefab)} retirado.";
+                    break;
+                }
+                case ArenaWire.ActAdminPointsSet:
+                {
+                    // "1v1=15/5|2v2=20/8|ffa=25/5|pve=10/0\n300\n168": the points per match, the daily
+                    // cap and the hours between two distributions.
+                    var lines = payload.Split('\n');
+                    var points = ArenaSettingsParser.ParseMatchPoints(lines[0], problems);
+                    if (problems.Count > 0)
+                    {
+                        ArenaNet.Send(sender, ArenaWire.Notice, problems[0]);
+                        return;
+                    }
+                    int cap = ArenaConfig.MatchPointsDailyCap.Value;
+                    if (lines.Length > 1 && lines[1].Trim().Length > 0 &&
+                        (!int.TryParse(lines[1].Trim(), System.Globalization.NumberStyles.Integer,
+                            System.Globalization.CultureInfo.InvariantCulture, out cap) || cap < 0))
+                    {
+                        ArenaNet.Send(sender, ArenaWire.Notice, "Teto diário inválido (0 = sem teto).");
+                        return;
+                    }
+                    int interval = ArenaConfig.ResetIntervalHours.Value;
+                    if (lines.Length > 2 && lines[2].Trim().Length > 0 &&
+                        (!int.TryParse(lines[2].Trim(), System.Globalization.NumberStyles.Integer,
+                            System.Globalization.CultureInfo.InvariantCulture, out interval) ||
+                         interval < ArenaTuning.MinResetIntervalHours || interval > ArenaTuning.MaxResetIntervalHours))
+                    {
+                        ArenaNet.Send(sender, ArenaWire.Notice,
+                            $"Intervalo de distribuição entre {ArenaTuning.MinResetIntervalHours} e {ArenaTuning.MaxResetIntervalHours} horas.");
+                        return;
+                    }
+                    ArenaConfig.MatchPoints.Value = ArenaSettingsParser.FormatMatchPoints(points);
+                    ArenaConfig.MatchPointsDailyCap.Value = cap;
+                    ArenaConfig.ResetIntervalHours.Value = interval;
+                    done = $"Pontos por partida: {ArenaConfig.MatchPoints.Value} · teto diário {(cap > 0 ? cap.ToString() : "nenhum")} · " +
+                           $"distribuição a cada {interval} h.";
                     break;
                 }
                 default:

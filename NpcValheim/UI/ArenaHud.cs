@@ -85,7 +85,9 @@ namespace NpcValheim.UI
             {
                 int left = ArenaClient.SecondsLeft();
                 string clock = $"{left / 60}:{left % 60:00}";
-                string score = $"<color=#ffd140>{match.GoldName} {match.GoldAlive}</color>  ×  <color=#73db6b>{match.GreenAlive} {match.GreenName}</color>";
+                string score = match.Size == ArenaRules.FfaSize && !match.IsChallenge
+                    ? $"FFA  {match.GoldAlive}/{match.GoldTotal} de pé"
+                    : $"<color=#ffd140>{match.GoldName} {match.GoldAlive}</color>  ×  <color=#73db6b>{match.GreenAlive} {match.GreenName}</color>";
                 switch (match.Phase)
                 {
                     case "invited":
@@ -106,7 +108,8 @@ namespace NpcValheim.UI
             {
                 if (queue.Status == "confirm") return "Arena: confirmando o grupo...";
                 int waited = queue.Waited + Mathf.FloorToInt(Time.realtimeSinceStartup - ArenaClient.SnapshotAt);
-                return $"Na fila: {ArenaRules.BracketName(queue.Size)} {(queue.Rated ? "Ranqueada" : "Escaramuça")}  ·  {waited / 60}:{waited % 60:00}";
+                string kind = queue.Size == ArenaRules.FfaSize ? "" : queue.Rated ? " Ranqueada" : " Escaramuça";
+                return $"Na fila: {ArenaRules.BracketName(queue.Size)}{kind}  ·  {waited / 60}:{waited % 60:00}";
             }
 
             if (s.SignRequests.Count > 0 || s.Invite != null)

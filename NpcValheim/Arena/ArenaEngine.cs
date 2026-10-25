@@ -97,6 +97,9 @@ namespace NpcValheim.Arena
         public int CreatureHealthShown = -1;
 
         public bool IsChallenge => Challenge != null;
+        /// <summary>Everyone alone: each seat is a side of its own (1, 2, 3...).</summary>
+        public bool IsFfa => Challenge == null && Size == ArenaRules.FfaSize;
+        public int AliveFfa => Seats.Count(s => s.Present && s.Alive);
         public readonly ArenaSideInfo[] Sides = { null, new ArenaSideInfo(), new ArenaSideInfo() };
         public readonly List<ArenaSeat> Seats = new List<ArenaSeat>();
 
@@ -296,6 +299,10 @@ namespace NpcValheim.Arena
                 case ActChallengeJoin:
                     if (where != AtBattlemaster) return;
                     JoinChallenge(me, Str(f, 0), Str(f, 1));
+                    return;
+                case ActFfaJoin:
+                    if (where != AtBattlemaster) return;
+                    JoinFfa(me);
                     return;
                 case ActQueueLeave: LeaveQueue(playerId); return;
                 case ActGroupConfirm: ConfirmGroup(playerId, Str(f, 0), Int(f, 1) == 1); return;
@@ -916,6 +923,72 @@ namespace NpcValheim.Arena
             }
         }
 
+        // ------------------------------------------------------------------- free-for-all
+
+        /// <summary>
+        /// The FFA queue at the Battlemaster: always alone, whatever group the player is in --
+        /// in a free-for-all the group would be opponents anyway. No team and no rating.
+        /// </summary>
+        private void JoinFfa(ArenaPlayerRecord me)
+        {
+            long id = me.PlayerId;
+            string refusal = QueueRefusal(id);
+            if (!_t.FfaEnabled) refusal = "O FFA está desligado neste servidor.";
+            else if (_t.Maps.Count == 0) refusal = "Nenhuma arena foi configurada ainda. Fale com um admin.";
+            else if (!_t.Maps.Any(m => _t.MapServes(m, ArenaRules.FfaSize)))
+                refusal = "Nenhuma arena aceita FFA neste servidor. Fale com um admin.";
+            if (refusal != null) { Say(id, refusal, alert: true); return; }
+            Enqueue(id, new List<long> { id }, ArenaRules.FfaSize, false);
+        }
+
+        /// <summary>
+        /// FFA matchmaking: a match as soon as MaxPlayers are waiting, or with everyone waiting
+        /// once there are MinPlayers and the first in line has waited WaitSeconds.
+        /// </summary>
+        private void MatchFfa()
+        {
+            while (_t.FfaEnabled && FreeMap(ArenaRules.FfaSize) != null)
+            {
+                var waiting = _queue.Where(q => q.Size == ArenaRules.FfaSize).OrderBy(q => q.JoinTime).ToList();
+                if (waiting.Count < _t.FfaMinPlayers) return;
+                if (waiting.Count < _t.FfaMaxPlayers && _host.Now - waiting[0].JoinTime < _t.FfaWaitSeconds) return;
+                CreateFfa(waiting.Take(_t.FfaMaxPlayers).ToList());
+            }
+        }
+
+        private void CreateFfa(List<QueueEntry> entries)
+        {
+            var map = FreeMap(ArenaRules.FfaSize);
+            if (map == null) return;
+
+            var match = new ArenaMatch
+            {
+                Id = ++_nextMatchId,
+                Size = ArenaRules.FfaSize,
+                Rated = false,
+                Map = map,
+                Status = MatchStatus.WaitJoin,
+                CreatedAt = _host.Now,
+                InviteExpires = _host.Now + _t.InviteAcceptSeconds,
+            };
+            match.Sides[ArenaSide.Gold].TeamName = match.Sides[ArenaSide.Green].TeamName = "Todos contra todos";
+            // Who starts where is shuffled: sides 1, 3, 5... at Gold, 2, 4, 6... at Green.
+            var players = entries.SelectMany(e => e.Players.Select(p => (Id: p, Name: e.Names[p]))).OrderBy(_ => _random.Next()).ToList();
+            for (int i = 0; i < players.Count; i++)
+                match.Seats.Add(new ArenaSeat { PlayerId = players[i].Id, Name = players[i].Name, Side = i + 1, State = SeatState.Invited });
+            foreach (var e in entries) _queue.Remove(e);
+            _matches[match.Id] = match;
+
+            _host.Log($"Arena: partida #{match.Id} FFA em {map.Name}: {string.Join(", ", players.Select(p => p.Name))}");
+            foreach (var seat in match.Seats)
+            {
+                Say(seat.PlayerId, $"O FFA está pronto ({players.Count} jogadores)! Abra a Arena [H] e clique Entrar ({Mathf.RoundToInt(_t.InviteAcceptSeconds)}s).", alert: true);
+                SendState(seat.PlayerId);
+            }
+        }
+
+        private static string SeatName(ArenaMatch match, int side) => match.Seats.FirstOrDefault(s => s.Side == side)?.Name ?? "?";
+
         // ------------------------------------------------------------------------ challenges
 
         /// <summary>
@@ -1068,7 +1141,7 @@ namespace NpcValheim.Arena
             }
             _queue.Add(entry);
 
-            string kind = rated ? "Ranqueada" : "Escaramuça";
+            string kind = rated ? "Ranqueada" : size == ArenaRules.FfaSize ? "todos contra todos" : "Escaramuça";
             _host.Log($"Arena: fila {ArenaRules.BracketName(size)} {kind}: {string.Join(", ", entry.Names.Values)} (MMR {entry.Mmr})");
             foreach (var m in members)
             {
@@ -1077,6 +1150,7 @@ namespace NpcValheim.Arena
             }
 
             if (rated) MatchRated(size, entry);
+            else if (size == ArenaRules.FfaSize) MatchFfa();
             else MatchSkirmish(size);
         }
 
@@ -1301,7 +1375,7 @@ namespace NpcValheim.Arena
             seat.Offline = false;
 
             var map = MapOf(match);
-            var spawn = map.SpawnOf(seat.Side);
+            var spawn = map.SpawnFor(seat.Side);
             _host.Send(id, Enter, Record(L(match.Id), F(spawn.x), F(spawn.y), F(spawn.z), F(map.YawOf(seat.Side)),
                 I(seat.Side), map.Name, F(_t.GateRadius)));
 
@@ -1405,7 +1479,7 @@ namespace NpcValheim.Arena
             }
 
             var map = MapOf(match);
-            var spot = map.HasSpectator ? map.Spectator : map.SpawnOf(seat.Side);
+            var spot = map.HasSpectator ? map.Spectator : map.SpawnFor(seat.Side);
             _host.Send(playerId, Move, Record(F(spot.x), F(spot.y), F(spot.z), F(map.YawOf(seat.Side))));
             CheckWin(match);
             SendMatchState(match);
@@ -1437,7 +1511,7 @@ namespace NpcValheim.Arena
                     seat.Alive = true;
                     seat.MovedAt = _host.Now;
                     var map = MapOf(match);
-                    var spawn = map.SpawnOf(seat.Side);
+                    var spawn = map.SpawnFor(seat.Side);
                     _host.Send(playerId, Enter, Record(L(match.Id), F(spawn.x), F(spawn.y), F(spawn.z),
                         F(map.YawOf(seat.Side)), I(seat.Side), map.Name, F(_t.GateRadius)));
                     SendMatchState(match);
@@ -1478,6 +1552,14 @@ namespace NpcValheim.Arena
                 else if (match.AliveCount(ArenaSide.Gold) == 0) EndMatch(match, ArenaSide.Green);
                 return;
             }
+            if (match.IsFfa)
+            {
+                // The last one standing wins; nobody standing (all gone at once) is a draw.
+                var standing = match.Seats.Where(s => s.Present && s.Alive).ToList();
+                if (standing.Count == 1) EndMatch(match, standing[0].Side);
+                else if (standing.Count == 0) EndMatch(match, ArenaSide.None);
+                return;
+            }
             int goldAlive = match.AliveCount(ArenaSide.Gold), greenAlive = match.AliveCount(ArenaSide.Green);
             int goldPresent = match.PresentCount(ArenaSide.Gold), greenPresent = match.PresentCount(ArenaSide.Green);
 
@@ -1510,7 +1592,9 @@ namespace NpcValheim.Arena
                 _host.Send(seat.PlayerId, Start, L(match.Id));
                 Say(seat.PlayerId, match.IsChallenge ? $"O desafio começou: derrote {match.Challenge.Name}!" : "A batalha na Arena começou!", alert: true);
             }
-            _host.Log($"Arena: partida #{match.Id} começou ({match.PresentCount(ArenaSide.Gold)} x {match.PresentCount(ArenaSide.Green)})");
+            _host.Log(match.IsFfa
+                ? $"Arena: partida #{match.Id} FFA começou ({match.AliveFfa} jogadores)"
+                : $"Arena: partida #{match.Id} começou ({match.PresentCount(ArenaSide.Gold)} x {match.PresentCount(ArenaSide.Green)})");
             CheckWin(match);
             SendMatchState(match);
         }
@@ -1546,6 +1630,7 @@ namespace NpcValheim.Arena
             }
 
             if (match.IsChallenge && winner == ArenaSide.Gold) PayChallenge(match);
+            PayMatchPoints(match, winner);
             Celebrate(match, winner);
 
             _db.SaveMatch(new ArenaMatchRecord
@@ -1558,8 +1643,50 @@ namespace NpcValheim.Arena
                 EndedUtcTicks = _host.UtcNow.Ticks,
                 Summary = summary,
             });
-            _host.Log($"Arena: partida #{match.Id} terminou: {(winner == 0 ? "empate (tempo)" : "vitória do " + ArenaSide.Name(winner))}");
+            _host.Log($"Arena: partida #{match.Id} terminou: {(winner == 0 ? "empate (tempo)" : match.IsFfa ? "vitória de " + SeatName(match, winner) : "vitória do " + ArenaSide.Name(winner))}");
             SendMatchState(match);
+        }
+
+        /// <summary>
+        /// PorPartida: Arena Points to everyone who finished the match inside the arena, the
+        /// winners' amount or the losers' (a draw pays the loss), up to the daily cap. A match
+        /// that never opened its gates (or a challenge whose creature never came) pays nothing.
+        /// </summary>
+        private void PayMatchPoints(ArenaMatch match, int winner)
+        {
+            if (match.StartedAt <= 0 || (match.IsChallenge && !match.CreatureSpawned)) return;
+            string mode = ArenaSettingsParser.MatchPointsMode(match.IsChallenge, match.Size);
+            if (!_t.MatchPoints.TryGetValue(mode, out var pay) || (pay.Win == 0 && pay.Loss == 0)) return;
+
+            int today = int.Parse(_host.UtcNow.ToString("yyyyMMdd", CultureInfo.InvariantCulture), CultureInfo.InvariantCulture);
+            var changed = new List<ArenaPlayerRecord>();
+            foreach (var seat in match.Seats.Where(s => s.State == SeatState.Entered && !s.Offline))
+            {
+                var p = Player(seat.PlayerId, seat.Name);
+                if (p.PointsDay != today)
+                {
+                    p.PointsDay = today;
+                    p.DayPoints = 0;
+                }
+                int amount = winner != ArenaSide.None && winner == seat.Side ? pay.Win : pay.Loss;
+                if (_t.MatchPointsDailyCap > 0) amount = Math.Min(amount, Math.Max(0, _t.MatchPointsDailyCap - p.DayPoints));
+                amount = Math.Min(amount, Math.Max(0, _t.MaxPoints - p.Points));
+                if (amount <= 0)
+                {
+                    if (_t.MatchPointsDailyCap > 0 && p.DayPoints >= _t.MatchPointsDailyCap)
+                        Say(seat.PlayerId, $"Você já ganhou o máximo de {_t.MatchPointsDailyCap} Pontos de Arena por partida hoje.");
+                    continue;
+                }
+                p.Points += amount;
+                p.DayPoints += amount;
+                changed.Add(p);
+                Say(seat.PlayerId, $"+{amount} Pontos de Arena. Saldo: {p.Points}.");
+            }
+            if (changed.Count > 0)
+            {
+                _db.SavePlayers(changed);
+                _host.Log($"Arena: partida #{match.Id} ({mode}) pagou pontos a {string.Join(", ", changed.Select(c => c.Name))}");
+            }
         }
 
         /// <summary>Aesir 34: once the match is over, one VIP on the winning side gets a cosmetic
@@ -1702,7 +1829,7 @@ namespace NpcValheim.Arena
                     I(Mathf.RoundToInt((float)(_host.Now - (match.StartedAt > 0 ? match.StartedAt : match.CreatedAt)))),
                     match.IsChallenge ? match.Challenge.Name : ""),
             };
-            for (int side = ArenaSide.Gold; side <= ArenaSide.Green; side++)
+            for (int side = ArenaSide.Gold; side <= ArenaSide.Green && !match.IsFfa; side++)
             {
                 var info = match.Sides[side];
                 lines.Add(Record("S", I(side), info.TeamName, I(info.RatingBefore), I(info.RatingChange), I(info.Mmr), I(info.MmrChange)));
@@ -1748,6 +1875,7 @@ namespace NpcValheim.Arena
                 _nextSlowTick = now + 1f;
                 SlowTick();
                 foreach (int size in _t.ActiveBrackets) MatchSkirmish(size);
+                MatchFfa();
             }
 
             foreach (var match in _matches.Values.ToList()) UpdateMatch(match);
@@ -1963,7 +2091,7 @@ namespace NpcValheim.Arena
                 p.Points = Math.Min(Math.Max(0, _t.MaxPoints), p.Points + kv.Value);
                 paidPlayers.Add(p);
                 _host.MailLetter(kv.Key, "Pontos de Arena",
-                    $"Você recebeu {p.Points - before} Pontos de Arena pela semana. Saldo: {p.Points}.");
+                    $"Você recebeu {p.Points - before} Pontos de Arena pelo período. Saldo: {p.Points}.");
             }
 
             foreach (var team in _teams.Values)
@@ -1988,13 +2116,13 @@ namespace NpcValheim.Arena
             }
             _db.SaveWeek(_teams.Values, paidPlayers, _state);
 
-            _host.Log($"Arena: pontos da semana distribuídos ({(manual ? "manual" : "automático")}): " +
+            _host.Log($"Arena: pontos do período distribuídos ({(manual ? "manual" : "automático")}, {_t.IntervalText}): " +
                       string.Join(", ", paidPlayers.Select(p => $"{p.Name} +{award[p.PlayerId]}")));
             foreach (var id in _players.Keys.Where(_host.IsOnline).ToList())
             {
                 Say(id, award.TryGetValue(id, out int got) && got > 0
-                    ? $"Pontos de Arena da semana: +{got}."
-                    : "Os Pontos de Arena da semana foram distribuídos.", alert: true);
+                    ? $"Pontos de Arena do período: +{got}."
+                    : "Os Pontos de Arena do período foram distribuídos.", alert: true);
                 SendState(id);
             }
             return paidPlayers.Count;
@@ -2174,6 +2302,9 @@ namespace NpcValheim.Arena
                     lines.Add(Record("A", I(match.AliveCount(ArenaSide.Gold)), I(match.SeatCount(ArenaSide.Gold)),
                         I(match.CreatureDead ? 0 : 1), "1", match.Sides[ArenaSide.Gold].TeamName, creature));
                 }
+                else if (match.IsFfa)
+                    lines.Add(Record("A", I(match.AliveFfa), I(match.Seats.Count(s => s.State != SeatState.Expired)),
+                        "0", "0", "Todos contra todos", ""));
                 else
                     lines.Add(Record("A", I(match.AliveCount(ArenaSide.Gold)), I(match.SeatCount(ArenaSide.Gold)),
                         I(match.AliveCount(ArenaSide.Green)), I(match.SeatCount(ArenaSide.Green)),
