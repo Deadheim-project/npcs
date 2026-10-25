@@ -37,6 +37,35 @@ namespace NpcValheim.Arena
 
         public Vector3 SpawnOf(int side) => side == ArenaSide.Gold ? Gold : Green;
         public float YawOf(int side) => side == ArenaSide.Gold ? GoldYaw : GreenYaw;
+
+        /// <summary>What the arena is for: the team sizes it hosts and whether challenges (PvE)
+        /// may use it. Nothing marked = everything, as every arena was before the field.</summary>
+        public readonly HashSet<int> Sizes = new HashSet<int>();
+        public bool AnyPvp;
+        public bool Pve;
+
+        public bool Restricted => AnyPvp || Pve || Sizes.Count > 0;
+
+        public bool ServesPvp(int size) => !Restricted || AnyPvp || Sizes.Contains(size);
+
+        public bool ServesPve => !Restricted || Pve;
+
+        /// <summary>The usage as the cfg writes it ("1v1,2v2,pve"); empty when unrestricted.</summary>
+        public string UsageText
+        {
+            get
+            {
+                if (!Restricted) return "";
+                var parts = new List<string>();
+                if (AnyPvp) parts.Add("pvp");
+                else parts.AddRange(Sizes.OrderBy(s => s).Select(s => ArenaRules.BracketName(s)));
+                if (Pve) parts.Add("pve");
+                return string.Join(",", parts);
+            }
+        }
+
+        /// <summary>The usage for people: "todos" when unrestricted.</summary>
+        public string UsageLabel => Restricted ? UsageText.Replace("pvp", "PvP (todos)").Replace("pve", "PvE (desafio)") : "todos";
     }
 
     /// <summary>One entry of Deadheim's ArenaZones: a circle on the ground, any height.</summary>
@@ -174,6 +203,14 @@ namespace NpcValheim.Arena
 
         public float TimeLimitOf(bool challenge) => challenge ? ChallengeTimeLimitSeconds : TimeLimitSeconds;
 
+        /// <summary>Whether the arena may host a PvP match of this size (its usage).</summary>
+        public bool MapServes(ArenaMapDef map, int size) => map.ServesPvp(size);
+
+        /// <summary>Whether a challenge may use the arena: marked pve (or unmarked) and, when
+        /// the old Desafio.Maps list is set, also named there.</summary>
+        public bool MapServesChallenge(ArenaMapDef map) =>
+            map.ServesPve && (ChallengeMaps.Count == 0 || ChallengeMaps.Contains(map.Name, StringComparer.OrdinalIgnoreCase));
+
         /// <summary>Every bracket that is played: the cfg's, plus 1v1 when Solo is on.</summary>
         public List<int> ActiveBrackets => ArenaSettingsParser.WithSolo(Brackets, Solo);
 
@@ -288,16 +325,33 @@ namespace NpcValheim.Arena
                 {
                     Name = name, Gold = gold, GoldYaw = goldYaw, Green = green, GreenYaw = greenYaw,
                 };
-                if (parts.Length > 3 && parts[3].Trim().Length > 0)
+                // After the two starts, in any order: the spectator spot (a bare point) and
+                // uso=... (what the arena is for).
+                bool bad = false;
+                for (int i = 3; i < parts.Length && !bad; i++)
                 {
-                    if (!TryPoint(parts[3], false, out var spectator, out _))
+                    string part = parts[i].Trim();
+                    if (part.Length == 0) continue;
+                    if (TryField(part, "uso", out string usage))
                     {
-                        problems?.Add($"Maps: {name}: ponto de espectador invalido (x,y,z)");
-                        continue;
+                        if (!TryUsage(usage, map, out string why))
+                        {
+                            problems?.Add($"Maps: {name}: uso invalido ({why}). Use 1v1, 2v2, 3v3, 5v5, pvp, pve ou todos");
+                            bad = true;
+                        }
                     }
-                    map.HasSpectator = true;
-                    map.Spectator = spectator;
+                    else if (!map.HasSpectator && TryPoint(part, false, out var spectator, out _))
+                    {
+                        map.HasSpectator = true;
+                        map.Spectator = spectator;
+                    }
+                    else
+                    {
+                        problems?.Add($"Maps: {name}: '{part}' nao e ponto de espectador (x,y,z) nem uso=...");
+                        bad = true;
+                    }
                 }
+                if (bad) continue;
                 if (Vector3.Distance(gold, green) > 300f)
                 {
                     problems?.Add($"Maps: {name}: os dois inicios estao a mais de 300 m um do outro");
@@ -331,6 +385,82 @@ namespace NpcValheim.Arena
             return true;
         }
 
+        private static bool TryField(string part, string key, out string value)
+        {
+            value = null;
+            int eq = part.IndexOf('=');
+            if (eq <= 0 || !string.Equals(part.Substring(0, eq).Trim(), key, StringComparison.OrdinalIgnoreCase)) return false;
+            value = part.Substring(eq + 1).Trim();
+            return true;
+        }
+
+        /// <summary>
+        /// "1v1,2v2,pve" into the map. A size is NvN, xN or N (1 to 10); pvp = every size;
+        /// pve (or desafio) = the challenges; todos (or empty) = everything. One unknown word
+        /// refuses the whole usage: an arena meant only for PvE must not quietly take 5v5s.
+        /// </summary>
+        internal static bool TryUsage(string raw, ArenaMapDef map, out string why)
+        {
+            why = null;
+            map.Sizes.Clear();
+            map.AnyPvp = map.Pve = false;
+            bool all = false;
+            foreach (var token in (raw ?? "").Split(new[] { ',', ' ', '+', '/' }, StringSplitOptions.RemoveEmptyEntries))
+            {
+                string t = token.Trim().ToLowerInvariant();
+                if (t == "todos" || t == "todas" || t == "all" || t == "*") { all = true; continue; }
+                if (t == "pvp") { map.AnyPvp = true; continue; }
+                if (t == "pve" || t == "desafio" || t == "desafios") { map.Pve = true; continue; }
+
+                string digits = t;
+                if (digits.StartsWith("x")) digits = digits.Substring(1);
+                else
+                {
+                    int v = digits.IndexOf('v');
+                    if (v > 0)
+                    {
+                        if (digits.Substring(0, v) != digits.Substring(v + 1)) { why = $"'{token}'"; return false; }
+                        digits = digits.Substring(0, v);
+                    }
+                }
+                if (!int.TryParse(digits, NumberStyles.Integer, CultureInfo.InvariantCulture, out int size) || size < 1 || size > 10)
+                {
+                    why = $"'{token}'";
+                    return false;
+                }
+                map.Sizes.Add(size);
+            }
+            if (all)
+            {
+                map.Sizes.Clear();
+                map.AnyPvp = map.Pve = false;
+            }
+            if (map.AnyPvp) map.Sizes.Clear();
+            return true;
+        }
+
+        /// <summary>
+        /// What the arenas' usage leaves out: a bracket that is played with no arena for it,
+        /// challenges with no arena that takes them, and a usage naming a size nobody plays.
+        /// Nothing when no arena is set at all (that has its own message).
+        /// </summary>
+        internal static List<string> UsageProblems(ArenaTuning t)
+        {
+            var result = new List<string>();
+            if (t.Maps.Count == 0) return result;
+            foreach (int size in t.ActiveBrackets)
+                if (!t.Maps.Any(m => t.MapServes(m, size)))
+                    result.Add($"Maps: nenhuma arena com uso {ArenaRules.BracketName(size)}: a fila {ArenaRules.BracketName(size)} recusa todo mundo");
+            if (t.ChallengeEnabled && t.Challenges.Count > 0 && !t.Maps.Any(t.MapServesChallenge))
+                result.Add("Maps: nenhuma arena com uso pve" + (t.ChallengeMaps.Count > 0 ? " (e em Desafio.Maps)" : "") +
+                           ": os desafios recusam todo mundo");
+            foreach (var map in t.Maps)
+                foreach (int size in map.Sizes.OrderBy(s => s))
+                    if (!t.HasBracket(size))
+                        result.Add($"Maps: {map.Name}: uso {ArenaRules.BracketName(size)}, mas esse tamanho nao e jogado (Brackets/Solo)");
+            return result;
+        }
+
         internal static string FormatPoint(Vector3 p, float yaw) =>
             string.Format(CultureInfo.InvariantCulture, "{0:0.##},{1:0.##},{2:0.##},{3:0}", p.x, p.y, p.z, yaw);
 
@@ -339,7 +469,8 @@ namespace NpcValheim.Arena
             CleanMapName(map.Name) + ";" + FormatPoint(map.Gold, map.GoldYaw) + ";" + FormatPoint(map.Green, map.GreenYaw) +
             (map.HasSpectator
                 ? string.Format(CultureInfo.InvariantCulture, ";{0:0.##},{1:0.##},{2:0.##}", map.Spectator.x, map.Spectator.y, map.Spectator.z)
-                : "");
+                : "") +
+            (map.Restricted ? ";uso=" + map.UsageText : "");
 
         /// <summary>An arena name the format can hold: no separators, no control characters, short.</summary>
         internal static string CleanMapName(string name)

@@ -236,7 +236,7 @@ namespace NpcValheim.Arena
                         return;
                     }
                     ArenaConfig.Maps.Value = ArenaSettingsParser.SetMap(ArenaConfig.Maps.Value, map);
-                    done = $"Arena \"{map.Name}\" salva.";
+                    done = $"Arena \"{map.Name}\" salva (uso: {map.UsageLabel}).";
                     if (!ArenaDeadheim.CoversMap(map, out string why)) done += " Ainda não vale: " + why + ".";
                     break;
                 }

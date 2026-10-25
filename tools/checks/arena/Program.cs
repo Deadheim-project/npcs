@@ -188,6 +188,7 @@ class Program
             TeamManagement();
             Persistence();
             Challenge();
+            MapUsage();
         }
         catch (Exception ex)
         {
@@ -728,6 +729,71 @@ class Program
 
         Do(e, E, ArenaEngine.AtBattlemaster, ArenaWire.ActQueueJoin, $"2\n0\n{F + 1000000},{G + 1000000}");
         Check("a group of 3 does not fit a 2v2 skirmish", e.PendingOf(E) == null && e.QueueOf(E) == null);
+    }
+
+    // ------------------------------------------------------------------- arena usage
+
+    static ArenaMapDef UsageMap(string name, string usage, float x)
+    {
+        var map = new ArenaMapDef { Name = name, Gold = new Vector3(x, 30, 100), Green = new Vector3(x + 40, 30, 100), GreenYaw = 180 };
+        ArenaSettingsParser.TryUsage(usage, map, out _);
+        return map;
+    }
+
+    static void MapUsage()
+    {
+        Section("arena usage (uso=)");
+        var problems = new List<string>();
+        var maps = ArenaSettingsParser.ParseMaps(
+            "Velha;1,2,3,0;10,2,3,180|Duelo;1,2,3,0;10,2,3,180;uso=1v1,x2|Covil;1,2,3,0;10,2,3,180;uso=pve;5,6,7|" +
+            "Campo;1,2,3,0;10,2,3,180;4,5,6;uso=pvp,desafio|Tudo;1,2,3,0;10,2,3,180;uso=todos|Errada;1,2,3,0;10,2,3,180;uso=pev|" +
+            "Torta;1,2,3,0;10,2,3,180;uso=2v3", problems);
+        ArenaMapDef M(string n) => maps.FirstOrDefault(m => m.Name == n);
+        Check("an arena without uso serves everything", M("Velha") != null && !M("Velha").Restricted && M("Velha").ServesPvp(5) && M("Velha").ServesPve);
+        Check("uso=1v1,x2 serves 1v1 and 2v2 only, no PvE",
+            M("Duelo") != null && M("Duelo").ServesPvp(1) && M("Duelo").ServesPvp(2) && !M("Duelo").ServesPvp(3) && !M("Duelo").ServesPve);
+        Check("uso before the spectator spot still reads both", M("Covil") != null && M("Covil").Pve && !M("Covil").ServesPvp(2) && M("Covil").HasSpectator);
+        Check("pvp = every size; desafio = pve", M("Campo") != null && M("Campo").ServesPvp(7) && M("Campo").ServesPve && M("Campo").HasSpectator);
+        Check("uso=todos is the same as nothing", M("Tudo") != null && !M("Tudo").Restricted);
+        Check("an unknown word or an uneven size refuses the arena, by name",
+            M("Errada") == null && M("Torta") == null && problems.Count == 2 && problems.Any(p => p.Contains("Errada")) && problems.Any(p => p.Contains("Torta")),
+            string.Join(" / ", problems));
+
+        var round = ArenaSettingsParser.ParseMaps(ArenaSettingsParser.FormatMap(M("Duelo")) + "|" + ArenaSettingsParser.FormatMap(M("Velha")), null);
+        Check("the usage is written back and read the same", round.Count == 2 && round[0].UsageText == "1v1,2v2" && !round[1].Restricted,
+            ArenaSettingsParser.FormatMap(M("Duelo")));
+        Check("an unrestricted arena writes no uso", !ArenaSettingsParser.FormatMap(M("Velha")).Contains("uso="));
+
+        // The queues only use arenas of their usage.
+        var t = ChallengeTuning();
+        t.Maps.Clear();
+        t.Maps.Add(UsageMap("Covil", "pve", 100));
+        t.Maps.Add(UsageMap("Duelo", "1v1", 300));
+        var (e, h, _) = NewEngine(t);
+        Do(e, A, ArenaEngine.AtBattlemaster, ArenaWire.ActQueueJoin, "2\n0\n");
+        Check("2v2 with no arena for it is refused at the door", e.QueueOf(A) == null && h.Got(A, ArenaWire.Alert, "2v2"));
+        Do(e, A, ArenaEngine.AtBattlemaster, ArenaWire.ActQueueJoin, "1\n0\n");
+        Do(e, B, ArenaEngine.AtBattlemaster, ArenaWire.ActQueueJoin, "1\n0\n");
+        var duel = e.MatchOf(A);
+        Check("a 1v1 goes to the 1v1 arena, not the PvE one", duel != null && duel.Map.Name == "Duelo");
+        Do(e, C, ArenaEngine.AtBattlemaster, ArenaWire.ActChallengeJoin, "Troll Furioso\n");
+        var challenge = e.MatchOf(C);
+        Check("a challenge goes to the PvE arena", challenge != null && challenge.IsChallenge && challenge.Map.Name == "Covil");
+        Do(e, D, ArenaEngine.AtBattlemaster, ArenaWire.ActQueueJoin, "1\n0\n");
+        Do(e, E, ArenaEngine.AtBattlemaster, ArenaWire.ActQueueJoin, "1\n0\n");
+        Check("with the 1v1 arena busy, the next 1v1 waits instead of taking the free PvE arena",
+            e.MatchOf(D) == null && e.QueueOf(D) != null);
+
+        var noPve = Tuning();
+        noPve.Maps.Clear();
+        noPve.Maps.Add(UsageMap("Duelo", "1v1,2v2,3v3,5v5", 300));
+        noPve.Challenges = ChallengeTuning().Challenges;
+        var gaps = ArenaSettingsParser.UsageProblems(noPve);
+        Check("the server names a usage gap: no PvE arena for the challenges", gaps.Count == 1 && gaps[0].Contains("pve"), string.Join(" / ", gaps));
+        noPve.Maps[0] = UsageMap("Duelo", "1v1,4v4,pve", 300);
+        gaps = ArenaSettingsParser.UsageProblems(noPve);
+        Check("and brackets with no arena, and a size nobody plays",
+            gaps.Count == 4 && gaps.Count(g => g.Contains("nenhuma arena com uso")) == 3 && gaps.Any(g => g.Contains("4v4")), string.Join(" / ", gaps));
     }
 
     // ------------------------------------------------------------------- points

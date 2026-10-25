@@ -803,6 +803,8 @@ namespace NpcValheim.Arena
             string refusal = null;
             if (!_t.HasBracket(size)) refusal = "Esse tamanho de arena não existe aqui.";
             else if (_t.Maps.Count == 0) refusal = "Nenhuma arena foi configurada ainda. Fale com um admin.";
+            else if (!_t.Maps.Any(m => _t.MapServes(m, size)))
+                refusal = $"Nenhuma arena aceita {ArenaRules.BracketName(size)} neste servidor. Fale com um admin.";
             else if (!rated && !_t.Skirmish) refusal = "Escaramuça está desligada neste servidor.";
             if (refusal != null) { Say(id, refusal, alert: true); return; }
 
@@ -929,6 +931,7 @@ namespace NpcValheim.Arena
             if (!_t.ChallengeEnabled) refusal = "Os desafios estão desligados neste servidor.";
             else if (def == null) refusal = "Esse desafio não existe aqui.";
             else if (_t.Maps.Count == 0) refusal = "Nenhuma arena foi configurada ainda. Fale com um admin.";
+            else if (!_t.Maps.Any(_t.MapServesChallenge)) refusal = "Nenhuma arena aceita desafios (uso pve) neste servidor. Fale com um admin.";
             if (refusal != null) { Say(id, refusal, alert: true); return; }
 
             var members = GroupOf(id, peerList);
@@ -938,7 +941,7 @@ namespace NpcValheim.Arena
                 Say(id, $"O seu grupo tem {members.Count} jogadores; o desafio aceita até {_t.ChallengeMaxPlayers}.", alert: true);
                 return;
             }
-            if (FreeMap(def) == null)
+            if (FreeChallengeMap() == null)
             {
                 Say(id, BusyText, alert: true);
                 return;
@@ -971,7 +974,7 @@ namespace NpcValheim.Arena
 
         private void CreateChallenge(long leader, List<long> members, ArenaChallengeDef def)
         {
-            var map = FreeMap(def);
+            var map = FreeChallengeMap();
             if (map == null)
             {
                 foreach (var m in members)
@@ -1123,7 +1126,7 @@ namespace NpcValheim.Arena
             {
                 var waiting = _queue.Where(q => q.Rated && q.Size == size).OrderBy(q => q.JoinTime).ToList();
                 if (waiting.Count < 2) return;
-                if (FreeMap() == null) return;
+                if (FreeMap(size) == null) return;
 
                 double discard = _host.Now - _t.RatingDiscardSeconds;
                 double discardOpponents = _host.Now - _t.PreviousOpponentsDiscardSeconds;
@@ -1169,7 +1172,7 @@ namespace NpcValheim.Arena
         /// </summary>
         private void MatchSkirmish(int size)
         {
-            while (FreeMap() != null)
+            while (FreeMap(size) != null)
             {
                 var waiting = _queue.Where(q => !q.Rated && q.Size == size).OrderBy(q => q.JoinTime).ToList();
                 var gold = new List<QueueEntry>();
@@ -1187,14 +1190,17 @@ namespace NpcValheim.Arena
             }
         }
 
-        /// <summary>A free arena; for a challenge, one of ChallengeMaps when that list is set.</summary>
-        private ArenaMapDef FreeMap(ArenaChallengeDef challenge = null)
+        /// <summary>A free arena whose usage takes a PvP match of this size.</summary>
+        private ArenaMapDef FreeMap(int size) => FreeMap(m => _t.MapServes(m, size));
+
+        /// <summary>A free arena a challenge may use (usage pve, and Desafio.Maps when set).</summary>
+        private ArenaMapDef FreeChallengeMap() => FreeMap(_t.MapServesChallenge);
+
+        private ArenaMapDef FreeMap(Func<ArenaMapDef, bool> serves)
         {
             var busy = new HashSet<string>(_matches.Values.Where(m => m.Status != MatchStatus.Closed).Select(m => m.Map.Name),
                 StringComparer.OrdinalIgnoreCase);
-            var free = _t.Maps.Where(m => !busy.Contains(m.Name) &&
-                                          (challenge == null || _t.ChallengeMaps.Count == 0 ||
-                                           _t.ChallengeMaps.Contains(m.Name, StringComparer.OrdinalIgnoreCase))).ToList();
+            var free = _t.Maps.Where(m => !busy.Contains(m.Name) && serves(m)).ToList();
             return free.Count == 0 ? null : free[_random.Next(free.Count)];
         }
 
@@ -1203,7 +1209,7 @@ namespace NpcValheim.Arena
 
         private void CreateMatch(int size, bool rated, List<QueueEntry> sideA, List<QueueEntry> sideB)
         {
-            var map = FreeMap();
+            var map = FreeMap(size);
             if (map == null) return;
 
             // Which queue is Gold is a coin toss, as the two starting rooms were in WoW.

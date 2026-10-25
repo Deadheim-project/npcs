@@ -157,8 +157,10 @@ namespace NpcValheim.Arena
 
             const string match = "Arena - Partida";
             Maps = S(config, match, "Maps", "",
-                "Arenas: Nome;x,y,z,giro;x,y,z,giro[;x,y,z]|... = inicio do time Ouro, inicio do time Verde e, opcional, " +
-                "onde fica quem foi derrotado. Os inicios precisam estar dentro de uma area de arena (ArenaZones do " +
+                "Arenas: Nome;x,y,z,giro;x,y,z,giro[;x,y,z][;uso=...]|... = inicio do time Ouro, inicio do time Verde e, opcional, " +
+                "onde fica quem foi derrotado e para que a arena serve: uso=1v1,2v2,3v3,5v5 (tamanhos de partida PvP; " +
+                "x1, x2... tambem valem), pvp (qualquer tamanho), pve (os desafios contra criatura) ou todos. Sem uso = todos. " +
+                "Ex.: Coliseu;100,30,100,90;140,30,100,270;uso=1v1,2v2|Covil;300,30,0,0;320,30,0,180;uso=pve. Os inicios precisam estar dentro de uma area de arena (ArenaZones do " +
                 "Deadheim: PvP sempre, sem perda de skill), que se marca na aba Admin do Mestre da Arena; quem sai da " +
                 "area durante a partida fugiu. Uma partida por arena de cada vez. " +
                 "Tambem se monta no jogo, na aba Arena (admin) do Mestre da Arena (Ouro aqui / Verde aqui / Salvar).");
@@ -226,7 +228,8 @@ namespace NpcValheim.Arena
                 "Depois de receber a recompensa de um desafio, quanto tempo ate o mesmo jogador receber de novo desse desafio. " +
                 "Fica na memoria do servidor: um restart zera.");
             ChallengeMaps = S(config, challenge, "Maps", "",
-                "Arenas (nomes de Maps) que os desafios podem usar, separadas por virgula. Vazio = qualquer arena livre.");
+                "Arenas (nomes de Maps) que os desafios podem usar, separadas por virgula. Vazio = qualquer arena livre " +
+                "com uso pve (ou sem uso marcado). Prefira marcar uso=pve na propria arena ([Arena - Partida] Maps).");
 
             ChallengeSlots.Clear();
             for (int i = 0; i < ChallengeSlotCount; i++)
@@ -416,6 +419,7 @@ namespace NpcValheim.Arena
             t.ChallengeCooldownSeconds = Mathf.Max(0f, ChallengeCooldownMinutes.Value) * 60f;
             t.ChallengeMaps = ArenaSettingsParser.ParseNames(ChallengeMaps.Value);
             t.Challenges = ChallengeDefs(problems, checkWorld);
+            problems.AddRange(ArenaSettingsParser.UsageProblems(t));
             return t;
         }
 

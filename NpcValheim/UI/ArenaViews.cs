@@ -902,6 +902,8 @@ namespace NpcValheim.UI
         // button is pressed, and nothing reaches the server until Salvar.
         private Vector3? _gold, _green, _spectator;
         private float _goldYaw, _greenYaw;
+        // What the arena being built is for; nothing marked = everything.
+        private readonly ArenaMapDef _usage = new ArenaMapDef();
 
         protected override void OnBuild()
         {
@@ -995,8 +997,9 @@ namespace NpcValheim.UI
                 Name = name, Gold = _gold.Value, GoldYaw = _goldYaw, Green = _green.Value, GreenYaw = _greenYaw,
                 HasSpectator = _spectator != null, Spectator = _spectator ?? Vector3.zero,
             };
+            CopyUsage(_usage, map);
             Ask(ArenaWire.ActAdminMapSet, ArenaSettingsParser.FormatMap(map));
-            Say($"Salvando a arena \"{name}\"...");
+            Say($"Salvando a arena \"{name}\" (uso: {map.UsageLabel})...");
         }
 
         /// <summary>Puts an existing arena in the form, so one point can be retaken and saved
@@ -1009,7 +1012,29 @@ namespace NpcValheim.UI
             _green = map.Green;
             _greenYaw = map.GreenYaw;
             _spectator = map.HasSpectator ? map.Spectator : (Vector3?)null;
+            CopyUsage(map, _usage);
             Say($"Editando \"{map.Name}\": retome o ponto que quiser e clique Salvar.");
+        }
+
+        private static void CopyUsage(ArenaMapDef from, ArenaMapDef to)
+        {
+            to.Sizes.Clear();
+            to.Sizes.UnionWith(from.Sizes);
+            to.AnyPvp = from.AnyPvp;
+            to.Pve = from.Pve;
+        }
+
+        /// <summary>Turns one size on or off in the draft's usage. Marking a size out of
+        /// "pvp (todos)" keeps the others, so it reads as taking that one away.</summary>
+        private void ToggleSize(int size)
+        {
+            if (_usage.AnyPvp)
+            {
+                _usage.AnyPvp = false;
+                _usage.Sizes.UnionWith(ArenaConfig.Current.ActiveBrackets);
+            }
+            if (!_usage.Sizes.Remove(size)) _usage.Sizes.Add(size);
+            Say($"Uso: {_usage.UsageLabel}");
         }
 
         private string Draft()
@@ -1017,7 +1042,8 @@ namespace NpcValheim.UI
             string Point(Vector3? p, float yaw) => p == null ? "<color=#ee6b57>falta</color>" : ArenaConfig.Describe(p.Value, yaw);
             return $"Ouro {Point(_gold, _goldYaw)} · Verde {Point(_green, _greenYaw)} · Espectador " +
                    (_spectator == null ? "<color=#9a9188>nenhum</color>"
-                       : string.Format(CultureInfo.InvariantCulture, "{0:0.##},{1:0.##},{2:0.##}", _spectator.Value.x, _spectator.Value.y, _spectator.Value.z));
+                       : string.Format(CultureInfo.InvariantCulture, "{0:0.##},{1:0.##},{2:0.##}", _spectator.Value.x, _spectator.Value.y, _spectator.Value.z)) +
+                   $" · Uso {_usage.UsageLabel}";
         }
 
         /// <summary>Centres the named area on where the admin stands; the server takes the
@@ -1080,8 +1106,34 @@ namespace NpcValheim.UI
             Btn(draftRow, "Limpar", 100f, () =>
             {
                 _gold = _green = _spectator = null;
+                CopyUsage(new ArenaMapDef(), _usage);
                 _mapName.text = "";
                 Say("Rascunho limpo.");
+            });
+            Line("Uso: para que a arena serve. Clique os tamanhos de partida PvP e/ou PvE (desafio contra criatura); " +
+                 "Todos = qualquer partida. Cada fila só usa arenas do seu uso.", 13, ValheimUi.Muted, 40f);
+            var usageRow = ButtonRow();
+            foreach (int size in ArenaConfig.Current.ActiveBrackets)
+            {
+                int picked = size;
+                Btn(usageRow, ArenaRules.BracketName(size), 64f, () => ToggleSize(picked));
+            }
+            Btn(usageRow, "PvE", 64f, () =>
+            {
+                _usage.Pve = !_usage.Pve;
+                Say($"Uso: {_usage.UsageLabel}");
+            });
+            Btn(usageRow, "Só PvP", 84f, () =>
+            {
+                _usage.Sizes.Clear();
+                _usage.AnyPvp = true;
+                _usage.Pve = false;
+                Say($"Uso: {_usage.UsageLabel}");
+            });
+            Btn(usageRow, "Todos", 74f, () =>
+            {
+                CopyUsage(new ArenaMapDef(), _usage);
+                Say("Uso: todos");
             });
             Gap();
 
@@ -1121,7 +1173,7 @@ namespace NpcValheim.UI
             {
                 var m = map;
                 var row = ButtonRow();
-                Cell(row, $"{m.Name}: Ouro {ArenaConfig.Describe(m.Gold, m.GoldYaw)} · Verde {ArenaConfig.Describe(m.Green, m.GreenYaw)}" +
+                Cell(row, $"{m.Name} [{m.UsageLabel}]: Ouro {ArenaConfig.Describe(m.Gold, m.GoldYaw)} · Verde {ArenaConfig.Describe(m.Green, m.GreenYaw)}" +
                           (m.HasSpectator ? " · espectador" : "") +
                           (m.Area != null ? $" · área {m.Area.Name}" : ""), 14);
                 Btn(row, "Editar", 80f, () => EditMap(m));
