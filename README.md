@@ -84,21 +84,22 @@ offline — o motivo de existir uma AH em vez de uma troca cara a cara.
   seu, não há nada pelo que esperar.
 
 O **Correio** é uma **caixa postal** colocável (modelo WoW em
-`Assets/Mailbox`, formato PECA), não um NPC-personagem. Três abas:
+`Assets/Mailbox`, formato PECA), não um NPC-personagem. Tudo é decidido no
+servidor: os pedidos vão pelo canal de serviço e as respostas voltam ao jogador
+por RPC global, nunca pelo ZNetView da caixa (que roda em quem for dono do ZDO).
+Três abas:
 
-- **Correio** — encomendas do leilão/missões e cartas escritas. Itens caem no
-  chão ao lado; cartas só se excluem. Só o destinatário retira: o servidor
-  responde por remetente do RPC e a retirada confere o dono.
-- **Enviar** — mensagem para **qualquer jogador** (pelo nome; vale offline se
-  ele já entrou no servidor) ou para uma **casa**.
-- **Casa** — cria uma casa/clã, convida membros. Enviar para a casa posta uma
-  cópia da carta em cada membro, para ninguém "roubar" a carta do outro.
+- **Correio** — encomendas do leilão/missões e cartas escritas. Itens vão para o
+  inventário (o que não couber cai aos pés do jogador); cartas só se excluem.
+  Só o destinatário retira.
+- **Enviar** — mensagem para **qualquer jogador** pelo nome (vale offline se ele
+  já entrou no servidor). A lista de destinatários filtra pelo que se digita.
+- **Parcela** — carta com item. Se o servidor recusar (destinatário
+  desconhecido, caixa dele cheia, limite VIP), o item volta para quem enviou.
 
-O selo **Valheim Post** fica ao lado do minimapa. Cartas de jogador e de casa
-acendem o badge **+1**, **+2**, **+3**… Clique no ícone (ou a tecla `P`,
-`Mail/HudKey`) avisa para ir à Caixa Postal; a leitura e o “marcar como lida”
-acontecem na aba **Correio**. O fundo branco do ícone é tratado como
-transparente.
+O servidor registra todo jogador conectado na agenda de endereços a cada 30 s,
+então a busca acha quem já entrou desde essa versão, mesmo sem ter usado o
+Correio. Casas/clãs no Correio foram removidas.
 
 ## Integração opcional com EpicMMO
 

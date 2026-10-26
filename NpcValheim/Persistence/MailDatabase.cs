@@ -17,7 +17,6 @@ namespace NpcValheim.Persistence
         public string Body { get; set; }
         public string SenderName { get; set; }
         public long SenderId { get; set; }
-        public string HouseName { get; set; }
         public string ItemName { get; set; }
         public int Quality { get; set; }
         public int Amount { get; set; }
@@ -48,7 +47,6 @@ namespace NpcValheim.Persistence
     public static class MailDatabase
     {
         public const int MaxMailPerPlayer = 500;
-        public const int MaxHouseRecipients = 100;
         /// <summary>Stacks de itens que não-VIP pode enviar em uma única carta.</summary>
         public const int MaxAttachmentsNonVip = 1;
         private const string Available = "available";
@@ -63,7 +61,6 @@ namespace NpcValheim.Persistence
             _db = new LiteDatabase(path);
             Mail.EnsureIndex(x => x.PlayerId);
             PlayerDirectory.Attach(_db);
-            HouseDatabase.Attach(_db);
         }
 
         public static void Shutdown()
@@ -119,7 +116,7 @@ namespace NpcValheim.Persistence
         }
 
         public static MailEntry SendMessage(long playerId, long senderId, string senderName,
-            string subject, string body, string houseName = "")
+            string subject, string body)
         {
             if (playerId == 0L) return null;
             subject = (subject ?? "").Trim();
@@ -136,7 +133,6 @@ namespace NpcValheim.Persistence
                 SenderName = string.IsNullOrWhiteSpace(senderName) ? "???" : senderName.Trim(),
                 Subject = string.IsNullOrEmpty(subject) ? "(sem assunto)" : subject,
                 Body = body,
-                HouseName = houseName ?? "",
                 ItemName = "",
                 Quality = 1,
                 Amount = 0,
@@ -158,8 +154,7 @@ namespace NpcValheim.Persistence
         public static MailEntry SendMessageWithAttachment(
             long playerId, long senderId, string senderName,
             string subject, string body,
-            string itemName, int quality, int amount,
-            string houseName = "")
+            string itemName, int quality, int amount)
         {
             if (playerId == 0L) return null;
             if (string.IsNullOrEmpty(itemName) || amount <= 0) return null;
@@ -177,7 +172,6 @@ namespace NpcValheim.Persistence
                 SenderName = string.IsNullOrWhiteSpace(senderName) ? "???" : senderName.Trim(),
                 Subject = subject,
                 Body = body,
-                HouseName = houseName ?? "",
                 ItemName = itemName,
                 Quality = Math.Max(1, quality),
                 Amount = amount,
@@ -227,24 +221,6 @@ namespace NpcValheim.Persistence
 
                 return Mail.Count(x => x.PlayerId == playerId) + missing <= MaxMailPerPlayer;
             }
-        }
-
-        /// <summary>Posts one copy to every current member. The house is an address, not a
-        /// shared pile -- each member collects their own letter, the same way a player letter
-        /// works, so claiming cannot steal someone else's copy.</summary>
-        public static int SendToHouse(string houseName, long senderId, string senderName,
-            string subject, string body)
-        {
-            var house = HouseDatabase.FindByName(houseName);
-            if (house == null) return 0;
-
-            int sent = 0;
-            foreach (var memberId in house.MemberIds.Distinct().Take(MaxHouseRecipients))
-            {
-                if (SendMessage(memberId, senderId, senderName, subject, body, house.Name) != null)
-                    sent++;
-            }
-            return sent;
         }
 
         public static List<MailEntry> GetMail(long playerId, string nameHint = null)
@@ -327,8 +303,7 @@ namespace NpcValheim.Persistence
             }
         }
 
-        /// <summary>Marks a letter as seen by its recipient. The stamp +N counts only
-        /// unread player/house messages; reading does not delete the letter.</summary>
+        /// <summary>Marks a letter as seen by its recipient; reading does not delete it.</summary>
         public static MailEntry MarkRead(string mailId, long playerId)
         {
             var entry = Mail.FindById(mailId);
@@ -339,18 +314,6 @@ namespace NpcValheim.Persistence
             entry.Read = true;
             Mail.Update(entry);
             return entry;
-        }
-
-        /// <summary>Opening the Caixa Postal Correio tab counts as collecting the notice.
-        /// Auction parcels are left unread so they do not drive the stamp.</summary>
-        public static void MarkInboxSeen(long playerId, string nameHint = null)
-        {
-            foreach (var entry in GetMail(playerId, nameHint))
-            {
-                if (entry == null || entry.Read) continue;
-                if (!entry.IsMessage && string.IsNullOrEmpty(entry.HouseName)) continue;
-                MarkRead(entry.Id, playerId);
-            }
         }
     }
 }

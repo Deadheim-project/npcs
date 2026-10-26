@@ -78,6 +78,8 @@ namespace NpcValheim.Npc
             DeadcoinShop.Register(rpc);
             BossPass.Register(rpc);
             MarketDeadcoinSale.Register(rpc);
+            MarketplaceNpc.Register(rpc);
+            MailboxNpc.Register(rpc);
             BossKillWatcher.Reset();
             Arena.ArenaNet.Register(rpc);
             MountTrainer.Register(rpc);

@@ -415,6 +415,8 @@ namespace NpcValheim
         private void Update()
         {
             Arena.ArenaServer.Tick();
+            // Server only, every 30 s: files whoever is connected in the mail address book.
+            Npc.MailboxNpc.RememberOnlinePlayers();
             // Returns at once without a local player, so a dedicated server pays nothing.
             Arena.ArenaClient.Tick();
             Testing.TestWorld.Tick();

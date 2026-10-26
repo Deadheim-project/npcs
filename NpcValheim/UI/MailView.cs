@@ -47,7 +47,7 @@ namespace NpcValheim.UI
             _claimAll.onClick.AddListener(() =>
             {
                 Mailbox.RequestClaimAll();
-                Say("Recebendo tudo; os itens caem no chão aqui.");
+                Say("Recebendo tudo; os itens vão para o inventário.");
             });
 
             Mailbox?.RequestMail();
@@ -57,6 +57,12 @@ namespace NpcValheim.UI
         {
             var mailbox = Mailbox;
             if (mailbox == null) return;
+
+            if (!string.IsNullOrEmpty(mailbox.LastStatus))
+            {
+                Say(mailbox.LastStatus);
+                mailbox.LastStatus = "";
+            }
 
             if (_readingId != null && mailbox.CachedMail.All(m => m.Id != _readingId))
                 CloseReader();
@@ -104,8 +110,6 @@ namespace NpcValheim.UI
                         : $"{ValheimUi.Localize(MarketView.DisplayName(entry.ItemName))} x{entry.Amount}";
 
                 string from = string.IsNullOrEmpty(entry.SenderName) ? "" : $"de {entry.SenderName}";
-                if (!string.IsNullOrEmpty(entry.HouseName))
-                    from = string.IsNullOrEmpty(from) ? $"casa {entry.HouseName}" : $"{from} · casa {entry.HouseName}";
 
                 string extra = message
                     ? (string.IsNullOrEmpty(from) ? (entry.Read ? "lida" : "nova") : from)
@@ -137,7 +141,7 @@ namespace NpcValheim.UI
                     claim.onClick.AddListener(() =>
                     {
                         mailbox.RequestClaim(id);
-                        Say("Pedido enviado; o item cai no chão aqui.");
+                        Say("Pedido enviado; o item vai para o inventário.");
                     });
                 }
             }
@@ -176,13 +180,12 @@ namespace NpcValheim.UI
             panel.anchoredPosition = Vector2.zero;
 
             string from = string.IsNullOrEmpty(entry.SenderName) ? "Alguém" : entry.SenderName;
-            string via = string.IsNullOrEmpty(entry.HouseName) ? "" : $"  ·  casa {entry.HouseName}";
             var title = ValheimUi.CreateLabel(panel, entry.Subject, 22, ValheimUi.Orange,
                 TextAlignmentOptions.Center, display: true);
             ValheimUi.Anchor((RectTransform)title.transform, new Vector2(0f, 1f), new Vector2(1f, 1f),
                 new Vector2(16f, -52f), new Vector2(-16f, -10f));
 
-            var by = ValheimUi.CreateLabel(panel, "de " + from + via, 14, ValheimUi.Muted,
+            var by = ValheimUi.CreateLabel(panel, "de " + from, 14, ValheimUi.Muted,
                 TextAlignmentOptions.Center);
             ValheimUi.Anchor((RectTransform)by.transform, new Vector2(0f, 1f), new Vector2(1f, 1f),
                 new Vector2(16f, -78f), new Vector2(-16f, -52f));
@@ -218,15 +221,12 @@ namespace NpcValheim.UI
         }
     }
 
-    /// <summary>Write a letter to a player or to a house. The server resolves the name
-    /// against the directory (anyone who has logged in) so offline recipients still work.</summary>
+    /// <summary>Write a letter to a player. The server resolves the name against the
+    /// directory (anyone who has logged in) so offline recipients still work.</summary>
     internal sealed class MailComposeView : NpcViewBase
     {
         private MailboxNpc Mailbox => Npc as MailboxNpc;
 
-        private bool _toHouse;
-        private Button _playerTab;
-        private Button _houseTab;
         private TMP_InputField _target;
         private TMP_InputField _subject;
         private TMP_InputField _body;
@@ -245,21 +245,7 @@ namespace NpcValheim.UI
             ValheimUi.Anchor((RectTransform)title.transform, new Vector2(0f, 1f), new Vector2(1f, 1f),
                 new Vector2(10f, -38f), new Vector2(-10f, -6f));
 
-            var typeRow = ValheimUi.CreateRect("Type", frame);
-            ValheimUi.Anchor(typeRow, new Vector2(0f, 1f), new Vector2(1f, 1f),
-                new Vector2(12f, -84f), new Vector2(-12f, -42f));
-            var typeLayout = typeRow.gameObject.AddComponent<HorizontalLayoutGroup>();
-            typeLayout.spacing = 8f;
-            typeLayout.childControlWidth = true;
-            typeLayout.childControlHeight = true;
-            typeLayout.childForceExpandWidth = true;
-
-            _playerTab = ValheimUi.CreateButton(typeRow, "Jogador", 0f, 36f, 15);
-            _playerTab.onClick.AddListener(() => SetMode(false));
-            _houseTab = ValheimUi.CreateButton(typeRow, "Casa", 0f, 36f, 15);
-            _houseTab.onClick.AddListener(() => SetMode(true));
-
-            var targetLabel = ValheimUi.CreateLabel(frame, "Destinatário", 13, ValheimUi.Muted, TextAlignmentOptions.Left);
+            var targetLabel = ValheimUi.CreateLabel(frame, "Destinatário (digite para buscar)", 13, ValheimUi.Muted, TextAlignmentOptions.Left);
             ValheimUi.Anchor((RectTransform)targetLabel.transform, new Vector2(0f, 1f), new Vector2(1f, 1f),
                 new Vector2(14f, -104f), new Vector2(-12f, -86f));
             _target = ValheimUi.CreateInputField(frame, "", 0f, 36f);
@@ -293,11 +279,10 @@ namespace NpcValheim.UI
                 new Vector2(-238f, 8f), new Vector2(-14f, 50f));
             send.onClick.AddListener(() =>
             {
-                Mailbox.RequestSend(_toHouse, _target.text, _subject.text, _body.text);
-                Say(_toHouse ? "Enviando para a casa..." : "Enviando para o jogador...");
+                Mailbox.RequestSend(_target.text, _subject.text, _body.text);
+                Say("Enviando para o jogador...");
             });
 
-            SetMode(false);
             Mailbox?.RequestDirectory();
         }
 
@@ -312,8 +297,7 @@ namespace NpcValheim.UI
                 mailbox.LastStatus = "";
             }
 
-            var signature = (_toHouse ? "H|" : "P|") + string.Join("|",
-                mailbox.CachedRecipients.Select(r => $"{r.IsHouse}:{r.Name}:{r.MemberCount}"));
+            var signature = RecipientSearch.Signature(mailbox, _target.text);
             if (signature != _signature)
             {
                 _signature = signature;
@@ -321,34 +305,20 @@ namespace NpcValheim.UI
             }
         }
 
-        private void SetMode(bool house)
-        {
-            _toHouse = house;
-            _playerTab.image.color = house ? new Color(0.72f, 0.72f, 0.72f, 1f) : Color.white;
-            _houseTab.image.color = house ? Color.white : new Color(0.72f, 0.72f, 0.72f, 1f);
-            _target.text = "";
-            _signature = "";
-        }
-
         private void Rebuild(MailboxNpc mailbox)
         {
             foreach (var row in _rows) if (row != null) Object.Destroy(row);
             _rows.Clear();
 
-            var matches = mailbox.CachedRecipients.Where(r => r.IsHouse == _toHouse).ToList();
-            _hint.gameObject.SetActive(matches.Count == 0);
-            _hint.text = mailbox.HasDirectoryOnce
-                ? (_toHouse ? "Nenhuma casa ainda. Crie uma na aba Casa." : "Nenhum jogador conhecido ainda.")
-                : "Carregando destinatários...";
+            var matches = RecipientSearch.Find(mailbox, _target.text, out int total);
+            _hint.text = RecipientSearch.Hint(mailbox, _target.text, matches.Count, total);
+            _hint.gameObject.SetActive(_hint.text.Length > 0);
 
             foreach (var recipient in matches)
             {
                 var row = Row(_suggestions, 36f);
                 _rows.Add(row.gameObject);
-                string caption = recipient.IsHouse
-                    ? $"{recipient.Name}  ({recipient.MemberCount})"
-                    : recipient.Name;
-                var pick = ValheimUi.CreateButton(row, caption, 0f, 34f, 14);
+                var pick = ValheimUi.CreateButton(row, recipient.Name, 0f, 34f, 14);
                 Flexible(pick.gameObject);
                 var name = recipient.Name;
                 pick.onClick.AddListener(() => _target.text = name);
@@ -362,7 +332,8 @@ namespace NpcValheim.UI
     ///
     /// Non-VIP: 1 stack per letter (up to the item's own max stack size).
     /// VIP: up to VipMaxAttachments stacks per letter.
-    /// The server re-validates both limits on RPC_SendMail; this UI is just first-line UX.
+    /// The server re-validates both limits and hands the parcel back if it refuses; this UI
+    /// is just first-line UX.
     /// </summary>
     internal sealed class MailParcelView : NpcViewBase
     {
@@ -431,7 +402,7 @@ namespace NpcValheim.UI
                 new Vector2(10f, -68f), new Vector2(-8f, -50f));
 
             // destinatário
-            var tLabel = ValheimUi.CreateLabel(right, "Destinatário", 13, ValheimUi.Muted, TextAlignmentOptions.Left);
+            var tLabel = ValheimUi.CreateLabel(right, "Destinatário (digite para buscar)", 13, ValheimUi.Muted, TextAlignmentOptions.Left);
             ValheimUi.Anchor((RectTransform)tLabel.transform, new Vector2(0f, 1f), new Vector2(1f, 1f),
                 new Vector2(10f, -90f), new Vector2(-8f, -72f));
             _target = ValheimUi.CreateInputField(right, "", 0f, 34f);
@@ -551,16 +522,14 @@ namespace NpcValheim.UI
 
         private void RebuildSuggestionsIfChanged(MailboxNpc mailbox)
         {
-            var sig = string.Join("|", mailbox.CachedRecipients
-                .Where(r => !r.IsHouse)
-                .Select(r => r.Name));
+            var sig = RecipientSearch.Signature(mailbox, _target.text);
             if (sig == _dirSignature) return;
             _dirSignature = sig;
 
             foreach (var row in _suggestionRows) if (row != null) Object.Destroy(row);
             _suggestionRows.Clear();
 
-            foreach (var recipient in mailbox.CachedRecipients.Where(r => !r.IsHouse))
+            foreach (var recipient in RecipientSearch.Find(mailbox, _target.text, out _))
             {
                 var row = Row(_suggestions, 34f);
                 _suggestionRows.Add(row.gameObject);
@@ -652,7 +621,7 @@ namespace NpcValheim.UI
             if (string.IsNullOrEmpty(subject))
                 subject = $"Pacote de {Player.m_localPlayer?.GetPlayerName() ?? "alguém"}";
 
-            mailbox.RequestSendWithAttachment(false, target, subject, _body.text ?? "",
+            mailbox.RequestSendWithAttachment(target, subject, _body.text ?? "",
                 _itemName, _itemQuality, amount);
             Say($"Enviando {amount}x {ValheimUi.Localize(MarketView.DisplayName(_itemName))} para {target}...");
 
@@ -668,121 +637,37 @@ namespace NpcValheim.UI
         }
     }
 
-    /// <summary>Create a house, invite members, and see which houses you belong to.</summary>
-    internal sealed class HouseView : NpcViewBase
+    /// <summary>
+    /// The recipient list both mail tabs show: every name the server knows, narrowed by what
+    /// is typed in the recipient field. Capped on screen, not on the server -- the whole
+    /// address book arrives, and typing finds anyone in it.
+    /// </summary>
+    internal static class RecipientSearch
     {
-        private MailboxNpc Mailbox => Npc as MailboxNpc;
+        private const int MaxShown = 60;
 
-        private TMP_InputField _houseName;
-        private TMP_InputField _invite;
-        private RectTransform _list;
-        private TextMeshProUGUI _empty;
-        private string _signature;
-        private readonly List<GameObject> _rows = new List<GameObject>();
-
-        protected override void OnBuild()
+        internal static List<MailRecipient> Find(MailboxNpc mailbox, string typed, out int total)
         {
-            var frame = ValheimUi.CreateInlay(Root, "House");
-            ValheimUi.Stretch(frame, 0f, 0f);
-
-            var title = ValheimUi.CreateLabel(frame, "Sua casa", 18, ValheimUi.Orange,
-                TextAlignmentOptions.Center, display: true);
-            ValheimUi.Anchor((RectTransform)title.transform, new Vector2(0f, 1f), new Vector2(1f, 1f),
-                new Vector2(10f, -38f), new Vector2(-10f, -6f));
-
-            var createRow = ValheimUi.CreateRect("Create", frame);
-            ValheimUi.Anchor(createRow, new Vector2(0f, 1f), new Vector2(1f, 1f),
-                new Vector2(12f, -86f), new Vector2(-12f, -44f));
-            var createLayout = createRow.gameObject.AddComponent<HorizontalLayoutGroup>();
-            createLayout.spacing = 8f;
-            createLayout.childControlWidth = true;
-            createLayout.childControlHeight = true;
-            createLayout.childForceExpandWidth = false;
-
-            _houseName = ValheimUi.CreateInputField(createRow, "", 0f, 36f);
-            Flexible(_houseName.gameObject);
-            var create = ValheimUi.CreateButton(createRow, "Criar casa", 150f, 36f, 15);
-            create.onClick.AddListener(() =>
-            {
-                Mailbox.RequestCreateHouse(_houseName.text);
-                Say("Criando casa...");
-            });
-
-            var inviteRow = ValheimUi.CreateRect("Invite", frame);
-            ValheimUi.Anchor(inviteRow, new Vector2(0f, 1f), new Vector2(1f, 1f),
-                new Vector2(12f, -130f), new Vector2(-12f, -88f));
-            var inviteLayout = inviteRow.gameObject.AddComponent<HorizontalLayoutGroup>();
-            inviteLayout.spacing = 8f;
-            inviteLayout.childControlWidth = true;
-            inviteLayout.childControlHeight = true;
-            inviteLayout.childForceExpandWidth = false;
-
-            _invite = ValheimUi.CreateInputField(inviteRow, "", 0f, 36f);
-            Flexible(_invite.gameObject);
-            var invite = ValheimUi.CreateButton(inviteRow, "Convidar", 150f, 36f, 15);
-            invite.onClick.AddListener(() =>
-            {
-                var house = Mailbox.CachedRecipients.FirstOrDefault(r => r.IsHouse && r.IsMine);
-                if (house == null)
-                {
-                    Say("Crie ou entre numa casa primeiro.");
-                    return;
-                }
-                Mailbox.RequestInvite(house.Name, _invite.text);
-                Say("Convite enviado.");
-            });
-
-            var area = ValheimUi.CreateRect("Area", frame);
-            ValheimUi.Anchor(area, Vector2.zero, Vector2.one, new Vector2(6f, 12f), new Vector2(-6f, -138f));
-            _list = ValheimUi.CreateScrollList(area, spacing: 4f);
-
-            _empty = ValheimUi.CreateLabel(area, "", 15, ValheimUi.Muted, TextAlignmentOptions.Top);
-            ValheimUi.Anchor((RectTransform)_empty.transform, new Vector2(0f, 1f), new Vector2(1f, 1f),
-                new Vector2(10f, -10f), new Vector2(-10f, 30f));
-
-            Mailbox?.RequestDirectory();
+            string filter = (typed ?? "").Trim();
+            var all = mailbox.CachedRecipients
+                .Where(r => r != null && !string.IsNullOrEmpty(r.Name) &&
+                            (filter.Length == 0 || r.Name.IndexOf(filter, System.StringComparison.OrdinalIgnoreCase) >= 0))
+                .OrderBy(r => filter.Length > 0 && !r.Name.StartsWith(filter, System.StringComparison.OrdinalIgnoreCase))
+                .ThenBy(r => r.Name, System.StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            total = all.Count;
+            return all.Take(MaxShown).ToList();
         }
 
-        public override void Refresh()
+        internal static string Signature(MailboxNpc mailbox, string typed) =>
+            (typed ?? "").Trim() + "|" + mailbox.HasDirectoryOnce + "|" + mailbox.CachedRecipients.Count;
+
+        internal static string Hint(MailboxNpc mailbox, string typed, int shown, int total)
         {
-            var mailbox = Mailbox;
-            if (mailbox == null) return;
-
-            if (!string.IsNullOrEmpty(mailbox.LastStatus))
-            {
-                Say(mailbox.LastStatus);
-                mailbox.LastStatus = "";
-            }
-
-            var signature = string.Join("|", mailbox.CachedRecipients
-                .Where(r => r.IsHouse)
-                .Select(r => $"{r.Name}:{r.MemberCount}:{r.IsMine}"));
-            if (signature == _signature) return;
-            _signature = signature;
-            Rebuild(mailbox);
-        }
-
-        private void Rebuild(MailboxNpc mailbox)
-        {
-            foreach (var row in _rows) if (row != null) Object.Destroy(row);
-            _rows.Clear();
-
-            var houses = mailbox.CachedRecipients.Where(r => r.IsHouse).ToList();
-            _empty.gameObject.SetActive(houses.Count == 0);
-            _empty.text = mailbox.HasDirectoryOnce
-                ? "Nenhuma casa no servidor. Crie a primeira acima."
-                : "Carregando...";
-
-            foreach (var house in houses)
-            {
-                var row = Row(_list, 40f);
-                _rows.Add(row.gameObject);
-                string mark = house.IsMine ? "você é membro" : "outra casa";
-                var label = ValheimUi.CreateLabel(row,
-                    $"{house.Name}  ·  {house.MemberCount} membro(s)\n<size=12><color=#9a9188>{mark}</color></size>",
-                    15, ValheimUi.Beige, TextAlignmentOptions.Left);
-                Flexible(label.gameObject);
-            }
+            if (!mailbox.HasDirectoryOnce) return "Carregando destinatários...";
+            if (mailbox.CachedRecipients.Count == 0) return "Nenhum jogador conhecido ainda.";
+            if (total == 0) return $"Ninguém com \"{(typed ?? "").Trim()}\" no nome.";
+            return total > shown ? $"{shown} de {total} jogadores; digite para filtrar." : "";
         }
     }
 }

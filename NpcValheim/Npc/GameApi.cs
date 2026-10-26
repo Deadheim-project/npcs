@@ -680,11 +680,14 @@ namespace NpcValheim.Npc
                     var name = _peerPlayerName?.GetValue(peer) as string;
                     _peerUid ??= typeof(ZNetPeer).GetField("m_uid", AnyInstance);
                     long senderId = _peerUid?.GetValue(peer) is long uid ? uid : 0L;
-                    if (senderId == 0L || !TryGetPlayer(senderId, out var player)) continue;
+                    if (senderId == 0L) continue;
 
-                    long id = player.GetPlayerID();
+                    // GetPlayerId, not a Player component: a dedicated server holds none for
+                    // its peers, and requiring one listed nobody at all there.
+                    long id = GetPlayerId(senderId);
                     if (id == 0L) continue;
-                    if (string.IsNullOrEmpty(name)) name = player.GetPlayerName();
+                    if (string.IsNullOrEmpty(name) && TryGetPlayer(senderId, out var player) && player != null)
+                        name = player.GetPlayerName();
                     if (string.IsNullOrEmpty(name)) continue;
                     result.Add((id, name));
                 }

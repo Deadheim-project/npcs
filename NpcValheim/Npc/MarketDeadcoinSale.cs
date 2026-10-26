@@ -15,9 +15,9 @@ namespace NpcValheim.Npc
     /// balance and leave one trail. The boss lock on the counter (BossPass.CanTrade) gates this
     /// exactly as it gates Coins, through <see cref="MarketplaceNpc.ItemOpenFor"/>.
     ///
-    /// Delivery goes out through the NPC's own channel (RPC_DeliverItem), not a separate
-    /// global one: unlike the boss pass's Coins flow, there is no quote-then-pay gap here for
-    /// the NPC to unload in before the answer arrives -- the whole purchase is one round trip.
+    /// Delivery goes out through the merchant's global answer (MarketplaceNpc.SendDelivery),
+    /// the same one a Coins purchase uses: an instance RPC is dropped by a client that does
+    /// not have the NPC loaded, and the Deadcoins are already charged by then.
     /// </summary>
     internal static class MarketDeadcoinSale
     {

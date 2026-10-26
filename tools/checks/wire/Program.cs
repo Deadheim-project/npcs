@@ -508,7 +508,7 @@ class Program
               old.Count == 15 && old[0].Prefab == "Raspberry" && old[0].Amount == 50 && old[0].Price == 150);
 
         var repaired = ParseOffers(DefaultDeadcoinItems, null);
-        Check("the new default is whole", repaired.Count == 7 && repaired[0].Prefab == "PortalToken",
+        Check("the new default is whole", repaired.Count == 10 && repaired[0].Prefab == "PortalToken",
               "got " + repaired.Count);
 
         // What the old server believed from the client, now refused in the list itself.
@@ -527,10 +527,10 @@ class Program
         Check("an empty list is empty, not an error", ParseOffers("", null).Count == 0);
 
         // What the counter's admin page writes, read back the way the counter reads it.
-        var changed = SetDeadcoinOffer(DefaultDeadcoinItems, new DeadcoinOffer { Prefab = "FichaBarbeiro", Amount = 1, Price = 90 });
+        var changed = SetDeadcoinOffer(DefaultDeadcoinItems, new DeadcoinOffer { Prefab = "Pet_galinha", Amount = 1, Price = 90 });
         var rereadCounter = ParseOffers(changed, null);
         Check("saving an item changes it in place",
-              rereadCounter.Count == 7 && rereadCounter[2].Prefab == "FichaBarbeiro" && rereadCounter[2].Amount == 1 && rereadCounter[2].Price == 90,
+              rereadCounter.Count == 10 && rereadCounter[2].Prefab == "Pet_galinha" && rereadCounter[2].Amount == 1 && rereadCounter[2].Price == 90,
               changed);
         changed = SetDeadcoinOffer(" Prefab = Wood ; AMOUNT = 5 ; price = 10 |broken", new DeadcoinOffer { Prefab = "Wood", Amount = 6, Price = 11 });
         Check("a hand-written entry is matched, and an unreadable one is left alone",
@@ -539,7 +539,7 @@ class Program
         Check("an item is added to an empty list", changed == "prefab=DeadToken;amount=1;price=750", changed);
         changed = RemoveDeadcoinOffer(DefaultDeadcoinItems, "FichaBatizar", out bool counterRemoved);
         Check("removing an item keeps the others",
-              counterRemoved && ParseOffers(changed, null).Count == 6 && ParseOffers(changed, null).TrueForAll(o => o.Prefab != "FichaBatizar"));
+              counterRemoved && ParseOffers(changed, null).Count == 9 && ParseOffers(changed, null).TrueForAll(o => o.Prefab != "FichaBatizar"));
         RemoveDeadcoinOffer(DefaultDeadcoinItems, "fichabatizar", out counterRemoved);
         Check("prefabs compare exactly, as purchases look them up", !counterRemoved);
 
@@ -551,9 +551,8 @@ class Program
         Check("a window parses into From/To",
               windowed.Count == 1 && FormatOffer(windowed[0]) == "prefab=FichaHalloween;amount=1;price=400;from=2026-10-24;to=2026-11-07",
               windowed.Count > 0 ? FormatOffer(windowed[0]) : "none");
-        var halloween = repaired.Find(o => o.Prefab == "FichaHalloween");
-        Check("the shipped Halloween ficha carries its window",
-              halloween != null && FormatOffer(halloween).Contains("from=2026-10-24") && FormatOffer(halloween).Contains("to=2026-11-07"));
+        // FichaHalloween left the shipped list in 0.1.74; a window on the server's own cfg is
+        // what the parse above covers.
         Check("from after to is refused",
               ParseOffers("prefab=Wood;amount=1;price=10;from=2026-11-07;to=2026-10-24", null).Count == 0);
         Check("a malformed date is refused",
@@ -893,10 +892,58 @@ class Program
         Check("the reader sees the auction's refund call (control)",
               BodyReaches(Merchant, "RPC_Buy", "Refund", null));
         Check("the reader sees the payout string in a sale to the NPC (control)",
-              BodyReaches(Merchant, "RPC_SellToNpc", null, "RPC_Paid"));
+              BodyReaches(Merchant, "RPC_SellToNpc", null, "paid"));
         Check("buying from the counter can no longer pay coins back",
-              !BodyReaches(Merchant, "RPC_BuyFromNpc", "Refund", "RPC_Paid") &&
+              !BodyReaches(Merchant, "RPC_BuyFromNpc", "Refund", "paid") &&
               !BodyReaches(Merchant, "RPC_BuyFromNpc", "GiveCoins", null));
+
+        // A ZNetView RPC runs on whichever peer owns the NPC, normally the nearest player, so
+        // no trade may be registered there any more: each one goes through the server channel.
+        Check("the merchant decides every trade on the server channel",
+              new[] { "RPC_BuyFromNpc", "RPC_SellToNpc", "RPC_Buy", "RPC_Sell", "RPC_CancelListing", "RPC_RequestMarketData" }
+                  .All(rpc => !BodyReaches(Merchant, "RegisterRpc", null, rpc)) &&
+              BodyReaches(Merchant, "RegisterRpc", null, "RPC_MarketData"));
+
+        System.Console.WriteLine();
+        System.Console.WriteLine("== Correio ==");
+
+        Check("the mailbox decides everything on the server channel",
+              HandlesOnServer(typeof(MailboxNpc), "DispatchServiceAction"));
+        Check("the mailbox registers no ZNetView RPC of its own",
+              typeof(MailboxNpc).GetMethod("RegisterRpc", BindingFlags.NonPublic | BindingFlags.Instance)?.DeclaringType != typeof(MailboxNpc));
+
+        var mailWire = typeof(MailboxNpc).Assembly.GetType("NpcValheim.Persistence.MailWire");
+        var letter = new NpcValheim.Persistence.MailEntry
+        {
+            Id = "abc", Subject = "Oi; tudo", ItemName = "", Quality = 1, Amount = 0, Coins = 0,
+            SenderName = "Ragnar", Body = "linha 1\nlinha; 2", Read = true,
+        };
+        var packedMail = (string)mailWire.GetMethod("Pack", AnyStatic)
+            .Invoke(null, new object[] { new List<NpcValheim.Persistence.MailEntry> { letter } });
+        var unpackedMail = (List<NpcValheim.Persistence.MailEntry>)mailWire.GetMethod("Unpack", AnyStatic)
+            .Invoke(null, new object[] { packedMail });
+        Check("a letter crosses the wire whole",
+              unpackedMail.Count == 1 && unpackedMail[0].Id == "abc" && unpackedMail[0].SenderName == "Ragnar" &&
+              unpackedMail[0].Body == "linha 1\nlinha, 2" && unpackedMail[0].Read && unpackedMail[0].IsMessage,
+              packedMail);
+
+        var unpackSend = typeof(MailboxNpc).GetMethod("TryUnpackSend", AnyStatic);
+        var packSend = typeof(MailboxNpc).GetMethod("PackSend", AnyStatic);
+        object[] SendArgs(string request) => new object[] { request, null, null, null, null, null, null };
+        var parcelArgs = SendArgs((string)packSend.Invoke(null, new object[] { "Ragnar", "Pacote", "toma;\nisso", "Wood", 1, 50 }));
+        Check("a parcel request carries recipient and stack",
+              (bool)unpackSend.Invoke(null, parcelArgs) && (string)parcelArgs[1] == "Ragnar" &&
+              (string)parcelArgs[3] == "toma,\nisso" && (string)parcelArgs[4] == "Wood" && (int)parcelArgs[6] == 50);
+        var letterArgs = SendArgs((string)packSend.Invoke(null, new object[] { "Ragnar", "Oi", "", "", 1, 0 }));
+        Check("a plain letter has no attachment",
+              (bool)unpackSend.Invoke(null, letterArgs) && (string)letterArgs[4] == "" && (int)letterArgs[6] == 0);
+        Check("a request in the old house format is refused",
+              !(bool)unpackSend.Invoke(null, SendArgs("house;Clã;Oi;corpo;;1;0")));
+        Check("a negative attachment is refused",
+              !(bool)unpackSend.Invoke(null, SendArgs("Ragnar;Oi;corpo;Wood;1;-5")));
+        Check("houses are gone from the mod",
+              typeof(MailboxNpc).Assembly.GetType("NpcValheim.Persistence.HouseDatabase") == null &&
+              typeof(NpcValheim.Persistence.MailEntry).GetProperty("HouseName") == null);
 
         System.Console.WriteLine();
         System.Console.WriteLine("== Treinador: config ==");

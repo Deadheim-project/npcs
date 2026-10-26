@@ -117,7 +117,6 @@ namespace NpcValheim.UI
                     AddTab("Correio", new MailView(), npc, player);
                     AddTab("Enviar", new MailComposeView(), npc, player);
                     AddTab("Parcela", new MailParcelView(), npc, player);
-                    AddTab("Casa", new HouseView(), npc, player);
                     break;
                 case QuestGiverNpc _:
                     AddTab("Missões", new QuestView(), npc, player);

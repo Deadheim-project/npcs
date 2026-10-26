@@ -359,6 +359,8 @@ namespace NpcValheim.UI
             if (!WithinWeeklyLimit(item, offer, amount)) return;
 
             int cost = MarketplaceNpc.PayoutFor(offer.Gold, lots);
+            Plugin.Log.LogInfo($"NpcValheim: buy click {amount}x {item} ({lots} lot(s) of {offer.Lot}) at {offer.Gold} -> cost {cost}, " +
+                               $"coins in bag {MarketplaceNpc.CoinsOf(Player)}");
             if (cost <= 0) { Say("Quantidade inválida."); return; }
 
             // The coins leave the pocket here. The server closes the sale at the price this
@@ -370,7 +372,7 @@ namespace NpcValheim.UI
                 return;
             }
 
-            // The server answers with RPC_DeliverItem, which reports what reached the bag and
+            // The server answers with a delivery (MarketplaceNpc.DeliverLocal), which reports what reached the bag and
             // what (if anything) had to go on the floor. Promising the floor up front
             // described the old delivery, and described it wrongly.
             market.RequestBuyFromNpc(item, amount, cost);
@@ -435,7 +437,7 @@ namespace NpcValheim.UI
 
                     // No "sold" message here: whether this succeeded is entirely up to the
                     // server (the merchant's price table can be stale by the time this lands,
-                    // see RPC_SellToNpc). It answers with either RPC_Paid or RPC_ReturnItem,
+                    // see RPC_SellToNpc). It answers with either a payment or the stack back,
                     // and one of those two always tells the player what actually happened.
                     ItemNames.Remove(inventory, item, amount, -1);
                     market.RequestSellToNpc(item, 1, amount);

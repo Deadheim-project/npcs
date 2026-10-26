@@ -209,15 +209,13 @@ namespace NpcValheim.Npc
 
         protected override void RegisterRpc()
         {
-            Nview.Register("RPC_Buy", (Action<long, string, string>)RPC_Buy);
-            Nview.Register("RPC_Sell", (Action<long, string, string>)RPC_Sell);
-            Nview.Register("RPC_CancelListing", (Action<long, string>)RPC_CancelListing);
+            // Buying, selling, listing and cancelling are not here: they reach the server through
+            // the service channel (SendTrade). As ZNetView RPCs they ran on whichever peer owned
+            // the NPC, normally the nearest player, after the buyer's coins or the seller's stack
+            // had already left the bag.
             Nview.Register("RPC_ConfigureTax", (Action<long, int>)RPC_ConfigureTax);
-            Nview.Register("RPC_RequestMarketData", (Action<long>)RPC_RequestMarketData);
             Nview.Register("RPC_MarketData", (Action<long, string>)RPC_MarketData);
-            Nview.Register("RPC_SellToNpc", (Action<long, string, string>)RPC_SellToNpc);
             Nview.Register("RPC_SetPrice", (Action<long, string, int>)RPC_SetPrice);
-            Nview.Register("RPC_BuyFromNpc", (Action<long, string, string>)RPC_BuyFromNpc);
             Nview.Register("RPC_Paid", (Action<long, int, string>)RPC_Paid);
             Nview.Register("RPC_DeliverItem", (Action<long, string, int>)RPC_DeliverItem);
             Nview.Register("RPC_ReturnItem", (Action<long, string, string>)RPC_ReturnItem);
@@ -692,6 +690,49 @@ namespace NpcValheim.Npc
                     BossPass.ServePurchase(sender, boss, $"'{GetHoverName()}'", text);
                     return true;
                 }
+                case ActionBuyCoins:
+                {
+                    // "item\namount;paid". Item names never hold a newline.
+                    string text = payload ?? "";
+                    int split = text.IndexOf('\n');
+                    if (split <= 0)
+                    {
+                        Plugin.Log.LogWarning($"NpcValheim: malformed Coins purchase from peer {sender}: \"{text}\"");
+                        ServiceNpcAuthority.SendStatus(sender, "Pedido de compra inválido.");
+                        return true;
+                    }
+                    RPC_BuyFromNpc(sender, text.Substring(0, split), text.Substring(split + 1));
+                    return true;
+                }
+                case ActionMarketData:
+                    RPC_RequestMarketData(sender);
+                    return true;
+                case ActionSellToNpc:
+                case ActionAuctionBuy:
+                case ActionAuctionSell:
+                case ActionAuctionCancel:
+                {
+                    // "first\nsecond": item or listing id, then the packed numbers. Neither
+                    // half ever holds a newline.
+                    string text = payload ?? "";
+                    int split = text.IndexOf('\n');
+                    string head = split < 0 ? text : text.Substring(0, split);
+                    string tail = split < 0 ? "" : text.Substring(split + 1);
+                    if (head.Length == 0 || (split < 0 && action != ActionAuctionCancel))
+                    {
+                        Plugin.Log.LogWarning($"NpcValheim: malformed {action} from peer {sender}: \"{text}\"");
+                        ServiceNpcAuthority.SendStatus(sender, "Pedido inválido.");
+                        return true;
+                    }
+                    switch (action)
+                    {
+                        case ActionSellToNpc: RPC_SellToNpc(sender, head, tail); break;
+                        case ActionAuctionBuy: RPC_Buy(sender, head, tail); break;
+                        case ActionAuctionSell: RPC_Sell(sender, head, tail); break;
+                        default: RPC_CancelListing(sender, head); break;
+                    }
+                    return true;
+                }
                 case MarketDeadcoinSale.ActionStatus:
                     MarketDeadcoinSale.ServeStatus(sender, this);
                     return true;
@@ -965,7 +1006,67 @@ namespace NpcValheim.Npc
         public void RequestBuyFromNpc(string itemName, int amount, int paid)
         {
             if (Nview == null || !Nview.IsValid()) return;
-            Nview.InvokeRPC("RPC_BuyFromNpc", itemName, amount + ";" + paid);
+            // Through the server, not a plain ZNetView RPC: that one runs on whichever peer owns
+            // the NPC's ZDO, normally the nearest player. The sale then ran on another player's
+            // machine (or the buyer's own), after the coins had already left the bag, and was
+            // lost whenever that peer lagged, left or lost the ZDO mid-flight.
+            SendTrade(ActionBuyCoins, itemName + "\n" + amount + ";" + paid);
+        }
+
+        /// <summary>The service action a Coins purchase from the counter travels as.</summary>
+        internal const string ActionBuyCoins = "RPC_BuyFromNpc";
+        internal const string ActionSellToNpc = "RPC_SellToNpc";
+        internal const string ActionAuctionBuy = "RPC_Buy";
+        internal const string ActionAuctionSell = "RPC_Sell";
+        internal const string ActionAuctionCancel = "RPC_CancelListing";
+        internal const string ActionMarketData = "RPC_RequestMarketData";
+
+        /// <summary>Sends a trade request to the server. The client has already moved coins or
+        /// goods out of the bag when it calls this, so a request that cannot leave must say so.</summary>
+        private void SendTrade(string action, string payload)
+        {
+            if (Nview == null || !Nview.IsValid()) return;
+            if (!InvokeServiceAction(action, payload))
+                Player.m_localPlayer?.Message(MessageHud.MessageType.Center,
+                    "O pedido não chegou ao servidor. Avise um admin.", 0, null);
+        }
+
+        // ---- the server's answers: global RPC, not the NPC's ZNetView ----
+        //
+        // A ZNetView RPC to a peer is dropped when that peer has not got the NPC loaded, and
+        // coins or goods have already left by then. A global RPC needs nothing but the peer.
+
+        private const string RpcMerchant = "NpcValheim_MerchantResponse";
+
+        internal static void Register(ZRoutedRpc rpc) =>
+            rpc.Register(RpcMerchant, (Action<long, string, string>)RPC_MerchantResponse);
+
+        private static void SendToPeer(long peer, string kind, string payload) =>
+            ZRoutedRpc.instance?.InvokeRoutedRPC(peer, RpcMerchant, new object[] { kind, payload ?? "" });
+
+        private static void SendDelivery(long peer, string itemName, int amount) =>
+            SendToPeer(peer, "deliver", itemName + "\n" + amount);
+
+        private static void RPC_MerchantResponse(long sender, string kind, string payload)
+        {
+            if (!ServiceNpcAuthority.IsAuthoritativeSender(sender)) return;
+            // Two fields at most: the second one may be a reason, which is free text.
+            var parts = (payload ?? "").Split(new[] { '\n' }, 2);
+            switch (kind)
+            {
+                case "deliver" when parts.Length == 2 && int.TryParse(parts[1], out int amount):
+                    DeliverLocal(parts[0], amount);
+                    break;
+                case "paid" when parts.Length == 2 && int.TryParse(parts[0], out int coins):
+                    PayLocal(coins, parts[1]);
+                    break;
+                case "return" when parts.Length == 2:
+                    ReturnLocal(parts[0], parts[1]);
+                    break;
+                default:
+                    Plugin.Log.LogWarning($"NpcValheim: malformed Mercador answer '{kind}': \"{payload}\"");
+                    break;
+            }
         }
 
         /// <summary>
@@ -988,14 +1089,32 @@ namespace NpcValheim.Npc
         /// </summary>
         private void RPC_BuyFromNpc(long sender, string itemName, string packed)
         {
-            if (!NpcRequestGuard.AllowNearby(Nview, transform, sender, "shop-buy", 6f, 8, 2f)) return;
+            // Every refusal below says so, in the log and to the buyer: by the time this runs the
+            // client has already taken the coins, and a silent return left a player with neither
+            // the goods nor any hint of why.
+            if (!NpcRequestGuard.AllowNearby(Nview, transform, sender, "shop-buy", out string guardReason, 6f, 8, 2f))
+            {
+                Plugin.Log.LogWarning($"NpcValheim: refused a purchase of {itemName} from peer {sender} -- {guardReason}");
+                ServiceNpcAuthority.SendStatus(sender, "Compra recusada pelo servidor; fique perto do NPC e tente de novo.");
+                return;
+            }
             long playerId = GameApi.GetPlayerId(sender);
-            if (playerId == 0L) return;
+            if (playerId == 0L)
+            {
+                Plugin.Log.LogWarning($"NpcValheim: refused a purchase of {itemName} from peer {sender} -- no player id for the peer");
+                ServiceNpcAuthority.SendStatus(sender, "O servidor não identificou seu personagem. Tente de novo.");
+                return;
+            }
 
             var parts = (packed ?? "").Split(';');
-            if (parts.Length != 2) return;
-            if (!int.TryParse(parts[0], out int amount) || !int.TryParse(parts[1], out int paid)) return;
-            if (amount <= 0 || amount > 10000 || paid < 0) return;
+            if (parts.Length != 2 ||
+                !int.TryParse(parts[0], out int amount) || !int.TryParse(parts[1], out int paid) ||
+                amount <= 0 || amount > 10000 || paid < 0)
+            {
+                Plugin.Log.LogWarning($"NpcValheim: refused a purchase of {itemName} from {playerId} -- malformed request \"{packed}\"");
+                ServiceNpcAuthority.SendStatus(sender, "Pedido de compra inválido.");
+                return;
+            }
 
             // `amount` is in units and the price is per lot, so the purchase closes at a lot
             // that divides it: the current one first, then any lot the counter showed in the
@@ -1089,7 +1208,7 @@ namespace NpcValheim.Npc
             // Handed to the buyer rather than dropped at the merchant's feet. Goods on the
             // ground are goods somebody else can pick up, and they are easy to walk away from
             // without noticing.
-            Nview.InvokeRPC(sender, "RPC_DeliverItem", itemName, amount);
+            SendDelivery(sender, itemName, amount);
 
             Plugin.Log.LogInfo(
                 $"NpcValheim: merchant sold {amount}x {itemName} to {playerId} for {PayoutFor(unitPrice, lots)}" +
@@ -1187,7 +1306,7 @@ namespace NpcValheim.Npc
         {
             if (amount <= 0) return;
             Plugin.Log.LogInfo($"NpcValheim: refunding {amount} to {playerId} ({reason})");
-            Nview.InvokeRPC(sender, "RPC_Paid", amount, reason);
+            SendToPeer(sender, "paid", amount + "\n" + reason);
         }
 
         /// <summary>
@@ -1200,14 +1319,32 @@ namespace NpcValheim.Npc
         /// </summary>
         private void RPC_DeliverItem(long sender, string itemName, int amount)
         {
-            if (!NpcRequestGuard.IsResponseFromOwner(Nview, sender)) return;
+            if (!NpcRequestGuard.IsResponseFromOwner(Nview, sender))
+            {
+                Plugin.Log.LogError($"NpcValheim: dropped a delivery of {amount}x {itemName}: sender {sender} is not the NPC's owner");
+                return;
+            }
+            DeliverLocal(itemName, amount);
+        }
+
+        /// <summary>The delivery itself, on the buyer's machine. Reached through the global
+        /// answer (RPC_MerchantResponse); the NPC's own RPC above is kept for a server that
+        /// has not been updated yet.</summary>
+        private static void DeliverLocal(string itemName, int amount)
+        {
             var player = Player.m_localPlayer;
-            if (player == null || amount <= 0) return;
+            if (player == null || amount <= 0)
+            {
+                Plugin.Log.LogError($"NpcValheim: could not hand over {amount}x {itemName}: no local player");
+                return;
+            }
+            Plugin.Log.LogInfo($"NpcValheim: delivering {amount}x {itemName}");
 
             // The bag first, always. The ground is the fallback for what genuinely does not
             // fit, not the delivery mechanism -- goods on the floor are goods someone else can
             // take, and easy to walk away from without noticing.
             int given = ItemSpawner.GiveToInventory(player, itemName, amount, 1);
+            Plugin.Log.LogInfo($"NpcValheim: {given} of {amount}x {itemName} went into the bag");
             if (given > 0)
                 player.Message(MessageHud.MessageType.TopLeft,
                     $"Recebido: {given}x {ItemNames.Display(itemName)}", given, null);
@@ -1226,6 +1363,11 @@ namespace NpcValheim.Npc
         private void RPC_Paid(long sender, int amount, string reason)
         {
             if (!NpcRequestGuard.IsResponseFromOwner(Nview, sender)) return;
+            PayLocal(amount, reason);
+        }
+
+        private static void PayLocal(int amount, string reason)
+        {
             var player = Player.m_localPlayer;
             if (player == null || amount <= 0) return;
 
@@ -1238,14 +1380,13 @@ namespace NpcValheim.Npc
         /// <summary>
         /// Server: charges, delivers and logs a Deadcoins purchase of this merchant's own sell
         /// list, called only from <see cref="MarketDeadcoinSale.ServeBuy"/> once it has charged
-        /// the buyer's Deadcoins ledger. Delivery reuses the same channel and the same client
-        /// handler as a Coins purchase (RPC_DeliverItem): there is no quote-then-pay gap here
-        /// for this NPC to unload in before the answer arrives, unlike the boss pass's Coins
-        /// flow, so the instance RPC is as good as a global one would be.
+        /// the buyer's Deadcoins ledger. Delivery reuses the same global answer and the same
+        /// client handler as a Coins purchase (SendDelivery / DeliverLocal). The balance update
+        /// stays on the NPC's RPC: losing it only delays the number, the next status fixes it.
         /// </summary>
         internal void DeliverDeadcoinsPurchase(long sender, string itemName, int amount, int deadcoinsAfter)
         {
-            Nview.InvokeRPC(sender, "RPC_DeliverItem", itemName, amount);
+            SendDelivery(sender, itemName, amount);
             Nview.InvokeRPC(sender, "RPC_DeadcoinsUpdate", deadcoinsAfter);
         }
 
@@ -1265,7 +1406,7 @@ namespace NpcValheim.Npc
         public void RequestSellToNpc(string itemName, int quality, int amount)
         {
             if (Nview == null || !Nview.IsValid()) return;
-            Nview.InvokeRPC("RPC_SellToNpc", itemName, quality + ";" + amount);
+            SendTrade(ActionSellToNpc, itemName + "\n" + quality + ";" + amount);
         }
 
         /// <summary>What a sale is worth, or 0 if the numbers are out of range.
@@ -1287,11 +1428,16 @@ namespace NpcValheim.Npc
             if (Nview == null || !Nview.IsValid() || !Nview.IsOwner()) return;
 
             var parts = (packed ?? "").Split(';');
-            if (parts.Length != 2) return;
-            if (!int.TryParse(parts[0], out int quality) || !int.TryParse(parts[1], out int amount)) return;
-            // A vanilla stack tops out in the hundreds; anything past this is a malformed or
-            // hostile client, not a real sale.
-            if (amount <= 0 || amount > 10000) return;
+            // A vanilla stack tops out in the hundreds; anything past 10000 is a malformed or
+            // hostile client, not a real sale. Nothing to give back: there is no stack to name.
+            if (parts.Length != 2 ||
+                !int.TryParse(parts[0], out int quality) || !int.TryParse(parts[1], out int amount) ||
+                amount <= 0 || amount > 10000)
+            {
+                Plugin.Log.LogWarning($"NpcValheim: refused a sale of {itemName} from peer {sender} -- malformed request \"{packed}\"");
+                ServiceNpcAuthority.SendStatus(sender, "Pedido de venda inválido.");
+                return;
+            }
 
             // Parsed before the guard runs on purpose: the seller's client has already taken
             // the stack out of their inventory, so a refusal here has to know what to give
@@ -1305,7 +1451,12 @@ namespace NpcValheim.Npc
             }
 
             long playerId = GameApi.GetPlayerId(sender);
-            if (playerId == 0L) return;
+            if (playerId == 0L)
+            {
+                Plugin.Log.LogWarning($"NpcValheim: refused a sale of {itemName} from peer {sender} -- no player id for the peer");
+                ReturnItem(sender, itemName, quality, amount, "Venda recusada");
+                return;
+            }
 
             string buyBoss = GetBuyBosses().TryGetValue(itemName ?? "", out var ownBoss) ? ownBoss : "";
             if (!ItemOpenFor(playerId, itemName, buyBoss, out string locked))
@@ -1365,7 +1516,7 @@ namespace NpcValheim.Npc
             // Paid in real coins, into the hand of the player standing at the counter. Not a
             // number in a ledger: the two used to disagree, and the one on the panel was the
             // one that wasn't real.
-            Nview.InvokeRPC(sender, "RPC_Paid", payout, "Venda");
+            SendToPeer(sender, "paid", payout + "\nVenda");
 
             Plugin.Log.LogInfo($"NpcValheim: merchant bought {amount}x {itemName} from {playerId} for {payout}");
             BroadcastMarketDataTo(sender);
@@ -1378,7 +1529,7 @@ namespace NpcValheim.Npc
         private void ReturnItem(long sender, string itemName, int quality, int amount, string reason)
         {
             Plugin.Log.LogInfo($"NpcValheim: returning {amount}x {itemName} to sender {sender} ({reason})");
-            Nview.InvokeRPC(sender, "RPC_ReturnItem", itemName, quality + ";" + amount + ";" + reason);
+            SendToPeer(sender, "return", itemName + "\n" + quality + ";" + amount + ";" + reason);
         }
 
         /// <summary>Client side: a sale was refused, the stack comes back. Quality is preserved
@@ -1387,6 +1538,11 @@ namespace NpcValheim.Npc
         private void RPC_ReturnItem(long sender, string itemName, string packed)
         {
             if (!NpcRequestGuard.IsResponseFromOwner(Nview, sender)) return;
+            ReturnLocal(itemName, packed);
+        }
+
+        private static void ReturnLocal(string itemName, string packed)
+        {
             var player = Player.m_localPlayer;
             if (player == null) return;
 
@@ -1410,13 +1566,13 @@ namespace NpcValheim.Npc
         }
 
         public void RequestBuy(string listingId, int amount, int paid) =>
-            Nview.InvokeRPC("RPC_Buy", listingId, amount + ";" + paid);
+            SendTrade(ActionAuctionBuy, listingId + "\n" + amount + ";" + paid);
 
         public void RequestSell(string itemName, int quality, int amount, int pricePerUnit) =>
-            Nview.InvokeRPC("RPC_Sell", itemName, Pack(quality, amount, pricePerUnit));
+            SendTrade(ActionAuctionSell, itemName + "\n" + Pack(quality, amount, pricePerUnit));
 
         public void RequestCancelListing(string listingId) =>
-            Nview.InvokeRPC("RPC_CancelListing", listingId);
+            SendTrade(ActionAuctionCancel, listingId);
 
         public void RequestConfigureTax(Player requester, int taxPercent)
         {
@@ -1435,7 +1591,8 @@ namespace NpcValheim.Npc
         public void RequestMarketData()
         {
             if (Nview == null || !Nview.IsValid()) return;
-            Nview.InvokeRPC("RPC_RequestMarketData");
+            // The server's board, not the local LiteDB of whichever player happens to own the NPC.
+            InvokeServiceAction(ActionMarketData);
         }
 
         private void RPC_RequestMarketData(long sender)
@@ -1492,15 +1649,32 @@ namespace NpcValheim.Npc
         /// `packed` = "amount;paid".</summary>
         private void RPC_Buy(long sender, string listingId, string packed)
         {
-            if (!NpcRequestGuard.AllowNearby(Nview, transform, sender, "market-buy", 6f, 6, 2f)) return;
+            // The refusals before MarketDatabase.Buy pay nothing back -- `paid` is the client's
+            // word, and only the database knows what a listing really cost -- but they all say
+            // so, in the log and to the buyer, who has already spent the coins.
+            if (!NpcRequestGuard.AllowNearby(Nview, transform, sender, "market-buy", out string guardReason, 6f, 6, 2f))
+            {
+                Plugin.Log.LogWarning($"NpcValheim: refused an auction purchase of {listingId} from peer {sender} -- {guardReason}");
+                ServiceNpcAuthority.SendStatus(sender, "Compra recusada pelo servidor; fique perto do NPC e tente de novo.");
+                return;
+            }
 
             long buyerId = GameApi.GetPlayerId(sender);
-            if (buyerId == 0L) return;
+            if (buyerId == 0L)
+            {
+                Plugin.Log.LogWarning($"NpcValheim: refused an auction purchase of {listingId} from peer {sender} -- no player id for the peer");
+                ServiceNpcAuthority.SendStatus(sender, "O servidor não identificou seu personagem. Tente de novo.");
+                return;
+            }
 
             var parts = (packed ?? "").Split(';');
-            if (parts.Length != 2) return;
-            if (!int.TryParse(parts[0], out int amount) || !int.TryParse(parts[1], out int paid)) return;
-            if (paid < 0) return;
+            if (parts.Length != 2 ||
+                !int.TryParse(parts[0], out int amount) || !int.TryParse(parts[1], out int paid) || paid < 0)
+            {
+                Plugin.Log.LogWarning($"NpcValheim: refused an auction purchase of {listingId} from {buyerId} -- malformed request \"{packed}\"");
+                ServiceNpcAuthority.SendStatus(sender, "Pedido de compra inválido.");
+                return;
+            }
 
             int taxPercent = Nview.GetZDO().GetInt(KeyTaxPercent, 0);
             if (!MarketDatabase.Buy(listingId, NpcId, buyerId, amount, taxPercent, paid,
@@ -1529,18 +1703,40 @@ namespace NpcValheim.Npc
         /// client-side before this RPC is sent (see MarketplacePanel).</summary>
         private void RPC_Sell(long sender, string itemName, string packed)
         {
-            if (!NpcRequestGuard.AllowNearby(Nview, transform, sender, "market-sell", 6f, 4, 2f)) return;
-            if (!TryUnpack(packed, out int quality, out int amount, out int pricePerUnit)) return;
-            if (amount <= 0 || pricePerUnit <= 0) return;
-            if (amount > 100000 || pricePerUnit > 100000000) return;
+            // The stack is checked before anything else, the guard included: the seller's client
+            // has already taken it out of the bag, so every refusal after this point hands it
+            // back (as RPC_SellToNpc does). One that cannot be a real stack gets nothing.
             var prefab = ObjectDB.instance?.GetItemPrefab(itemName);
             var itemDrop = prefab != null ? prefab.GetComponent<ItemDrop>() : null;
-            if (itemDrop?.m_itemData?.m_shared == null) return;
-            if (quality < 1 || quality > Mathf.Max(1, itemDrop.m_itemData.m_shared.m_maxQuality)) return;
-            if (amount > ItemSpawner.MaxDeliverableAmount(itemName)) return;
+            if (!TryUnpack(packed, out int quality, out int amount, out int pricePerUnit) ||
+                itemDrop?.m_itemData?.m_shared == null ||
+                quality < 1 || quality > Mathf.Max(1, itemDrop.m_itemData.m_shared.m_maxQuality) ||
+                amount <= 0 || amount > 100000 || amount > ItemSpawner.MaxDeliverableAmount(itemName))
+            {
+                Plugin.Log.LogWarning($"NpcValheim: refused a listing of {itemName} from peer {sender} -- malformed request \"{packed}\"");
+                ServiceNpcAuthority.SendStatus(sender, "Pedido de anúncio inválido.");
+                return;
+            }
+
+            if (!NpcRequestGuard.AllowNearby(Nview, transform, sender, "market-sell", out string guardReason, 6f, 4, 2f))
+            {
+                Plugin.Log.LogWarning($"NpcValheim: refused a listing of {amount}x {itemName} from peer {sender} -- {guardReason}");
+                ReturnItem(sender, itemName, quality, amount, "Anúncio recusado");
+                return;
+            }
+            if (pricePerUnit <= 0 || pricePerUnit > 100000000)
+            {
+                ReturnItem(sender, itemName, quality, amount, "Preço inválido");
+                return;
+            }
 
             long sellerId = GameApi.GetPlayerId(sender);
-            if (sellerId == 0L) return;
+            if (sellerId == 0L)
+            {
+                Plugin.Log.LogWarning($"NpcValheim: refused a listing of {amount}x {itemName} from peer {sender} -- no player id for the peer");
+                ReturnItem(sender, itemName, quality, amount, "Anúncio recusado");
+                return;
+            }
             string sellerName = GameApi.GetPlayerName(sender);
 
             // Resolve the per-player limit: VIPs get a larger quota, but only while the
@@ -1551,15 +1747,26 @@ namespace NpcValheim.Npc
                 ? Mathf.Max(Plugin.MaxListingsPerPlayer.Value, Plugin.VipMaxListings.Value)
                 : Plugin.MaxListingsPerPlayer.Value;
 
-            MarketDatabase.AddListing(NpcId, sellerId, sellerName, itemName, quality, amount, pricePerUnit,
-                TimeSpan.FromHours(Mathf.Max(1, Plugin.ListingDurationHours.Value)),
-                maxListings);
+            // A full board, or a seller at their limit, used to swallow the stack: AddListing
+            // answers null and nothing looked at it.
+            if (MarketDatabase.AddListing(NpcId, sellerId, sellerName, itemName, quality, amount, pricePerUnit,
+                    TimeSpan.FromHours(Mathf.Max(1, Plugin.ListingDurationHours.Value)),
+                    maxListings) == null)
+            {
+                Plugin.Log.LogInfo($"NpcValheim: listing of {amount}x {itemName} by {sellerId} refused: board or seller limit reached");
+                ReturnItem(sender, itemName, quality, amount, "Limite de anúncios atingido");
+            }
             BroadcastMarketDataTo(sender);
         }
 
         private void RPC_CancelListing(long sender, string listingId)
         {
-            if (!NpcRequestGuard.AllowNearby(Nview, transform, sender, "market-cancel", 6f, 6, 2f)) return;
+            if (!NpcRequestGuard.AllowNearby(Nview, transform, sender, "market-cancel", out string guardReason, 6f, 6, 2f))
+            {
+                Plugin.Log.LogWarning($"NpcValheim: refused to cancel {listingId} for peer {sender} -- {guardReason}");
+                ServiceNpcAuthority.SendStatus(sender, "Cancelamento recusado; fique perto do NPC e tente de novo.");
+                return;
+            }
 
             long playerId = GameApi.GetPlayerId(sender);
             if (playerId == 0L) return;

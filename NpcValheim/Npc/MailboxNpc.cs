@@ -11,38 +11,71 @@ namespace NpcValheim.Npc
 {
     public class MailRecipient
     {
-        public bool IsHouse;
         public string Name;
         public long PlayerId;
-        public int MemberCount;
-        public bool IsMine;
     }
 
     /// <summary>
-    /// The post office. Market proceeds and unsold stock still arrive here, and players can
-    /// also write to any known character or to a house. The box itself is a placeable piece
-    /// (the WoW mailbox mesh), not a Player clone -- furniture does not need hair and armor.
+    /// The post office. Market proceeds and unsold stock arrive here, and players can write
+    /// to any character the server has seen, with or without a parcel. The box itself is a
+    /// placeable piece (the WoW mailbox mesh), not a Player clone -- furniture does not need
+    /// hair and armor.
     ///
-    /// Same authority model as everything else: the mailbox is read and emptied only on the
-    /// peer that owns the ZDO, and a client only ever sees its own mail because the server
-    /// answers per-sender.
+    /// Every request goes to the server through the service channel, and every answer comes
+    /// back to the player through a global RPC. The box used to answer ZNetView RPCs, which
+    /// run on whichever peer owns its ZDO -- a nearby player as often as the server. That
+    /// player's machine then read and wrote its own empty LiteDB: the box showed nothing,
+    /// letters went into a file nobody else reads, the address book only held whoever that
+    /// player had met, and a parcel the sender had already taken out of the bag was lost.
     /// </summary>
     public class MailboxNpc : NpcBase
     {
         private const int MaxClaimsPerRequest = 20;
+        /// <summary>Names in one directory answer. Far above any real player count; it only
+        /// keeps a corrupt directory from producing an unbounded packet.</summary>
+        private const int MaxDirectoryEntries = 2000;
+
         public override float NameplateHeight => 1.85f;
         public override bool ShowsAppearanceTab => false;
         protected override string DefaultNpcName => "Caixa Postal";
 
-        public List<MailEntry> CachedMail { get; private set; } = new List<MailEntry>();
-        public List<MailRecipient> CachedRecipients { get; private set; } = new List<MailRecipient>();
-        public string LastStatus { get; set; } = "";
-        public bool HasSyncedOnce { get; private set; }
-        public bool HasDirectoryOnce { get; private set; }
+        internal const string ActionRead = "RPC_RequestMail";
+        internal const string ActionDirectory = "RPC_RequestDirectory";
+        internal const string ActionClaim = "RPC_ClaimMail";
+        internal const string ActionClaimAll = "RPC_ClaimAllMail";
+        internal const string ActionMarkRead = "RPC_MarkMailRead";
+        internal const string ActionSend = "RPC_SendMail";
 
-        /// <summary>Fired on the client that asked for mail, including stamp polls
-        /// that never open the Caixa Postal panel.</summary>
-        internal static event Action<List<MailEntry>> MailSynced;
+        private const string RpcResponse = "NpcValheim_MailResponse";
+
+        // ---- client cache ----
+        //
+        // One player, one pile of mail: every box in the world shows the same letters, and the
+        // answer is addressed to the player rather than to a box. So the cache is too.
+
+        private static List<MailEntry> _mail = new List<MailEntry>();
+        private static List<MailRecipient> _recipients = new List<MailRecipient>();
+        private static string _status = "";
+        private static bool _synced;
+        private static bool _directoryOnce;
+
+        public List<MailEntry> CachedMail => _mail;
+        public List<MailRecipient> CachedRecipients => _recipients;
+        public string LastStatus { get => _status; set => _status = value ?? ""; }
+        public bool HasSyncedOnce => _synced;
+        public bool HasDirectoryOnce => _directoryOnce;
+
+        /// <summary>Called once per connection (see ServiceNpcAuthority.TryRegister). What is
+        /// cached belongs to the previous session, possibly on another server.</summary>
+        internal static void Register(ZRoutedRpc rpc)
+        {
+            _mail = new List<MailEntry>();
+            _recipients = new List<MailRecipient>();
+            _status = "";
+            _synced = _directoryOnce = false;
+            _rememberedThisSession.Clear();
+            rpc.Register(RpcResponse, (Action<long, string, string>)RPC_Response);
+        }
 
         protected override void OnPlacedExtra()
         {
@@ -71,378 +104,263 @@ namespace NpcValheim.Npc
             InitializeAfterSpawn(piece != null ? piece.GetCreator() : 0L);
         }
 
-        protected override void RegisterRpc()
-        {
-            Nview.Register("RPC_RequestMail", (Action<long>)RPC_RequestMail);
-            Nview.Register("RPC_MailData", (Action<long, string>)RPC_MailData);
-            Nview.Register("RPC_ClaimMail", (Action<long, string>)RPC_ClaimMail);
-            Nview.Register("RPC_ClaimAllMail", (Action<long>)RPC_ClaimAllMail);
-            Nview.Register("RPC_RequestDirectory", (Action<long>)RPC_RequestDirectory);
-            Nview.Register("RPC_DirectoryData", (Action<long, string>)RPC_DirectoryData);
-            Nview.Register("RPC_SendMail", (Action<long, string>)RPC_SendMail);
-            Nview.Register("RPC_CreateHouse", (Action<long, string>)RPC_CreateHouse);
-            Nview.Register("RPC_InviteHouse", (Action<long, string>)RPC_InviteHouse);
-            Nview.Register("RPC_KickHouse", (Action<long, string>)RPC_KickHouse);
-            Nview.Register("RPC_MailStatus", (Action<long, string>)RPC_MailStatus);
-            Nview.Register("RPC_MarkMailRead", (Action<long, string>)RPC_MarkMailRead);
-            Nview.Register("RPC_ReceiveParcel", (Action<long, string>)RPC_ReceiveParcel);
-        }
+        // ---- client -> server ----
 
-        public void RequestMail()
-        {
-            if (Nview == null || !Nview.IsValid()) return;
-            Nview.InvokeRPC("RPC_RequestMail");
-        }
+        public void RequestMail() => Send(ActionRead, "");
 
-        public void RequestDirectory()
-        {
-            if (Nview == null || !Nview.IsValid()) return;
-            Nview.InvokeRPC("RPC_RequestDirectory");
-        }
+        public void RequestDirectory() => Send(ActionDirectory, "");
 
         public void RequestClaim(string mailId)
         {
-            if (Nview == null || !Nview.IsValid() || string.IsNullOrEmpty(mailId)) return;
-            Nview.InvokeRPC("RPC_ClaimMail", mailId);
+            if (string.IsNullOrEmpty(mailId)) return;
+            Send(ActionClaim, mailId);
         }
 
-        public void RequestClaimAll()
-        {
-            if (Nview == null || !Nview.IsValid()) return;
-            Nview.InvokeRPC("RPC_ClaimAllMail");
-        }
+        public void RequestClaimAll() => Send(ActionClaimAll, "");
 
-        /// <summary>The player opened a letter in Correio. Stamp polls must not call this.</summary>
+        /// <summary>The player opened a letter in Correio.</summary>
         public void RequestMarkRead(string mailId)
         {
-            if (Nview == null || !Nview.IsValid() || string.IsNullOrEmpty(mailId)) return;
-            Nview.InvokeRPC("RPC_MarkMailRead", mailId);
+            if (string.IsNullOrEmpty(mailId)) return;
+            Send(ActionMarkRead, mailId);
         }
 
-        public void RequestSend(bool toHouse, string target, string subject, string body)
-        {
-            if (Nview == null || !Nview.IsValid()) return;
-            Nview.InvokeRPC("RPC_SendMail", PackSend(toHouse, target, subject, body));
-        }
+        public void RequestSend(string target, string subject, string body) =>
+            Send(ActionSend, PackSend(target, subject, body, "", 1, 0));
 
         /// <summary>Envia carta com um stack de item anexado. O cliente já removeu o item do
-        /// inventário antes de chamar este método; o servidor valida e entrega.</summary>
-        public void RequestSendWithAttachment(bool toHouse, string target, string subject, string body,
-            string itemName, int quality, int amount)
+        /// inventário antes de chamar este método; o servidor valida e, se recusar, devolve.</summary>
+        public void RequestSendWithAttachment(string target, string subject, string body,
+            string itemName, int quality, int amount) =>
+            Send(ActionSend, PackSend(target, subject, body, itemName, quality, amount));
+
+        private void Send(string action, string payload)
         {
-            if (Nview == null || !Nview.IsValid()) return;
-            Nview.InvokeRPC("RPC_SendMail",
-                PackSend(toHouse, target, subject, body, itemName, quality, amount));
+            if (InvokeServiceAction(action, payload)) return;
+            _status = "O pedido não chegou ao servidor. Tente de novo.";
+            Player.m_localPlayer?.Message(MessageHud.MessageType.Center, _status, 0, null);
         }
 
-        public void RequestCreateHouse(string name)
+        // ---- server ----
+
+        internal override bool DispatchServiceAction(long sender, string action, string payload)
         {
-            if (Nview == null || !Nview.IsValid()) return;
-            Nview.InvokeRPC("RPC_CreateHouse", name ?? "");
+            switch (action)
+            {
+                case ActionRead: ServeRead(sender); return true;
+                case ActionDirectory: ServeDirectory(sender); return true;
+                case ActionClaim: ServeClaim(sender, payload ?? ""); return true;
+                case ActionClaimAll: ServeClaimAll(sender); return true;
+                case ActionMarkRead: ServeMarkRead(sender, payload ?? ""); return true;
+                case ActionSend: ServeSend(sender, payload ?? ""); return true;
+                default: return base.DispatchServiceAction(sender, action, payload);
+            }
         }
 
-        public void RequestInvite(string houseName, string playerName)
+        private void ServeRead(long sender)
         {
-            if (Nview == null || !Nview.IsValid()) return;
-            Nview.InvokeRPC("RPC_InviteHouse", MailWire.Sanitize(houseName) + ";" + MailWire.Sanitize(playerName));
-        }
-
-        public void RequestKick(string houseName, long memberId)
-        {
-            if (Nview == null || !Nview.IsValid()) return;
-            Nview.InvokeRPC("RPC_KickHouse",
-                MailWire.Sanitize(houseName) + ";" + memberId.ToString(CultureInfo.InvariantCulture));
-        }
-
-        private void RPC_RequestMail(long sender)
-        {
-            if (!NpcRequestGuard.AllowNearby(Nview, transform, sender, "mail-read", 6f, 12, 2f)) return;
-            RememberSender(sender);
+            if (!NpcRequestGuard.AllowNearby(Nview, transform, sender, "mail-read", out string refusal, 6f, 12, 2f))
+            {
+                ReplyStatus(sender, "Chegue mais perto da caixa postal.");
+                Plugin.Log.LogInfo($"NpcValheim: mailbox read refused for peer {sender} -- {refusal}");
+                return;
+            }
+            GameApi.RememberIdentity(sender);
             SendMailTo(sender);
         }
 
-        private void RPC_MailData(long sender, string packed)
+        private void ServeDirectory(long sender)
         {
-            if (!NpcRequestGuard.IsResponseFromOwner(Nview, sender)) return;
-            CachedMail = MailWire.Unpack(packed);
-            HasSyncedOnce = true;
-            MailSynced?.Invoke(CachedMail);
+            if (!NpcRequestGuard.AllowNearby(Nview, transform, sender, "mail-directory", out string refusal, 6f, 6, 2f))
+            {
+                ReplyStatus(sender, "Chegue mais perto da caixa postal.");
+                Plugin.Log.LogInfo($"NpcValheim: mailbox directory refused for peer {sender} -- {refusal}");
+                return;
+            }
+            GameApi.RememberIdentity(sender);
+            RememberOnlinePlayers(force: true);
+            SendDirectoryTo(sender);
         }
 
-        private void RPC_ClaimMail(long sender, string mailId)
+        private void ServeClaim(long sender, string mailId)
         {
-            if (!NpcRequestGuard.AllowNearby(Nview, transform, sender, "mail-claim", 6f, 8, 2f)) return;
+            if (!NpcRequestGuard.AllowNearby(Nview, transform, sender, "mail-claim", out string refusal, 6f, 8, 2f))
+            {
+                Plugin.Log.LogWarning($"NpcValheim: mail claim {mailId} refused for peer {sender} -- {refusal}");
+                ReplyStatus(sender, "Chegue mais perto da caixa postal e tente de novo.");
+                return;
+            }
             long playerId = GameApi.GetPlayerId(sender);
-            if (playerId == 0L) return;
+            if (playerId == 0L)
+            {
+                ReplyStatus(sender, "O servidor não identificou seu personagem. Tente de novo.");
+                return;
+            }
 
-            if (!TryDeliverClaim(sender, mailId, playerId))
+            // Looked up the way the box lists it, across every id of this character (see
+            // PlayerDirectory.IdsFor), and claimed under the id it is actually filed under. A
+            // claim against the current id alone refused letters the box was showing.
+            var owned = MailDatabase.GetMail(playerId, GameApi.GetPlayerName(sender))
+                .FirstOrDefault(entry => entry.Id == mailId);
+            if (owned == null)
+                ReplyStatus(sender, "Esta encomenda não está mais na sua caixa.");
+            else if (!TryDeliverClaim(sender, mailId, owned.PlayerId))
                 ReplyStatus(sender, "Não foi possível entregar esta encomenda; ela continua guardada.");
             SendMailTo(sender);
         }
 
-        private void RPC_ClaimAllMail(long sender)
+        private void ServeClaimAll(long sender)
         {
-            if (!NpcRequestGuard.AllowNearby(Nview, transform, sender, "mail-claim-all", 6f, 2, 5f)) return;
-            long playerId = GameApi.GetPlayerId(sender);
-            if (playerId == 0L) return;
-
-            int delivered = 0;
-            foreach (var entry in MailDatabase.GetMail(playerId).Take(MaxClaimsPerRequest))
+            if (!NpcRequestGuard.AllowNearby(Nview, transform, sender, "mail-claim-all", out string refusal, 6f, 2, 5f))
             {
-                if (TryDeliverClaim(sender, entry.Id, playerId)) delivered++;
+                Plugin.Log.LogWarning($"NpcValheim: mail claim-all refused for peer {sender} -- {refusal}");
+                ReplyStatus(sender, "Espere um instante e tente de novo, perto da caixa postal.");
+                return;
             }
-            if (delivered >= MaxClaimsPerRequest)
-                ReplyStatus(sender, $"{delivered} encomendas entregues. Abra novamente para continuar.");
+            long playerId = GameApi.GetPlayerId(sender);
+            if (playerId == 0L)
+            {
+                ReplyStatus(sender, "O servidor não identificou seu personagem. Tente de novo.");
+                return;
+            }
+
+            int delivered = 0, failed = 0;
+            foreach (var entry in MailDatabase.GetMail(playerId, GameApi.GetPlayerName(sender)).Take(MaxClaimsPerRequest))
+            {
+                if (TryDeliverClaim(sender, entry.Id, entry.PlayerId)) delivered++;
+                else failed++;
+            }
+            if (failed > 0)
+                ReplyStatus(sender, $"{delivered} entregue(s); {failed} não puderam ser entregues e continuam guardadas.");
+            else if (delivered >= MaxClaimsPerRequest)
+                ReplyStatus(sender, $"{delivered} entregue(s). Clique de novo para receber o resto.");
             SendMailTo(sender);
         }
 
-        private void RPC_RequestDirectory(long sender)
-        {
-            if (!NpcRequestGuard.AllowNearby(Nview, transform, sender, "mail-directory", 6f, 6, 2f)) return;
-            RememberSender(sender);
-            foreach (var player in GameApi.ListOnlinePlayers())
-                PlayerDirectory.Remember(player.Id, player.Name);
-            Nview.InvokeRPC(sender, "RPC_DirectoryData", PackDirectory(GameApi.GetPlayerId(sender)));
-        }
-
-        private void RPC_DirectoryData(long sender, string packed)
-        {
-            if (!NpcRequestGuard.IsResponseFromOwner(Nview, sender)) return;
-            CachedRecipients = UnpackDirectory(packed);
-            HasDirectoryOnce = true;
-        }
-
-        private void RPC_SendMail(long sender, string packed)
-        {
-            if (!NpcRequestGuard.AllowNearby(Nview, transform, sender, "mail-send", 6f, 4, 5f)) return;
-            long playerId = GameApi.GetPlayerId(sender);
-            if (playerId == 0L) return;
-            RememberSender(sender);
-
-            if (!TryUnpackSend(packed, out var toHouse, out var target, out var subject, out var body,
-                    out var attachItem, out var attachQuality, out var attachAmount))
-            {
-                ReplyStatus(sender, "Mensagem inválida.");
-                return;
-            }
-
-            // Valida o anexo se houver
-            bool hasAttachment = !string.IsNullOrEmpty(attachItem) && attachAmount > 0;
-            if (hasAttachment)
-            {
-                bool isVip = VipShopShortcut.SenderIsVip(sender);
-                int maxAttachments = isVip
-                    ? Math.Max(MailDatabase.MaxAttachmentsNonVip, Plugin.VipMaxAttachments.Value)
-                    : MailDatabase.MaxAttachmentsNonVip;
-
-                // attachAmount conta como número de stacks do item
-                if (attachAmount > ItemSpawner.MaxDeliverableAmount(attachItem))
-                {
-                    ReplyStatus(sender, "Quantidade do anexo é inválida para esse item.");
-                    return;
-                }
-
-                // Não-VIP: apenas 1 stack; VIP: até VipMaxAttachments stacks
-                // Calculamos stacks = ceil(attachAmount / maxStack), mas para simplificar
-                // o limite é sobre a contagem de "anexos por carta" que a UI controla.
-                // O servidor apenas verifica se o remetente não é VIP tentando passar mais
-                // de MaxAttachmentsNonVip stacks (a UI já bloqueou, mas isso protege contra
-                // clientes modificados).
-                if (!isVip && attachAmount > GetMaxAmountForNonVip(attachItem))
-                {
-                    ReplyStatus(sender, "Somente VIP pode enviar mais de 1 stack de item por carta.");
-                    return;
-                }
-                if (isVip && attachAmount > GetMaxAmountForVip(attachItem))
-                {
-                    int vipMax = Plugin.VipMaxAttachments.Value;
-                    ReplyStatus(sender, $"VIP pode enviar no máximo {vipMax} stack(s) de item por carta.");
-                    return;
-                }
-            }
-
-            string senderName = GameApi.GetPlayerName(sender);
-            if (toHouse)
-            {
-                var house = HouseDatabase.FindByName(target);
-                if (house == null)
-                {
-                    ReplyStatus(sender, "Casa não encontrada.");
-                    return;
-                }
-                int sent;
-                if (hasAttachment)
-                {
-                    sent = SendToHouseWithAttachment(house.Name, playerId, senderName, subject, body,
-                        attachItem, attachQuality, attachAmount);
-                }
-                else
-                {
-                    sent = MailDatabase.SendToHouse(house.Name, playerId, senderName, subject, body);
-                }
-                ReplyStatus(sender, sent > 0
-                    ? $"Enviado para a casa {house.Name} ({sent} membro(s))."
-                    : "A casa não tem membros.");
-            }
-            else
-            {
-                var known = PlayerDirectory.FindByName(target);
-                if (known == null)
-                {
-                    ReplyStatus(sender, "Jogador não encontrado. Ele precisa ter entrado no servidor ao menos uma vez.");
-                    return;
-                }
-                if (hasAttachment)
-                {
-                    MailDatabase.SendMessageWithAttachment(known.Id, playerId, senderName, subject, body,
-                        attachItem, attachQuality, attachAmount);
-                }
-                else
-                {
-                    MailDatabase.SendMessage(known.Id, playerId, senderName, subject, body);
-                }
-                ReplyStatus(sender, $"Mensagem enviada para {known.Name}.");
-            }
-
-            SendMailTo(sender);
-            Nview.InvokeRPC(sender, "RPC_DirectoryData", PackDirectory(playerId));
-        }
-
-        /// <summary>Máximo de quantidade que não-VIP pode enviar (1 stack completo).</summary>
-        private static int GetMaxAmountForNonVip(string itemName)
-        {
-            var prefab = ObjectDB.instance?.GetItemPrefab(itemName);
-            var drop = prefab?.GetComponent<ItemDrop>();
-            if (drop?.m_itemData?.m_shared == null) return 1;
-            return Math.Max(1, drop.m_itemData.m_shared.m_maxStackSize);
-        }
-
-        /// <summary>Máximo de quantidade que VIP pode enviar (VipMaxAttachments stacks completos).</summary>
-        private static int GetMaxAmountForVip(string itemName)
-        {
-            var prefab = ObjectDB.instance?.GetItemPrefab(itemName);
-            var drop = prefab?.GetComponent<ItemDrop>();
-            if (drop?.m_itemData?.m_shared == null) return Plugin.VipMaxAttachments.Value;
-            int maxStack = Math.Max(1, drop.m_itemData.m_shared.m_maxStackSize);
-            int vipStacks = Math.Max(MailDatabase.MaxAttachmentsNonVip, Plugin.VipMaxAttachments.Value);
-            long cap = (long)maxStack * vipStacks;
-            return cap > int.MaxValue ? int.MaxValue : (int)cap;
-        }
-
-        /// <summary>Envia uma carta com item para cada membro da casa.</summary>
-        private static int SendToHouseWithAttachment(string houseName, long senderId, string senderName,
-            string subject, string body, string itemName, int quality, int amount)
-        {
-            var house = HouseDatabase.FindByName(houseName);
-            if (house == null) return 0;
-            int sent = 0;
-            foreach (var memberId in house.MemberIds.Distinct().Take(MailDatabase.MaxHouseRecipients))
-            {
-                if (MailDatabase.SendMessageWithAttachment(memberId, senderId, senderName,
-                        subject, body, itemName, quality, amount, house.Name) != null)
-                    sent++;
-            }
-            return sent;
-        }
-
-        private void RPC_CreateHouse(long sender, string name)
-        {
-            if (!NpcRequestGuard.AllowNearby(Nview, transform, sender, "house-create", 6f, 2, 10f)) return;
-            long playerId = GameApi.GetPlayerId(sender);
-            if (playerId == 0L) return;
-            RememberSender(sender);
-
-            if (HouseDatabase.FindOwnedBy(playerId) != null)
-            {
-                ReplyStatus(sender, "Você já lidera uma casa.");
-                return;
-            }
-            if (!HouseDatabase.TryNormalizeName(name, out _))
-            {
-                ReplyStatus(sender, "Nome da casa inválido (2–24 letras, números, espaço, - ou _).");
-                return;
-            }
-            if (HouseDatabase.FindByName(name) != null)
-            {
-                ReplyStatus(sender, "Já existe uma casa com esse nome.");
-                return;
-            }
-
-            var house = HouseDatabase.Create(name, playerId, GameApi.GetPlayerName(sender));
-            ReplyStatus(sender, house != null ? $"Casa '{house.Name}' criada." : "Não foi possível criar a casa.");
-            Nview.InvokeRPC(sender, "RPC_DirectoryData", PackDirectory(playerId));
-        }
-
-        private void RPC_InviteHouse(long sender, string packed)
-        {
-            if (!NpcRequestGuard.AllowNearby(Nview, transform, sender, "house-invite", 6f, 4, 5f)) return;
-            long playerId = GameApi.GetPlayerId(sender);
-            if (playerId == 0L) return;
-            RememberSender(sender);
-
-            var parts = (packed ?? "").Split(new[] { ';' }, 2);
-            if (parts.Length != 2)
-            {
-                ReplyStatus(sender, "Convite inválido.");
-                return;
-            }
-
-            var member = PlayerDirectory.FindByName(parts[1]);
-            if (member == null)
-            {
-                ReplyStatus(sender, "Jogador não encontrado.");
-                return;
-            }
-            if (!HouseDatabase.AddMember(parts[0], playerId, member.Id))
-            {
-                ReplyStatus(sender, "Só o líder da casa pode convidar.");
-                return;
-            }
-            ReplyStatus(sender, $"{member.Name} entrou na casa.");
-            Nview.InvokeRPC(sender, "RPC_DirectoryData", PackDirectory(playerId));
-        }
-
-        private void RPC_KickHouse(long sender, string packed)
-        {
-            if (!NpcRequestGuard.AllowNearby(Nview, transform, sender, "house-kick", 6f, 4, 5f)) return;
-            long playerId = GameApi.GetPlayerId(sender);
-            if (playerId == 0L) return;
-
-            var parts = (packed ?? "").Split(new[] { ';' }, 2);
-            if (parts.Length != 2 || !long.TryParse(parts[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out var memberId))
-            {
-                ReplyStatus(sender, "Remoção inválida.");
-                return;
-            }
-            if (!HouseDatabase.RemoveMember(parts[0], playerId, memberId))
-            {
-                ReplyStatus(sender, "Não foi possível remover (só o líder, e não a si mesmo).");
-                return;
-            }
-            ReplyStatus(sender, "Membro removido.");
-            Nview.InvokeRPC(sender, "RPC_DirectoryData", PackDirectory(playerId));
-        }
-
-        private void RPC_MailStatus(long sender, string message)
-        {
-            if (!NpcRequestGuard.IsResponseFromOwner(Nview, sender)) return;
-            LastStatus = message ?? "";
-        }
-
-        private void RPC_MarkMailRead(long sender, string mailId)
+        private void ServeMarkRead(long sender, string mailId)
         {
             if (!NpcRequestGuard.AllowNearby(Nview, transform, sender, "mail-mark-read", 6f, 12, 2f)) return;
-            RememberSender(sender);
             long playerId = GameApi.GetPlayerId(sender);
             if (playerId == 0L) return;
             MailDatabase.MarkRead(mailId, playerId);
             SendMailTo(sender);
         }
 
+        /// <summary>
+        /// A letter, with or without a parcel. When there is a parcel the sender's client has
+        /// already taken it out of the bag, so every refusal from the moment the request can
+        /// be read hands it back -- a refused letter used to keep the items, and a recipient
+        /// with a full box swallowed them while the sender was told it went through.
+        /// </summary>
+        private void ServeSend(long sender, string packed)
+        {
+            if (!TryUnpackSend(packed, out var target, out var subject, out var body,
+                    out var attachItem, out var attachQuality, out var attachAmount))
+            {
+                Plugin.Log.LogWarning($"NpcValheim: malformed mail from peer {sender}: \"{packed}\"");
+                ReplyStatus(sender, "Mensagem inválida.");
+                return;
+            }
+
+            bool hasAttachment = attachItem.Length > 0 && attachAmount > 0;
+            // Only something that could really have left a bag is ever handed back.
+            var prefab = hasAttachment ? ObjectDB.instance?.GetItemPrefab(attachItem) : null;
+            var shared = prefab != null ? prefab.GetComponent<ItemDrop>()?.m_itemData?.m_shared : null;
+            if (hasAttachment && (shared == null ||
+                                  attachQuality > Mathf.Max(1, shared.m_maxQuality) ||
+                                  attachAmount > ItemSpawner.MaxDeliverableAmount(attachItem)))
+            {
+                Plugin.Log.LogWarning($"NpcValheim: refused a parcel of {attachAmount}x {attachItem} from peer {sender}: not a real stack");
+                ReplyStatus(sender, "Anexo inválido.");
+                return;
+            }
+
+            void Refuse(string why, string message)
+            {
+                Plugin.Log.LogWarning($"NpcValheim: refused mail from peer {sender} to '{target}' -- {why}");
+                ReplyStatus(sender, message);
+                if (hasAttachment) ReturnAttachment(sender, attachItem, attachQuality, attachAmount);
+            }
+
+            if (!NpcRequestGuard.AllowNearby(Nview, transform, sender, "mail-send", out string refusal, 6f, 4, 5f))
+            {
+                Refuse(refusal, "Envio recusado; fique perto da caixa postal e tente de novo.");
+                return;
+            }
+            long playerId = GameApi.GetPlayerId(sender);
+            if (playerId == 0L)
+            {
+                Refuse("no player id for the peer", "O servidor não identificou seu personagem. Tente de novo.");
+                return;
+            }
+            GameApi.RememberIdentity(sender);
+
+            if (target.Length == 0)
+            {
+                Refuse("no recipient", "Informe o destinatário.");
+                return;
+            }
+            if (!hasAttachment && subject.Length == 0 && body.Length == 0)
+            {
+                Refuse("an empty letter", "Escreva um assunto ou uma mensagem.");
+                return;
+            }
+
+            if (hasAttachment)
+            {
+                bool isVip = VipShopShortcut.SenderIsVip(sender);
+                int cap = isVip ? MaxAmountForVip(shared) : Mathf.Max(1, shared.m_maxStackSize);
+                if (attachAmount > cap)
+                {
+                    Refuse($"{attachAmount}x {attachItem} is over the {(isVip ? "VIP" : "non-VIP")} cap of {cap}",
+                        isVip
+                            ? $"VIP pode enviar no máximo {cap} unidade(s) desse item por carta."
+                            : "Somente VIP pode enviar mais de 1 stack de item por carta.");
+                    return;
+                }
+            }
+
+            var known = PlayerDirectory.FindByName(target);
+            if (known == null)
+            {
+                Refuse("unknown recipient",
+                    "Jogador não encontrado. Confira o nome; ele precisa ter entrado no servidor ao menos uma vez.");
+                return;
+            }
+
+            string senderName = GameApi.GetPlayerName(sender);
+            var letter = hasAttachment
+                ? MailDatabase.SendMessageWithAttachment(known.Id, playerId, senderName, subject, body,
+                    attachItem, attachQuality, attachAmount)
+                : MailDatabase.SendMessage(known.Id, playerId, senderName, subject, body);
+            if (letter == null)
+            {
+                Refuse("the recipient's box is full", $"A caixa de {known.Name} está cheia.");
+                return;
+            }
+
+            Plugin.Log.LogInfo(
+                $"NpcValheim: mail from {senderName} ({playerId}) to {known.Name} ({known.Id})" +
+                (hasAttachment ? $" with {attachAmount}x {attachItem}" : ""));
+            ReplyStatus(sender, hasAttachment
+                ? $"Pacote enviado para {known.Name}."
+                : $"Mensagem enviada para {known.Name}.");
+            SendMailTo(sender);
+        }
+
+        /// <summary>Máximo de quantidade que VIP pode enviar (VipMaxAttachments stacks completos).</summary>
+        private static int MaxAmountForVip(ItemDrop.ItemData.SharedData shared)
+        {
+            int maxStack = Math.Max(1, shared.m_maxStackSize);
+            int vipStacks = Math.Max(MailDatabase.MaxAttachmentsNonVip, Plugin.VipMaxAttachments.Value);
+            long cap = (long)maxStack * vipStacks;
+            return cap > int.MaxValue ? int.MaxValue : (int)cap;
+        }
+
         /// <summary>Hands a parcel over. Coins become a real Coins stack rather than market
         /// balance, so mail is useful without ever touching a marketplace. A written letter
-        /// has nothing to hand over -- claiming it just marks it read/removed.</summary>
-        private bool TryDeliverClaim(long sender, string mailId, long recipient)
+        /// has nothing to hand over -- claiming it just removes it.</summary>
+        private static bool TryDeliverClaim(long sender, string mailId, long recipient)
         {
             string token = Guid.NewGuid().ToString("N");
             var entry = MailDatabase.BeginClaim(mailId, recipient, token);
@@ -456,7 +374,7 @@ namespace NpcValheim.Npc
 
             if (MailDatabase.CompleteClaim(mailId, recipient, token)) return true;
 
-            // Do not unlock after the world item exists: retrying could duplicate it. Keeping
+            // Do not unlock after the parcel was sent: retrying could duplicate it. Keeping
             // the persisted "delivering" state makes the exceptional case visible and safe
             // for administrative reconciliation.
             Plugin.Log.LogError($"NpcValheim: delivered mail {mailId} but could not finalize its claim");
@@ -464,11 +382,9 @@ namespace NpcValheim.Npc
         }
 
         /// <summary>Sends the parcel to the claimant's own machine, the only place their
-        /// inventory can be written -- same as the marketplace's RPC_DeliverItem. It used to be
-        /// spawned on the ground next to the box, because this runs on the ZDO owner (the
-        /// server), which cannot reach into a remote bag. Validated here so the client is only
-        /// ever told to create something TrySpawn would also have accepted.</summary>
-        private bool Deliver(long sender, MailEntry entry, long recipient)
+        /// inventory can be written. Validated here so the client is only ever told to create
+        /// something TrySpawn would also have accepted.</summary>
+        private static bool Deliver(long sender, MailEntry entry, long recipient)
         {
             if (entry == null || entry.PlayerId != recipient) return false;
 
@@ -498,133 +414,183 @@ namespace NpcValheim.Npc
                 return false;
             }
 
-            Nview.InvokeRPC(sender, "RPC_ReceiveParcel",
-                itemName + ";" + quality.ToString(CultureInfo.InvariantCulture) + ";" +
-                amount.ToString(CultureInfo.InvariantCulture));
+            Plugin.Log.LogInfo($"NpcValheim: mail {entry.Id} delivered to {recipient}: {amount}x {itemName}");
+            Respond(sender, "parcel", PackStack(itemName, quality, amount));
             return true;
         }
 
-        /// <summary>Client side: a claimed parcel arrives. The bag first; only what does not
-        /// fit goes on the ground, at the player's feet, and they are told.</summary>
-        private void RPC_ReceiveParcel(long sender, string packed)
+        private static void ReturnAttachment(long sender, string itemName, int quality, int amount)
         {
-            if (!NpcRequestGuard.IsResponseFromOwner(Nview, sender)) return;
+            Plugin.Log.LogInfo($"NpcValheim: returning a refused parcel of {amount}x {itemName} to peer {sender}");
+            Respond(sender, "returned", PackStack(itemName, quality, amount));
+        }
+
+        /// <summary>`target` is a transient peer id -- fine for addressing the reply, wrong
+        /// for looking anything up. Mail is filed under the stable character id, so it has to
+        /// be resolved first. Anything that indexes player data must go through
+        /// GameApi.GetPlayerId.</summary>
+        private static void SendMailTo(long target)
+        {
+            long playerId = GameApi.GetPlayerId(target);
+            if (playerId == 0L) return;
+            string name = GameApi.GetPlayerName(target);
+            var mail = MailDatabase.GetMail(playerId, name);
+            Respond(target, "mail", MailWire.Pack(mail));
+        }
+
+        private static void SendDirectoryTo(long target)
+        {
+            var sb = new StringBuilder();
+            foreach (var player in PlayerDirectory.All().Take(MaxDirectoryEntries))
+            {
+                if (sb.Length > 0) sb.Append('\n');
+                sb.Append(player.Id.ToString(CultureInfo.InvariantCulture))
+                  .Append(';').Append(MailWire.Sanitize(player.Name));
+            }
+            Respond(target, "directory", sb.ToString());
+        }
+
+        private static void ReplyStatus(long target, string message) => Respond(target, "status", message ?? "");
+
+        private static void Respond(long peer, string kind, string payload) =>
+            ZRoutedRpc.instance?.InvokeRoutedRPC(peer, RpcResponse, new object[] { kind, payload ?? "" });
+
+        // ---- the address book ----
+
+        private static readonly HashSet<long> _rememberedThisSession = new HashSet<long>();
+        private static float _nextDirectorySweep;
+
+        /// <summary>
+        /// Server: files every connected character in the address book.
+        ///
+        /// The book used to learn a name only when that player touched a mailbox, or happened
+        /// to be online while someone else opened the list -- and even that second path never
+        /// worked on the dedicated server, which holds no Player objects for its peers. So the
+        /// search could not find most of the server. Once per character per session is
+        /// enough: a name does not change while connected.
+        /// </summary>
+        internal static void RememberOnlinePlayers(bool force = false)
+        {
+            if (ZNet.instance == null || !ZNet.instance.IsServer()) return;
+            if (!force && Time.unscaledTime < _nextDirectorySweep) return;
+            _nextDirectorySweep = Time.unscaledTime + 30f;
+
+            foreach (var player in GameApi.ListOnlinePlayers())
+            {
+                if (player.Id == 0L || !_rememberedThisSession.Add(player.Id)) continue;
+                try { PlayerDirectory.Remember(player.Id, player.Name); }
+                catch (Exception e)
+                {
+                    _rememberedThisSession.Remove(player.Id);
+                    Plugin.Log.LogWarning($"NpcValheim: could not file {player.Name} in the mail directory: {e.Message}");
+                }
+            }
+        }
+
+        // ---- server -> client ----
+
+        private static void RPC_Response(long sender, string kind, string payload)
+        {
+            if (!ServiceNpcAuthority.IsAuthoritativeSender(sender)) return;
+            switch (kind)
+            {
+                case "mail":
+                    _mail = MailWire.Unpack(payload);
+                    _synced = true;
+                    break;
+                case "directory":
+                    _recipients = UnpackDirectory(payload);
+                    _directoryOnce = true;
+                    break;
+                case "status":
+                    _status = payload ?? "";
+                    break;
+                case "parcel":
+                    ReceiveStack(payload, "Recebido");
+                    break;
+                case "returned":
+                    ReceiveStack(payload, "Pacote devolvido");
+                    break;
+                default:
+                    Plugin.Log.LogWarning($"NpcValheim: malformed Correio answer '{kind}': \"{payload}\"");
+                    break;
+            }
+        }
+
+        /// <summary>Client side: a parcel arrives, or a refused one comes back. The bag first;
+        /// only what does not fit goes on the ground, at the player's feet, and they are told.</summary>
+        private static void ReceiveStack(string packed, string caption)
+        {
             var player = Player.m_localPlayer;
-            if (player == null) return;
+            if (!TryUnpackStack(packed, out string itemName, out int quality, out int amount) || player == null)
+            {
+                Plugin.Log.LogError($"NpcValheim: could not hand over a mail parcel \"{packed}\"");
+                return;
+            }
 
-            var parts = (packed ?? "").Split(';');
-            if (parts.Length != 3) return;
-            string itemName = parts[0];
-            if (!int.TryParse(parts[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out int quality) ||
-                !int.TryParse(parts[2], NumberStyles.Integer, CultureInfo.InvariantCulture, out int amount) ||
-                amount <= 0) return;
-
-            int given = ItemSpawner.GiveToInventory(player, itemName, amount, Mathf.Max(1, quality));
+            int given = ItemSpawner.GiveToInventory(player, itemName, amount, quality);
+            Plugin.Log.LogInfo($"NpcValheim: mail parcel {amount}x {itemName}: {given} went into the bag");
             if (given > 0)
                 player.Message(MessageHud.MessageType.TopLeft,
-                    $"Recebido: {given}x {ItemNames.Display(itemName)}", given, null);
+                    $"{caption}: {given}x {ItemNames.Display(itemName)}", given, null);
 
             int left = amount - given;
             if (left <= 0) return;
 
-            ItemSpawner.TrySpawn(itemName, left, Mathf.Max(1, quality),
+            ItemSpawner.TrySpawn(itemName, left, quality,
                 player.transform.position + Vector3.up + UnityEngine.Random.insideUnitSphere * 0.5f);
             player.Message(MessageHud.MessageType.Center,
                 $"Inventário cheio: {left}x {ItemNames.Display(itemName)} caiu no chão", 0, null);
         }
 
-        /// <summary>`target` is a transient peer id -- fine for addressing the reply, wrong
-        /// for looking anything up. Mail is filed under the stable character id, so it has to
-        /// be resolved first.
-        ///
-        /// This exact confusion has now cost two bugs: the marketplace once paid sellers 0,
-        /// and the mailbox silently showed every player an empty box, because the parcel was
-        /// *written* under the character id and *read* under the peer id. Anything that
-        /// indexes player data must go through GameApi.GetPlayerId.</summary>
-        private void SendMailTo(long target)
+        // ---- wire ----
+
+        private static string PackStack(string itemName, int quality, int amount) =>
+            itemName + ";" + quality.ToString(CultureInfo.InvariantCulture) + ";" +
+            amount.ToString(CultureInfo.InvariantCulture);
+
+        private static bool TryUnpackStack(string packed, out string itemName, out int quality, out int amount)
         {
-            if (!Nview.IsOwner()) return;
-            long playerId = GameApi.GetPlayerId(target);
-            if (playerId == 0L) return;
-            string name = GameApi.GetPlayerName(target);
-            var mail = MailDatabase.GetMail(playerId, name);
-            Plugin.Log.LogInfo($"NpcValheim: mailbox send to {name} id={playerId} letters={mail.Count}");
-            Nview.InvokeRPC(target, "RPC_MailData", MailWire.Pack(mail));
+            itemName = "";
+            quality = 1;
+            amount = 0;
+            var parts = (packed ?? "").Split(';');
+            if (parts.Length != 3 || parts[0].Length == 0) return false;
+            itemName = parts[0];
+            if (!int.TryParse(parts[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out quality) ||
+                !int.TryParse(parts[2], NumberStyles.Integer, CultureInfo.InvariantCulture, out amount)) return false;
+            quality = Mathf.Max(1, quality);
+            return amount > 0;
         }
 
-        private void RememberSender(long sender)
-        {
-            GameApi.RememberIdentity(sender);
-        }
-
-        private void ReplyStatus(long target, string message)
-        {
-            LastStatus = message;
-            Nview.InvokeRPC(target, "RPC_MailStatus", message ?? "");
-        }
-
-        private static string PackSend(bool toHouse, string target, string subject, string body) =>
-            PackSend(toHouse, target, subject, body, "", 1, 0);
-
-        private static string PackSend(bool toHouse, string target, string subject, string body,
+        /// <summary>"target;subject;body;item;quality;amount". The body is escaped (MailWire),
+        /// so none of the six fields holds a ';'.</summary>
+        private static string PackSend(string target, string subject, string body,
             string itemName, int quality, int amount) =>
-            (toHouse ? "house" : "player") + ";" + MailWire.Sanitize(target) + ";" +
-            MailWire.Sanitize(subject) + ";" + MailWire.EscapeBody(body) + ";" +
+            MailWire.Sanitize(target) + ";" + MailWire.Sanitize(subject) + ";" + MailWire.EscapeBody(body) + ";" +
             MailWire.Sanitize(itemName ?? "") + ";" +
-            quality.ToString(System.Globalization.CultureInfo.InvariantCulture) + ";" +
-            amount.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            quality.ToString(CultureInfo.InvariantCulture) + ";" +
+            amount.ToString(CultureInfo.InvariantCulture);
 
-        private static bool TryUnpackSend(string packed, out bool toHouse, out string target,
-            out string subject, out string body,
+        internal static bool TryUnpackSend(string packed, out string target, out string subject, out string body,
             out string attachItem, out int attachQuality, out int attachAmount)
         {
-            toHouse = false;
             target = subject = body = attachItem = "";
             attachQuality = 1;
             attachAmount = 0;
-            if (string.IsNullOrEmpty(packed)) return false;
 
-            // Formato novo: type;target;subject;body;item;quality;amount  (7 campos)
-            // Formato antigo: type;target;subject;body                    (4 campos) — compatibilidade
-            var p = packed.Split(new[] { ';' }, 7);
-            if (p.Length < 4) return false;
-            toHouse = p[0] == "house";
-            target = p[1].Trim();
-            subject = p[2].Trim();
-            body = MailWire.UnescapeBody(p[3]).Trim();
+            var p = (packed ?? "").Split(';');
+            if (p.Length != 6) return false;
+            if (!int.TryParse(p[4], NumberStyles.Integer, CultureInfo.InvariantCulture, out attachQuality) ||
+                !int.TryParse(p[5], NumberStyles.Integer, CultureInfo.InvariantCulture, out attachAmount) ||
+                attachAmount < 0) return false;
 
-            if (p.Length >= 7)
-            {
-                attachItem = p[4].Trim();
-                int.TryParse(p[5], System.Globalization.NumberStyles.Integer,
-                    System.Globalization.CultureInfo.InvariantCulture, out attachQuality);
-                int.TryParse(p[6], System.Globalization.NumberStyles.Integer,
-                    System.Globalization.CultureInfo.InvariantCulture, out attachAmount);
-                attachQuality = Math.Max(1, attachQuality);
-            }
-
-            return target.Length > 0 && (subject.Length > 0 || body.Length > 0 ||
-                (!string.IsNullOrEmpty(attachItem) && attachAmount > 0));
-        }
-
-        private static string PackDirectory(long viewerId)
-        {
-            var sb = new StringBuilder();
-            foreach (var player in PlayerDirectory.All().Take(500))
-            {
-                if (sb.Length > 0) sb.Append('\n');
-                sb.Append("P;").Append(player.Id.ToString(CultureInfo.InvariantCulture))
-                  .Append(';').Append(MailWire.Sanitize(player.Name));
-            }
-            foreach (var house in HouseDatabase.All().Take(100))
-            {
-                if (sb.Length > 0) sb.Append('\n');
-                sb.Append("H;").Append(MailWire.Sanitize(house.Name)).Append(';')
-                  .Append(house.MemberIds.Count.ToString(CultureInfo.InvariantCulture)).Append(';')
-                  .Append(HouseDatabase.IsMember(house, viewerId) ? "1" : "0").Append(';')
-                  .Append(house.OwnerId.ToString(CultureInfo.InvariantCulture));
-            }
-            return sb.ToString();
+            target = p[0].Trim();
+            subject = p[1].Trim();
+            body = MailWire.UnescapeBody(p[2]).Trim();
+            attachItem = p[3].Trim();
+            attachQuality = Math.Max(1, attachQuality);
+            return true;
         }
 
         private static List<MailRecipient> UnpackDirectory(string packed)
@@ -634,30 +600,16 @@ namespace NpcValheim.Npc
 
             foreach (var line in packed.Split('\n'))
             {
-                if (result.Count >= 600) break;
+                if (result.Count >= MaxDirectoryEntries) break;
                 if (line.Length > 512) continue;
-                var p = line.Split(';');
-                if (p.Length < 3) continue;
-                if (p[0] == "P")
+                int split = line.IndexOf(';');
+                if (split <= 0 || split == line.Length - 1) continue;
+                result.Add(new MailRecipient
                 {
-                    result.Add(new MailRecipient
-                    {
-                        IsHouse = false,
-                        PlayerId = long.TryParse(p[1], out var id) ? id : 0L,
-                        Name = p[2],
-                    });
-                }
-                else if (p[0] == "H" && p.Length >= 5)
-                {
-                    result.Add(new MailRecipient
-                    {
-                        IsHouse = true,
-                        Name = p[1],
-                        MemberCount = int.TryParse(p[2], out var n) ? n : 0,
-                        IsMine = p[3] == "1",
-                        PlayerId = long.TryParse(p[4], out var owner) ? owner : 0L,
-                    });
-                }
+                    PlayerId = long.TryParse(line.Substring(0, split), NumberStyles.Integer,
+                        CultureInfo.InvariantCulture, out var id) ? id : 0L,
+                    Name = line.Substring(split + 1),
+                });
             }
             return result;
         }

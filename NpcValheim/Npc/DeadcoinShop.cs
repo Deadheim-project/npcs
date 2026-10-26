@@ -34,14 +34,13 @@ namespace NpcValheim.Npc
         /// <summary>
         /// The catalog decided on 14/10/2026 (memória vip-doacoes.md): só o Portal Token e as
         /// fichas de serviço/evento do Deadheim. Minério, pregos, olho, núcleo e Coins saíram
-        /// daqui -- quem ainda os vende por Deadcoins é um Mercador de bioma (ver A3). As
-        /// fichas (FichaFundador, FichaBarbeiro, FichaHalloween, FichaTemporada, FichaBatizar,
-        /// FichaBrasao) são itens do Deadheim; um prefab que o ObjectDB ainda não conhece é
-        /// pulado por <see cref="Available"/>, não um erro de config.
+        /// daqui -- quem ainda os vende por Deadcoins é um Mercador de bioma (ver A3). A 0.1.74
+        /// tirou as fichas sem uso (Barbeiro, Halloween, Temporada) e a FichaPet virou os itens
+        /// Pet_*. Fichas e pets são itens do Deadheim; um prefab que o ObjectDB ainda não conhece
+        /// é pulado por <see cref="Available"/>, não um erro de config.
         ///
         /// FichaFundador não tem janela ainda: a abertura foi adiada e a data não foi refeita.
-        /// FichaHalloween usa a janela proposta (24/10 a 07/11); ajuste aqui quando o usuário
-        /// decidir a data real.
+        /// Um item de evento com janela (from=/to=) entra pelo cfg do servidor.
         /// </summary>
         internal const string DefaultItems =
             "prefab=PortalToken;amount=1;price=250|" +
