@@ -187,15 +187,23 @@ namespace NpcValheim.UI
             if (!NpcValheim.Npc.Tailor.Enabled || !DeadheimTransmogApi.IsAvailable) { why = "Fechado."; return false; }
             if (!DeadheimTransmogApi.IsEnabled()) { why = "Transmog desativado no servidor."; return false; }
             if (DeadheimTransmogApi.RequiresVip() && !DeadheimTransmogApi.IsLocalVip()) { why = "Exclusivo Aesir (VIP)."; return false; }
-            if (TailorClient.MinRating > 0 && TailorClient.Rating >= 0 && TailorClient.Rating < TailorClient.MinRating)
+            int need = 0;
+            foreach (string piece in _pending.Keys)
             {
-                why = $"Requer rating de arena {TailorClient.MinRating}.";
+                string slot = DeadheimTransmogApi.SlotOf(piece);
+                if (!TailorClient.IsOpen(slot)) { why = "O Alfaiate não troca esse tipo de peça."; return false; }
+                need = System.Math.Max(need, TailorClient.MinRatingFor(slot));
+            }
+            if (need > 0 && TailorClient.Rating >= 0 && TailorClient.Rating < need)
+            {
+                why = $"Requer rating de arena {need}.";
                 return false;
             }
             return true;
         }
 
-        private int Price() => _pending.Count * TailorClient.PricePerPiece;
+        /// <summary>Each piece costs what its armor type costs.</summary>
+        private int Price() => _pending.Keys.Sum(p => TailorClient.PriceFor(DeadheimTransmogApi.SlotOf(p)));
 
         private void Rebuild()
         {
@@ -231,7 +239,10 @@ namespace NpcValheim.UI
                 button.onClick.AddListener(() => { _real = piece; _dirty = true; });
             }
 
-            if (_real != null)
+            bool open = TailorClient.IsOpen(slot);
+            if (_real != null && !open)
+                Dim(_rightList, "O Alfaiate não troca a aparência deste tipo de peça.");
+            if (_real != null && open)
                 foreach (string app in pieces)
                 {
                     if (app == _real) continue;
@@ -246,10 +257,11 @@ namespace NpcValheim.UI
             int price = Price();
             bool canBuy = CanBuy(out string blocked);
             string rating = TailorClient.Rating >= 0 ? $"seu rating {TailorClient.Rating}" : "rating...";
-            string need = TailorClient.MinRating > 0
-                ? $"Requer rating de arena {TailorClient.MinRating}{(TailorClient.Bracket > 1 ? $" ({TailorClient.Bracket}v{TailorClient.Bracket}+)" : "")} ({rating})"
+            int minRating = TailorClient.MinRatingFor(slot);
+            string need = minRating > 0
+                ? $"Requer rating de arena {minRating}{(TailorClient.Bracket > 1 ? $" ({TailorClient.Bracket}v{TailorClient.Bracket}+)" : "")} ({rating})"
                 : "Sem exigência de rating";
-            _info.text = $"{need}  ·  {TailorClient.PricePerPiece} moedas por peça  ·  voltar ao real é grátis\n" +
+            _info.text = $"{SlotNames[_slot]}: {need}  ·  {TailorClient.PriceFor(slot)} moedas por peça  ·  voltar ao real é grátis\n" +
                          $"<color={Grey}>Ativas: {chosen.Count}/{DeadheimTransmogApi.MaxChoices()}" +
                          (DeadheimTransmogApi.IsSuppressedHere() ? "  ·  aqui (arena/raid) ninguém vê o transmog" : "") + "</color>";
             _summary.text = _pending.Count == 0 ? "Escolha uma peça e uma aparência para ver a prévia."
@@ -260,7 +272,7 @@ namespace NpcValheim.UI
 
         private void Pick(string app)
         {
-            if (_real == null || TailorClient.Awaiting) return;
+            if (_real == null || TailorClient.Awaiting || !TailorClient.IsOpen(Slots[_slot])) return;
             var chosen = DeadheimTransmogApi.LocalChosen();
             // Picking what is already active (or clicking a preview again) drops the preview
             if ((chosen.TryGetValue(_real, out string cur) && cur == app) ||

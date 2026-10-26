@@ -88,6 +88,7 @@ namespace NpcValheim.Npc
             Tailor.Register(rpc);
             Season.Register(rpc);
             PriceEditor.Register(rpc);
+            UI.AdminPanelNet.Register(rpc);
             Plugin.Log.LogInfo("NpcValheim: server-authoritative service NPC RPCs registered");
         }
 

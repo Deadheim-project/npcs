@@ -204,6 +204,8 @@ namespace NpcValheim.UI
                     AddTab("Preços", new PriceEditView(), npc, player);
                 if (npc is DeadcoinShopNpc)
                     AddTab("Itens (admin)", new DeadcoinShopAdminView(), npc, player);
+                if (npc is BossPassNpc)
+                    AddTab("Passes (admin)", new BossPassAdminView(), npc, player);
             }
             FitTabs();
         }

@@ -93,6 +93,10 @@ namespace NpcValheim
         internal static ConfigEntry<int> TailorPriceCoins;
         internal static ConfigEntry<int> TailorMinArenaRating;
         internal static ConfigEntry<int> TailorArenaBracket;
+        // Per armor type (Helmet, Chest, Legs, Shoulder), in the order of Tailor.Slots
+        internal static ConfigEntry<bool>[] TailorSlotEnabled;
+        internal static ConfigEntry<int>[] TailorSlotPrice;
+        internal static ConfigEntry<int>[] TailorSlotMinRating;
         internal static ConfigEntry<bool> SeasonEnabled;
         internal static ConfigEntry<string> SeasonId;
         internal static ConfigEntry<string> SeasonName;
@@ -105,6 +109,7 @@ namespace NpcValheim
         internal static ConfigEntry<string> SeasonChallenges;
         internal static ConfigEntry<UnityEngine.KeyCode> QuestJournalKey;
         internal static ConfigEntry<UnityEngine.KeyCode> VipShopKey;
+        internal static ConfigEntry<UnityEngine.KeyCode> AdminPanelKey;
         internal static ConfigEntry<bool> ShowQuestButton;
         internal static ConfigEntry<bool> ShowQuestTracker;
         internal static ConfigEntry<float> QuestTrackerX;
@@ -165,6 +170,9 @@ namespace NpcValheim
 
             VipShopKey = Config.Bind("VIP", "ShopKey", UnityEngine.KeyCode.F7,
                 "VIP-only shortcut that opens the Deadcoins shop from anywhere in the world. It opens nothing else.");
+
+            AdminPanelKey = Config.Bind("Admin", "PanelKey", UnityEngine.KeyCode.F8,
+                "Admin-only: opens the Deadheim admin panel (global message, go to / pull a player, buff and heal in an area).");
 
             ShowQuestTracker = Config.Bind("Quests", "ShowTracker", true,
                 "Shows the on-screen objective tracker: what you are doing and how far along, without opening a menu.");
@@ -300,6 +308,21 @@ namespace NpcValheim
                 "Rating de arena mínimo para trocar a aparência (o mesmo do Intendente: o menor entre o pessoal e o do time). 0 = sem exigência.");
             TailorArenaBracket = Config.Bind(tailor, "ArenaBracket", 1,
                 "Tamanho mínimo do time cujo rating vale (1 = qualquer time, 3 = só 3v3 ou maior).");
+            int slots = NpcValheim.Npc.Tailor.Slots.Length;
+            TailorSlotEnabled = new ConfigEntry<bool>[slots];
+            TailorSlotPrice = new ConfigEntry<int>[slots];
+            TailorSlotMinRating = new ConfigEntry<int>[slots];
+            for (int i = 0; i < slots; i++)
+            {
+                string slot = NpcValheim.Npc.Tailor.Slots[i];
+                string nome = NpcValheim.Npc.Tailor.SlotNames[i];
+                TailorSlotEnabled[i] = Config.Bind(tailor, slot + "Enabled", true,
+                    $"Permite trocar a aparência de {nome} ({slot}) no Alfaiate. Falso = esse tipo não pode ser trocado (voltar ao real continua grátis).");
+                TailorSlotPrice[i] = Config.Bind(tailor, slot + "PriceCoins", -1,
+                    $"Moedas por peça de {nome} ({slot}) que muda de aparência. -1 = usa PriceCoins.");
+                TailorSlotMinRating[i] = Config.Bind(tailor, slot + "MinArenaRating", -1,
+                    $"Rating de arena mínimo para trocar {nome} ({slot}). -1 = usa MinArenaRating; 0 = sem exigência.");
+            }
 
             // The Season Herald (season pass). The server decides everything, so none of this is synced.
             const string season = "Season";
@@ -368,6 +391,12 @@ namespace NpcValheim
             ConfigSync.AddConfigEntry(SeasonPrice).SynchronizedConfig = true;
             ConfigSync.AddConfigEntry(TailorMinArenaRating).SynchronizedConfig = true;
             ConfigSync.AddConfigEntry(TailorArenaBracket).SynchronizedConfig = true;
+            for (int i = 0; i < TailorSlotEnabled.Length; i++)
+            {
+                ConfigSync.AddConfigEntry(TailorSlotEnabled[i]).SynchronizedConfig = true;
+                ConfigSync.AddConfigEntry(TailorSlotPrice[i]).SynchronizedConfig = true;
+                ConfigSync.AddConfigEntry(TailorSlotMinRating[i]).SynchronizedConfig = true;
+            }
 
             // Everything above is read where it is used (a new teleporter, a new listing, the
             // HUD every frame), so a reload takes effect on its own. The HUD offsets are the
@@ -403,6 +432,7 @@ namespace NpcValheim
                 UI.QuestTracker.EnsureCreated();
                 UI.VipShopShortcut.EnsureCreated();
                 UI.ArenaHud.EnsureCreated();
+                UI.AdminPanelShortcut.EnsureCreated();
             }
 
             _harmony = new Harmony(Guid);

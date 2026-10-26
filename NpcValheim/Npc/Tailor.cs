@@ -1,5 +1,6 @@
 using System;
 using System.Globalization;
+using System.Linq;
 using UnityEngine;
 using NpcValheim.Integration;
 
@@ -31,6 +32,39 @@ namespace NpcValheim.Npc
         internal static int MinRating => Mathf.Max(0, Plugin.TailorMinArenaRating?.Value ?? 0);
         internal static int MinBracket => Mathf.Clamp(Plugin.TailorArenaBracket?.Value ?? 1, 1, 10);
 
+        /// <summary>Armor types, as Deadheim's SlotOf names them, and their display names.</summary>
+        internal static readonly string[] Slots = { "Helmet", "Chest", "Legs", "Shoulder" };
+        internal static readonly string[] SlotNames = { "Capacete", "Peito", "Calça", "Capa" };
+
+        private static int SlotIndex(string slot) => Array.IndexOf(Slots, slot);
+
+        /// <summary>Per-type switch; an unknown type (not an armor slot) is closed.</summary>
+        internal static bool SlotEnabled(string slot)
+        {
+            int i = SlotIndex(slot);
+            return i >= 0 && (Plugin.TailorSlotEnabled == null || Plugin.TailorSlotEnabled[i].Value);
+        }
+
+        /// <summary>Per-type price; -1 in the config falls back to PriceCoins.</summary>
+        internal static int PriceFor(string slot)
+        {
+            int i = SlotIndex(slot);
+            int v = i >= 0 && Plugin.TailorSlotPrice != null ? Plugin.TailorSlotPrice[i].Value : -1;
+            return v < 0 ? PricePerPiece : v;
+        }
+
+        /// <summary>Per-type arena rating; -1 in the config falls back to MinArenaRating.</summary>
+        internal static int MinRatingFor(string slot)
+        {
+            int i = SlotIndex(slot);
+            int v = i >= 0 && Plugin.TailorSlotMinRating != null ? Plugin.TailorSlotMinRating[i].Value : -1;
+            return v < 0 ? MinRating : v;
+        }
+
+        /// <summary>"a,b,c,d" per type in <see cref="Slots"/> order, for the status line.</summary>
+        private static string PerSlot(Func<string, int> f) =>
+            string.Join(",", Slots.Select(s => I(f(s))));
+
         /// <summary>Payload: the price the client showed, a newline, then "real>app;...".</summary>
         internal static string BuyPayload(int shownPrice, string pairs) =>
             shownPrice.ToString(CultureInfo.InvariantCulture) + "\n" + (pairs ?? "");
@@ -47,7 +81,8 @@ namespace NpcValheim.Npc
                 return;
             }
             int rating = Arena.ArenaServer.BestRating(GameApi.GetPlayerId(sender), MinBracket);
-            SendResponse(sender, "status:" + I(rating) + "|" + I(MinRating) + "|" + I(PricePerPiece) + "|" + I(MinBracket));
+            SendResponse(sender, "status:" + I(rating) + "|" + I(MinRating) + "|" + I(PricePerPiece) + "|" + I(MinBracket) +
+                                 "|" + PerSlot(PriceFor) + "|" + PerSlot(MinRatingFor) + "|" + PerSlot(s => SlotEnabled(s) ? 1 : 0));
         }
 
         internal static void ServeBuy(long sender, string payload, ZNetView view, Transform npc, string npcName)
@@ -73,8 +108,24 @@ namespace NpcValheim.Npc
             string why = DeadheimTransmogApi.ServerCheck(sender, pairs);
             if (why != null) { SendResponse(sender, "error:" + why); return; }
 
-            int pieces = DeadheimTransmogApi.ServerChangedCount(sender, pairs);
-            int price = pieces * PricePerPiece;
+            // Price and rating depend on the armor type of each piece that really changes
+            // (Deadheim says which: a pick equal to the current look is not a change).
+            int pieces = 0, price = 0, needRating = 0;
+            foreach (var pair in DeadheimTransmogApi.ParsePairs(pairs))
+            {
+                if (pair.Key == pair.Value) continue; // back to the real look: free
+                if (DeadheimTransmogApi.ServerChangedCount(sender, pair.Key + ">" + pair.Value) == 0) continue;
+                string slot = DeadheimTransmogApi.SlotOf(pair.Key);
+                if (!SlotEnabled(slot))
+                {
+                    string nome = SlotIndex(slot) >= 0 ? SlotNames[SlotIndex(slot)] : slot;
+                    SendResponse(sender, $"error:O Alfaiate não troca a aparência de {nome} (desligado na config).");
+                    return;
+                }
+                pieces++;
+                price += PriceFor(slot);
+                needRating = Math.Max(needRating, MinRatingFor(slot));
+            }
             if (price != shown)
             {
                 SendResponse(sender, $"error:O preço mudou: agora custa {price} moedas. Confira e aplique de novo.");
@@ -82,13 +133,13 @@ namespace NpcValheim.Npc
             }
 
             long playerId = GameApi.GetPlayerId(sender);
-            if (pieces > 0 && MinRating > 0)
+            if (pieces > 0 && needRating > 0)
             {
                 int best = Arena.ArenaServer.BestRating(playerId, MinBracket);
-                if (best < MinRating)
+                if (best < needRating)
                 {
                     string where = MinBracket > 1 ? $" num time {MinBracket}v{MinBracket} ou maior" : "";
-                    SendResponse(sender, $"error:Requer rating de arena {MinRating}{where}. O seu é {best}.");
+                    SendResponse(sender, $"error:Requer rating de arena {needRating}{where}. O seu é {best}.");
                     return;
                 }
             }
@@ -155,7 +206,32 @@ namespace NpcValheim.Npc
         internal static int MinRating;
         internal static int PricePerPiece;
         internal static int Bracket = 1;
+        // Per armor type, in Tailor.Slots order; empty until the first status (then PricePerPiece / MinRating apply)
+        internal static int[] SlotPrice = new int[0];
+        internal static int[] SlotMinRating = new int[0];
+        internal static bool[] SlotOpen = new bool[0];
         internal static int StatusRevision;
+
+        internal static int PriceFor(string slot)
+        {
+            int i = Array.IndexOf(Tailor.Slots, slot);
+            return i >= 0 && i < SlotPrice.Length ? SlotPrice[i] : PricePerPiece;
+        }
+
+        internal static int MinRatingFor(string slot)
+        {
+            int i = Array.IndexOf(Tailor.Slots, slot);
+            return i >= 0 && i < SlotMinRating.Length ? SlotMinRating[i] : MinRating;
+        }
+
+        internal static bool IsOpen(string slot)
+        {
+            int i = Array.IndexOf(Tailor.Slots, slot);
+            return i < 0 ? false : i >= SlotOpen.Length || SlotOpen[i];
+        }
+
+        private static int[] Ints(string csv) =>
+            csv.Split(',').Select(t => int.TryParse(t, NumberStyles.Integer, CultureInfo.InvariantCulture, out int v) ? v : 0).ToArray();
         internal static int ResultRevision;
         internal static string LastResult = "";
         /// <summary>Set by an "ok": the view drops its pending picks and the preview.</summary>
@@ -191,6 +267,12 @@ namespace NpcValheim.Npc
                     int.TryParse(p[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out MinRating);
                     int.TryParse(p[2], NumberStyles.Integer, CultureInfo.InvariantCulture, out PricePerPiece);
                     int.TryParse(p[3], NumberStyles.Integer, CultureInfo.InvariantCulture, out Bracket);
+                    if (p.Length >= 7)
+                    {
+                        SlotPrice = Ints(p[4]);
+                        SlotMinRating = Ints(p[5]);
+                        SlotOpen = Ints(p[6]).Select(v => v != 0).ToArray();
+                    }
                     StatusRevision++;
                 }
                 return;

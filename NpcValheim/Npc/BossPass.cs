@@ -150,6 +150,26 @@ namespace NpcValheim.Npc
         internal static BossPassEntry Find(string boss) =>
             string.IsNullOrEmpty(boss) ? null : Current().Find(e => string.Equals(e.Boss, boss, StringComparison.Ordinal));
 
+        /// <summary>One entry as the cfg line holds it. The separators of the format are
+        /// replaced in the free text, since an admin typing "Loja; do Norte" would otherwise
+        /// split the entry in two.</summary>
+        internal static string Format(BossPassEntry entry) =>
+            string.Format(CultureInfo.InvariantCulture, "boss={0};name={1};shop={2};gold={3};deadcoins={4}",
+                entry.Boss, Text(entry.Name), Text(entry.Shop), entry.Gold, entry.Deadcoins);
+
+        private static string Key(string entry) => CfgList.Field(entry, "boss");
+
+        /// <summary>The Bosses text with this entry saved: in place when the boss is already
+        /// listed, appended otherwise.</summary>
+        internal static string SetEntry(string raw, BossPassEntry entry) =>
+            CfgList.Set(raw, Format(entry), Key, StringComparison.Ordinal);
+
+        internal static string RemoveEntry(string raw, string boss, out bool removed) =>
+            CfgList.Remove(raw, boss, Key, StringComparison.Ordinal, out removed);
+
+        private static string Text(string text) =>
+            OneLine(text).Replace(';', ',').Replace('|', '/').Replace('=', '-');
+
         /// <summary>"Loja do Pântano", or a neutral name when the entry did not give one.</summary>
         internal static string ShopName(BossPassEntry entry) =>
             entry != null && !string.IsNullOrEmpty(entry.Shop) ? entry.Shop : "Esta loja";
@@ -1077,6 +1097,98 @@ namespace NpcValheim.Npc
                 Send(peer, "unlocked", entry.Boss + "\n" +
                                        $"Vitória sobre {entry.Name}! {BossPassCatalog.ShopName(entry)} liberada.");
             return granted;
+        }
+
+        // ---- server: an admin editing the table from the NPC ----
+
+        internal const string OptionRadius = "radius";
+        internal const string OptionDeadcoinsAfterFirstKill = "deadcoins-after-first-kill";
+
+        /// <summary>
+        /// An admin putting a boss on the table, or changing its name, shop or prices -- the
+        /// same edit as the Bosses line of the cfg, saved and sent to every client by
+        /// ServerSync. The caller has already checked that `admin` is on the admin list.
+        /// `prices` is "gold\ndeadcoins".
+        /// </summary>
+        internal static void ServeSetEntry(long admin, string boss, string name, string shop, string prices, string where)
+        {
+            boss = (boss ?? "").Trim();
+            var cost = (prices ?? "").Split('\n');
+            if (!BossPassCatalog.IsCleanId(boss))
+            {
+                ServiceNpcAuthority.SendStatus(admin, $"\"{boss}\" não é um nome de criatura (prefab) válido, ex.: gd_king.");
+                return;
+            }
+            if (cost.Length != 2 || !TryInt(cost[0], out int gold) || !TryInt(cost[1], out int deadcoins) ||
+                gold < 0 || deadcoins < 0)
+            {
+                ServiceNpcAuthority.SendStatus(admin, "Moedas e Deadcoins precisam ser números inteiros, 0 ou mais.");
+                return;
+            }
+
+            var entry = new BossPassEntry { Boss = boss, Name = name, Shop = shop, Gold = gold, Deadcoins = deadcoins };
+            if (string.IsNullOrWhiteSpace(entry.Name)) entry.Name = boss;
+            Plugin.BossPassBosses.Value = BossPassCatalog.SetEntry(Plugin.BossPassBosses.Value, entry);
+
+            Plugin.Log.LogInfo($"NpcValheim: admin {GameApi.GetPlayerName(admin)} set the boss pass " +
+                               $"{BossPassCatalog.Format(entry)} at {where}");
+            ServiceNpcAuthority.SendStatus(admin, $"Passe de {entry.Name} salvo." +
+                (gold == 0 && deadcoins == 0 ? " Sem preço: só se ganha derrotando o boss." : ""));
+        }
+
+        /// <summary>An admin taking a boss off the table. Passes already held stay in
+        /// bosspass.txt; a shop locked behind a boss no longer listed stays shut (CanTrade).</summary>
+        internal static void ServeRemoveEntry(long admin, string boss, string where)
+        {
+            boss = (boss ?? "").Trim();
+            string after = BossPassCatalog.RemoveEntry(Plugin.BossPassBosses.Value, boss, out bool removed);
+            if (!removed)
+            {
+                ServiceNpcAuthority.SendStatus(admin, $"\"{boss}\" não está na lista.");
+                return;
+            }
+            Plugin.BossPassBosses.Value = after;
+            Plugin.Log.LogInfo($"NpcValheim: admin {GameApi.GetPlayerName(admin)} removed the boss pass {boss} at {where}");
+            ServiceNpcAuthority.SendStatus(admin, $"Passe de {boss} retirado. Lojas trancadas por ele ficam fechadas até você trocar o requisito.");
+        }
+
+        /// <summary>The two settings that sit beside the table: the kill radius and the
+        /// Deadcoins gate.</summary>
+        internal static void ServeSetOption(long admin, string option, string value, string where)
+        {
+            value = (value ?? "").Trim();
+            string name = GameApi.GetPlayerName(admin);
+            switch (option)
+            {
+                case OptionRadius:
+                    if (!float.TryParse(value.Replace(',', '.'), NumberStyles.Float, CultureInfo.InvariantCulture, out float radius) ||
+                        float.IsNaN(radius) || radius < 0f || radius > 1000f)
+                    {
+                        ServiceNpcAuthority.SendStatus(admin, "O raio precisa ser um número de 0 a 1000 metros.");
+                        return;
+                    }
+                    Plugin.BossPassKillRadius.Value = radius;
+                    Plugin.Log.LogInfo($"NpcValheim: admin {name} set the boss pass kill radius to {radius} at {where}");
+                    ServiceNpcAuthority.SendStatus(admin, $"Raio da morte: {radius:0.#} m.");
+                    return;
+
+                case OptionDeadcoinsAfterFirstKill:
+                    if (!bool.TryParse(value, out bool on))
+                    {
+                        ServiceNpcAuthority.SendStatus(admin, "Valor inválido.");
+                        return;
+                    }
+                    Plugin.BossPassDeadcoinsAfterFirstKill.Value = on;
+                    Plugin.Log.LogInfo($"NpcValheim: admin {name} set DeadcoinsAfterFirstKill to {on} at {where}");
+                    ServiceNpcAuthority.SendStatus(admin, on
+                        ? "Deadcoins só depois da 1ª derrota do boss no servidor: ligado."
+                        : "Deadcoins liberado desde o início: a trava da 1ª derrota foi desligada.");
+                    return;
+
+                default:
+                    ServiceNpcAuthority.SendStatus(admin, "Opção desconhecida.");
+                    return;
+            }
         }
 
         // ---- server -> client ----
