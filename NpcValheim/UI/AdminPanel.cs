@@ -68,7 +68,7 @@ namespace NpcValheim.UI
 
         private static void RPC_Status(long sender, string text)
         {
-            if (ZRoutedRpc.instance == null || sender != ZRoutedRpc.instance.GetServerPeerID()) return;
+            if (!NpcValheim.Npc.ServiceNpcAuthority.IsAuthoritativeSender(sender)) return;
             LastStatus = text;
         }
 
@@ -91,7 +91,8 @@ namespace NpcValheim.UI
         private static bool Send(ZPackage pkg)
         {
             if (ZRoutedRpc.instance == null) return false;
-            ZRoutedRpc.instance.InvokeRoutedRPC(ZRoutedRpc.instance.GetServerPeerID(), ToServer, pkg);
+            // GetServerPeerID is private in the game assembly; a direct call throws at runtime
+            ZRoutedRpc.instance.InvokeRoutedRPC(NpcValheim.Npc.GameApi.GetServerPeerId(), ToServer, pkg);
             LastStatus = "Enviado ao servidor...";
             return true;
         }
