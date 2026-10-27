@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Text;
 using UnityEngine;
+using NpcValheim.Integration;
 using NpcValheim.Persistence;
 
 namespace NpcValheim.Npc
@@ -40,6 +41,15 @@ namespace NpcValheim.Npc
         private const string KeyCostItem = "npcv_tp_cost_item";
         private const string KeyCostAmount = "npcv_tp_cost_amount";
         private const string KeyCooldown = "npcv_tp_cooldown";
+        // "Voltar para casa": this teleporter sends each player back to the Totem da Cidade they
+        // built (Deadheim). Off unless an admin turns it on, here, per teleporter.
+        private const string KeyHome = "npcv_tp_home";
+        // Stands in for a route id while a home trip waits for the server; a real id cannot
+        // contain '#', so the two kinds of approval never answer each other.
+        private const string HomePendingId = "#home";
+        internal const int MaxHomes = 5;
+        // The totem arrival has to be at the teleporter it is set from.
+        internal const float MaxArrivalDistance = 20f;
 
         // Pre-list keys. Still read once so teleporters placed before this change keep the
         // destination their admin already bound, instead of silently going blank.
@@ -70,6 +80,7 @@ namespace NpcValheim.Npc
             // NpcBase.KeepServerOwned and NpcBase.InvokeAuthoritativeRpc.
             Nview.Register("RPC_TeleportApproved", (Action<long, string>)RPC_TeleportApproved);
             Nview.Register("RPC_TeleportDenied", (Action<long, string>)RPC_TeleportDenied);
+            Nview.Register("RPC_HomeApproved", (Action<long, Vector3>)RPC_HomeApproved);
         }
 
         /// <summary>True once at least one destination exists -- until then the panel has
@@ -195,6 +206,12 @@ namespace NpcValheim.Npc
                                               arguments[2] is float cooldown:
                     RPC_ConfigureCost(sender, item, amount, cooldown);
                     return true;
+                case "RPC_SetHome" when arguments.Length == 1 && arguments[0] is int on:
+                    RPC_SetHome(sender, on != 0);
+                    return true;
+                case "RPC_SetTotemArrival" when arguments.Length == 1 && arguments[0] is Vector3 arrival:
+                    RPC_SetTotemArrival(sender, arrival);
+                    return true;
                 default:
                     return base.DispatchAdminMutation(sender, method, arguments);
             }
@@ -205,10 +222,17 @@ namespace NpcValheim.Npc
         /// ZNetView RPC aimed at whichever peer currently owns this NPC.</summary>
         internal override bool DispatchServiceAction(long sender, string action, string payload)
         {
-            if (action != "RPC_RequestTeleport")
-                return base.DispatchServiceAction(sender, action, payload);
-            RPC_RequestTeleport(sender, payload);
-            return true;
+            switch (action)
+            {
+                case "RPC_RequestTeleport":
+                    RPC_RequestTeleport(sender, payload);
+                    return true;
+                case "RPC_RequestHome":
+                    RPC_RequestHome(sender, payload);
+                    return true;
+                default:
+                    return base.DispatchServiceAction(sender, action, payload);
+            }
         }
 
         /// <summary>
@@ -639,6 +663,225 @@ namespace NpcValheim.Npc
                 $"NpcValheim: '{GetHoverName()}' [{Nview.GetZDO().m_uid}] refused tp-use " +
                 $"from peer {peer}: {reason}");
             Nview.InvokeRPC(peer, "RPC_TeleportDenied", reason ?? "Teleporte recusado");
+        }
+
+        // ---- Totem da Cidade (Deadheim) ----
+        //
+        // The totem takes a player from their own base to the city and nowhere else. A
+        // teleporter can be the city end of it in two ways, both set by an admin standing at
+        // it: the totem's arrival (a Deadheim setting, written through its API) and "Voltar
+        // para casa", which sends each player back to the totem they built. The server looks
+        // the totem up by its creator, so the client never names a place and nobody can be
+        // sent into another player's base.
+
+        /// <summary>Whether this teleporter offers "Voltar para casa".</summary>
+        public bool HomeEnabled =>
+            Nview != null && Nview.IsValid() && Nview.GetZDO().GetBool(KeyHome, false);
+
+        public void RequestSetHome(Player requester, bool on)
+        {
+            if (Nview == null || !Nview.IsValid() || !CanLocalPlayerAdminister()) return;
+            InvokeAuthoritativeRpc("RPC_SetHome", on ? 1 : 0);
+        }
+
+        /// <summary>Marks where the requester stands, at this teleporter, as the totem's arrival.</summary>
+        public void RequestSetTotemArrival(Player requester)
+        {
+            if (requester == null || Nview == null || !Nview.IsValid() || !CanLocalPlayerAdminister()) return;
+            InvokeAuthoritativeRpc("RPC_SetTotemArrival", requester.transform.position);
+        }
+
+        private void RPC_SetHome(long sender, bool on)
+        {
+            if (!CanAdminister(sender))
+            {
+                Refuse(sender, "tp-home", "O servidor não reconhece você como admin.");
+                return;
+            }
+            if (!NpcRequestGuard.AllowNearby(Nview, transform, sender, "tp-home",
+                    out string refusal, 8f, 4, 3f))
+            {
+                Refuse(sender, "tp-home", "Não deu para configurar: " + refusal);
+                return;
+            }
+
+            Nview.GetZDO().Set(KeyHome, on);
+            Plugin.Log.LogInfo($"NpcValheim: '{GetHoverName()}' home trips {(on ? "on" : "off")}");
+            ServiceNpcAuthority.SendStatus(sender,
+                on ? "Voltar para casa ligado neste teleportador." : "Voltar para casa desligado neste teleportador.");
+        }
+
+        private void RPC_SetTotemArrival(long sender, Vector3 arrival)
+        {
+            if (!CanAdminister(sender))
+            {
+                Refuse(sender, "tp-totem", "O servidor não reconhece você como admin.");
+                return;
+            }
+            if (!NpcRequestGuard.AllowNearby(Nview, transform, sender, "tp-totem",
+                    out string refusal, 8f, 4, 3f))
+            {
+                Refuse(sender, "tp-totem", "Não deu para gravar: " + refusal);
+                return;
+            }
+            if (!IsValidDestinationPosition(arrival) ||
+                Vector3.Distance(arrival, transform.position) > MaxArrivalDistance)
+            {
+                Refuse(sender, "tp-totem",
+                    $"Fique a até {MaxArrivalDistance:0} m do teleportador para marcar a chegada do Totem.");
+                return;
+            }
+
+            string failure = DeadheimTotemApi.SetArrival(arrival);
+            if (failure != null)
+            {
+                Refuse(sender, "tp-totem", failure);
+                return;
+            }
+            Plugin.Log.LogInfo($"NpcValheim: '{GetHoverName()}' is now the Totem da Cidade arrival ({arrival})");
+            ServiceNpcAuthority.SendStatus(sender, "Chegada do Totem da Cidade gravada aqui.");
+        }
+
+        /// <summary>Asks the server for a trip back to the player's own totem number
+        /// <paramref name="index"/> (0 for the first). The fare is this teleporter's default.</summary>
+        public bool TryGoHome(Player player, int index)
+        {
+            if (player == null || Nview == null || !Nview.IsValid()) return false;
+            if (!string.IsNullOrEmpty(_pendingDestinationId) &&
+                Time.realtimeSinceStartup - _pendingSince <= 10f)
+            {
+                player.Message(MessageHud.MessageType.Center, "Aguardando autorização do servidor", 0, null);
+                return false;
+            }
+            _pendingDestinationId = null;
+
+            string costItem = CostItemOf(null);
+            int costAmount = CostOf(null);
+            if (!string.IsNullOrEmpty(costItem) && costAmount > 0 &&
+                ItemNames.Count(player.GetInventory(), costItem, -1) < costAmount)
+            {
+                player.Message(MessageHud.MessageType.Center,
+                    $"Requer {costAmount}x {ItemNames.Display(costItem)}", 0, null);
+                return false;
+            }
+
+            _pendingDestinationId = HomePendingId;
+            _pendingSince = Time.realtimeSinceStartup;
+            if (!InvokeServiceAction("RPC_RequestHome", index.ToString(CultureInfo.InvariantCulture)))
+            {
+                _pendingDestinationId = null;
+                _pendingSince = 0f;
+                player.Message(MessageHud.MessageType.Center, "O servidor não respondeu", 0, null);
+                return false;
+            }
+            return true;
+        }
+
+        private void RPC_RequestHome(long sender, string payload)
+        {
+            if (Nview == null || !Nview.IsValid() || ZNet.instance == null ||
+                !ZNet.instance.IsServer()) return;
+
+            Plugin.Log.LogInfo($"NpcValheim: 'tp-home' from peer {sender} on '{GetHoverName()}': \"{payload}\"");
+
+            if (!HomeEnabled)
+            {
+                DenyTeleport(sender, "Este teleportador não leva de volta para casa.");
+                return;
+            }
+            if (!DeadheimTotemApi.IsAvailable)
+            {
+                DenyTeleport(sender, DeadheimTotemApi.NotInstalled);
+                return;
+            }
+            if (!DeadheimTotemApi.IsEnabled())
+            {
+                DenyTeleport(sender, "O Totem da Cidade está desligado no servidor.");
+                return;
+            }
+            if (!int.TryParse(payload, NumberStyles.Integer, CultureInfo.InvariantCulture, out int index) ||
+                index < 0 || index >= MaxHomes)
+            {
+                DenyTeleport(sender, "Solicitação de teleporte inválida.");
+                return;
+            }
+            if (!NpcRequestGuard.AllowNearby(Nview, transform, sender, "tp-home",
+                    out string refusal, 12f, 3, 2f))
+            {
+                DenyTeleport(sender, "Não deu para viajar: " + refusal);
+                return;
+            }
+            // Same identity rule as RPC_RequestTeleport: the character id of the
+            // authenticated peer, never anything the client wrote.
+            long playerId = GameApi.GetPlayerId(sender);
+            if (playerId == 0L)
+            {
+                DenyTeleport(sender, "O servidor não conseguiu identificar o seu personagem.");
+                return;
+            }
+
+            var homes = DeadheimTotemApi.HomesOf(playerId);
+            if (homes.Count == 0)
+            {
+                DenyTeleport(sender, "Você não construiu nenhum Totem da Cidade.");
+                return;
+            }
+            if (index >= homes.Count || !IsValidDestinationPosition(homes[index]))
+            {
+                DenyTeleport(sender, "Esse Totem da Cidade não existe mais.");
+                return;
+            }
+
+            float cooldown = ValidCooldownOrZero(Nview.GetZDO().GetFloat(KeyCooldown, 0f));
+            float now = Time.realtimeSinceStartup;
+            if (cooldown > 0f && _lastUseByPlayer.TryGetValue(playerId, out float lastUse))
+            {
+                float remaining = cooldown - (now - lastUse);
+                if (remaining > 0f)
+                {
+                    DenyTeleport(sender, $"Teleporte em cooldown ({Mathf.CeilToInt(remaining)}s).");
+                    return;
+                }
+            }
+
+            _lastUseByPlayer[playerId] = now;
+            Plugin.Log.LogInfo(
+                $"NpcValheim: '{GetHoverName()}' approved a trip home (totem {index + 1}) for player {playerId}");
+            Nview.InvokeRPC(sender, "RPC_HomeApproved", homes[index]);
+        }
+
+        private void RPC_HomeApproved(long sender, Vector3 position)
+        {
+            if (!NpcRequestGuard.IsResponseFromOwner(Nview, sender) ||
+                !string.Equals(_pendingDestinationId, HomePendingId, StringComparison.Ordinal)) return;
+
+            _pendingDestinationId = null;
+            _pendingSince = 0f;
+            var player = Player.m_localPlayer;
+            if (player == null || !IsValidDestinationPosition(position)) return;
+
+            // Same order as a route: recheck the fare, teleport, and charge only once vanilla
+            // (and Deadheim's combat rules) accepted the teleport.
+            string costItem = CostItemOf(null);
+            int costAmount = CostOf(null);
+            var inventory = player.GetInventory();
+            if (!string.IsNullOrEmpty(costItem) && costAmount > 0 &&
+                ItemNames.Count(inventory, costItem, -1) < costAmount)
+            {
+                player.Message(MessageHud.MessageType.Center,
+                    $"Requer {costAmount}x {ItemNames.Display(costItem)}", 0, null);
+                return;
+            }
+
+            NpcValheim.UI.UiRoot.RequestClose();
+            if (!player.TeleportTo(position, player.transform.rotation, true))
+            {
+                player.Message(MessageHud.MessageType.Center, "O teleporte não pôde ser iniciado", 0, null);
+                return;
+            }
+
+            if (!string.IsNullOrEmpty(costItem) && costAmount > 0)
+                ItemNames.Remove(inventory, costItem, costAmount, -1);
         }
 
         // ---- cost / cooldown ----

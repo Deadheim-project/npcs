@@ -36,6 +36,8 @@ namespace NpcValheim.UI
         private string _templateSignature;
 
         private TextMeshProUGUI _destinationPreview;
+        private TextMeshProUGUI _totemStatus;
+        private TextMeshProUGUI _homeLabel;
         private RectTransform _destinations;
         private readonly List<GameObject> _destinationRows = new List<GameObject>();
         private string _destinationSignature;
@@ -211,6 +213,33 @@ namespace NpcValheim.UI
                     teleporter.RequestConfigureCost(Player, _costItem.text, amount, cd);
                     Say("Aplicando configuração...");
                 });
+
+                // Totem da Cidade (Deadheim): the totem's one-way trip lands here, and/or this
+                // teleporter sends each player back to the totem they built, for the default fare.
+                Heading(column, "Totem da Cidade");
+                var totemRow = Row(column, 40f);
+                var arrival = ValheimUi.CreateButton(totemRow, "Chegada do Totem aqui", 0f, 38f, 14);
+                Flexible(arrival.gameObject);
+                arrival.onClick.AddListener(() =>
+                {
+                    if (!Integration.DeadheimTotemApi.IsAvailable)
+                    {
+                        Say(Integration.DeadheimTotemApi.NotInstalled);
+                        return;
+                    }
+                    teleporter.RequestSetTotemArrival(Player);
+                    Say("Enviado: chegada do Totem na sua posição.");
+                });
+                var home = ValheimUi.CreateButton(totemRow, "", 0f, 38f, 14);
+                Flexible(home.gameObject);
+                _homeLabel = home.GetComponentInChildren<TextMeshProUGUI>();
+                home.onClick.AddListener(() =>
+                {
+                    bool on = !teleporter.HomeEnabled;
+                    teleporter.RequestSetHome(Player, on);
+                    Say(on ? "Ligando Voltar para casa..." : "Desligando Voltar para casa...");
+                });
+                _totemStatus = Dim(column, "");
             }
             else if (Npc is MarketplaceNpc market)
             {
@@ -475,9 +504,35 @@ namespace NpcValheim.UI
         {
             RefreshItemSearch();
             RefreshDestinationPreview();
+            RefreshTotem();
             RefreshDestinations();
             RefreshBuyList();
             RefreshTemplates();
+        }
+
+        /// <summary>Reads back both totem settings as they stand: whether the arrival is at this
+        /// teleporter (Deadheim's synced setting) and whether "Voltar para casa" is on.</summary>
+        private void RefreshTotem()
+        {
+            if (_totemStatus == null || !(Npc is TeleporterNpc teleporter)) return;
+
+            bool home = teleporter.HomeEnabled;
+            if (_homeLabel != null) _homeLabel.text = home ? "Voltar para casa: ligado" : "Voltar para casa: desligado";
+
+            if (!Integration.DeadheimTotemApi.IsAvailable)
+            {
+                _totemStatus.text = Integration.DeadheimTotemApi.NotInstalled;
+                return;
+            }
+            if (!Integration.DeadheimTotemApi.TryArrival(out Vector3 arrival))
+            {
+                _totemStatus.text = "Chegada do Totem: ainda não definida.";
+                return;
+            }
+            float distance = Vector3.Distance(arrival, Npc.transform.position);
+            _totemStatus.text = distance <= TeleporterNpc.MaxArrivalDistance
+                ? $"Chegada do Totem: neste teleportador ({distance:0} m)."
+                : $"Chegada do Totem: em outro lugar ({arrival.x:0}, {arrival.z:0}).";
         }
 
         /// <summary>Filters the item catalogue as the admin types. Rebuilt only when the query
