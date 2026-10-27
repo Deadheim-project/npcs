@@ -367,7 +367,8 @@ namespace NpcValheim.UI
         /// One row: which boss's pass the item in the box below requires. Per item, not per
         /// counter: one Mercador can sell open goods next to locked ones. Stepped with arrows
         /// through "nenhum" plus the bosses in [BossPass] Bosses; Aplicar sets it on an item
-        /// already on the counter, and "Ele compra"/"Ele vende" send it with the price.
+        /// already on the counter, and "Ele compra"/"Ele vende" send it with the price. With
+        /// "Nenhum" a price edit leaves the item's pass as it was; only Aplicar removes one.
         ///
         /// A requirement the config no longer lists still shows up in the list, under its
         /// prefab name: hiding it would make an item look open while the server keeps it shut.
