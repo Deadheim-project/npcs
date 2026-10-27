@@ -14,6 +14,9 @@ namespace NpcValheim.UI
         private RectTransform _list;
         private string _signature;
         private readonly List<GameObject> _rows = new List<GameObject>();
+        // What each box showed when built, to tell an admin's unsaved number from the cfg's.
+        private readonly List<(string id, TMP_InputField input, string shown)> _inputs =
+            new List<(string, TMP_InputField, string)>();
 
         protected override void OnBuild()
         {
@@ -37,8 +40,31 @@ namespace NpcValheim.UI
             Rebuild(fields);
         }
 
+        /// <summary>A field's place in the list without its current number, so a box keeps
+        /// its typed value when a save elsewhere in the same entry changes that entry's text.</summary>
+        private static string FieldId(PriceField f)
+        {
+            var sb = new System.Text.StringBuilder(f.Config).Append('|').Append(f.Key).Append('|');
+            foreach (var part in (f.Entry ?? "").Split(';'))
+            {
+                int eq = part.IndexOf('=');
+                string key = (eq > 0 ? part.Substring(0, eq) : part).Trim().ToLowerInvariant();
+                if (key == "price" || key == "gold" || key == "deadcoins") continue;
+                sb.Append(part.Trim()).Append(';');
+            }
+            return sb.ToString();
+        }
+
         private void Rebuild(List<PriceField> fields)
         {
+            // The boss pass has two prices in one entry: saving Coins rebuilt every row from
+            // the synced cfg and wiped the Deadcoins number the admin had already typed. Keep
+            // any box whose text differs from what it was built with.
+            var typed = new Dictionary<string, string>();
+            foreach (var (id, input, shown) in _inputs)
+                if (input != null && input.text != shown) typed[id] = input.text;
+            _inputs.Clear();
+
             foreach (var row in _rows) if (row != null) Object.Destroy(row);
             _rows.Clear();
 
@@ -54,8 +80,11 @@ namespace NpcValheim.UI
                 var row = Row(_list, 40f);
                 _rows.Add(row.gameObject);
                 Flexible(ValheimUi.CreateLabel(row, f.Label, 15, ValheimUi.Beige, TextAlignmentOptions.Left).gameObject);
-                var input = ValheimUi.CreateInputField(row, f.Value.ToString(CultureInfo.InvariantCulture), 110f, 34f);
+                string shown = f.Value.ToString(CultureInfo.InvariantCulture);
+                string id = FieldId(f);
+                var input = ValheimUi.CreateInputField(row, typed.TryGetValue(id, out var pending) ? pending : shown, 110f, 34f);
                 input.contentType = TMP_InputField.ContentType.IntegerNumber;
+                _inputs.Add((id, input, shown));
                 var save = ValheimUi.CreateButton(row, "Salvar", 96f, 34f, 14);
                 save.onClick.AddListener(() =>
                 {

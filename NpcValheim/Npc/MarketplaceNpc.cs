@@ -453,6 +453,11 @@ namespace NpcValheim.Npc
             InvokeAuthoritativeRpc("RPC_SetPrice", (selling ? "S:" : "B:") + (itemName ?? "") + tail, price);
         }
 
+        /// <summary>The pass an item keeps after a price edit: the one the request names, or
+        /// the one it already had when the request names none. Pure, for the wire check.</summary>
+        internal static string ItemBossAfterPriceEdit(bool bossGiven, string requested, string existing) =>
+            bossGiven ? (requested ?? "").Trim() : (existing ?? "");
+
         /// <summary>Admin, sell side only (A3): the Deadcoins price and/or the weekly limit,
         /// leaving the Coins price exactly as it was. 0 in either field means "not sold that
         /// way" / "no cap", same as everywhere else; an item with no Coins price and no
@@ -806,6 +811,12 @@ namespace NpcValheim.Npc
             int lot = 1;
             string boss = "";
             var fields = itemName.Split(';');
+            // Only a request that names a boss changes the item's pass. The form sends its
+            // "Requisito do item" with every price, and that selector opens on "Nenhum" -- so
+            // re-saving a price used to erase the pass set with Aplicar. Removing a pass is
+            // Aplicar with "Nenhum" (RPC_SetItemBoss).
+            bool bossGiven = fields.Length == 3;
+            string finalBoss = "";
             if (fields.Length > 3)
             {
                 ServiceNpcAuthority.SendStatus(sender, "Pedido malformado.");
@@ -857,9 +868,10 @@ namespace NpcValheim.Npc
                     {
                         ItemName = itemName, Gold = Mathf.Min(price, 1000000),
                         Deadcoins = existingOffer?.Deadcoins ?? 0, WeeklyLimit = existingOffer?.WeeklyLimit ?? 0,
-                        Lot = lot, Boss = boss,
+                        Lot = lot, Boss = ItemBossAfterPriceEdit(bossGiven, boss, existingOffer?.Boss),
                     };
-                    if (!string.Equals(existingOffer?.Boss ?? "", boss, StringComparison.Ordinal)) _lockedAt = Time.unscaledTime;
+                    finalBoss = offers[itemName].Boss ?? "";
+                    if (!string.Equals(existingOffer?.Boss ?? "", finalBoss, StringComparison.Ordinal)) _lockedAt = Time.unscaledTime;
                 }
                 else
                 {
@@ -879,7 +891,10 @@ namespace NpcValheim.Npc
                 {
                     prices[itemName] = Mathf.Min(price, 1000000);
                     if (lot > 1) lots[itemName] = lot; else lots.Remove(itemName);
-                    if (boss.Length > 0) bosses[itemName] = boss; else bosses.Remove(itemName);
+                    string itemBoss = ItemBossAfterPriceEdit(bossGiven, boss,
+                        bosses.TryGetValue(itemName, out var held) ? held : "");
+                    if (itemBoss.Length > 0) bosses[itemName] = itemBoss; else bosses.Remove(itemName);
+                    finalBoss = itemBoss;
                 }
                 else
                 {
@@ -893,7 +908,7 @@ namespace NpcValheim.Npc
             Plugin.Log.LogInfo($"NpcValheim: '{GetHoverName()}' {side} {itemName} por {price}, lote {lot} (peer {sender})");
             ServiceNpcAuthority.SendStatus(sender, price > 0
                 ? $"O NPC {side} {ItemNames.Display(itemName)} por {price} moedas{PerLot(lot)}" +
-                  (boss.Length > 0 ? $", com o passe de {BossPassCatalog.Find(boss)?.Name ?? boss}." : ".")
+                  (finalBoss.Length > 0 ? $", com o passe de {BossPassCatalog.Find(finalBoss)?.Name ?? finalBoss}." : ".")
                 : $"{ItemNames.Display(itemName)} removido do balcão.");
         }
 

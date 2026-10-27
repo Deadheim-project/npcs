@@ -1106,6 +1106,47 @@ class Program
         Check("a refused undo cannot refund: the server only pays back what it has a purchase for",
               BodyReaches(TrainerType, "RPC_Undo", "TryGetValue", null));
 
+        // ---- Admin saves: the "Preços" tab and the Mercador's per-item pass ----
+        var priceEditor = typeof(QuestGiverNpc).Assembly.GetType("NpcValheim.Npc.PriceEditor");
+        string ReplacePrice(string raw, string seen, string key, int value, out string error)
+        {
+            var args = new object[] { raw, seen, key, value, null };
+            var result = (string)priceEditor.GetMethod("ReplacePrice", BindingFlags.NonPublic | BindingFlags.Static)
+                                            .Invoke(null, args);
+            error = (string)args[4];
+            return result;
+        }
+        const string passes = "boss=gd_king;name=Ancião;shop=Loja do Pântano;gold=0;deadcoins=500|" +
+                              "boss=Bonemass;name=Bonemass;shop=Loja da Montanha;gold=0;deadcoins=1000";
+        string seenElder = "boss=gd_king;name=Ancião;shop=Loja do Pântano;gold=0;deadcoins=500";
+        string afterGold = ReplacePrice(passes, seenElder, "gold", 300, out string err1);
+        Check("a pass price saves (control)",
+              afterGold == passes.Replace("gold=0;deadcoins=500", "gold=300;deadcoins=500"), err1 ?? afterGold);
+        // The reported bug: the Deadcoins row still holds the entry with gold=0.
+        string afterBoth = ReplacePrice(afterGold, seenElder, "deadcoins", 50, out string err2);
+        Check("the second price of the same pass saves after the first changed the entry",
+              afterBoth == passes.Replace("gold=0;deadcoins=500", "gold=300;deadcoins=50"), err2 ?? afterBoth);
+        Check("the other pass is left exactly as it was",
+              afterBoth != null && afterBoth.EndsWith("|boss=Bonemass;name=Bonemass;shop=Loja da Montanha;gold=0;deadcoins=1000"));
+        const string mounts = "skill=3;price=10000;currency=coins|skill=3;price=500;currency=deadcoins";
+        string afterMount = ReplacePrice(mounts, "skill=3;price=400;currency=deadcoins", "price", 450, out string err3);
+        Check("an entry is told apart by everything but its price (currency included)",
+              afterMount == "skill=3;price=10000;currency=coins|skill=3;price=450;currency=deadcoins", err3 ?? afterMount);
+        Check("an entry that is gone is refused",
+              ReplacePrice(passes, "boss=Dragon;name=Moder;shop=x;gold=0;deadcoins=1", "gold", 1, out string err4) == null && err4 != null);
+        Check("two entries with the same name are refused, not guessed",
+              ReplacePrice("boss=a;gold=1|boss=a;gold=2", "boss=a;gold=9", "gold", 3, out string err5) == null && err5 != null);
+        Check("the server's price save goes through the tolerant match",
+              BodyReaches(priceEditor, "SetInList", "ReplacePrice", null));
+
+        var keepBoss = typeof(MarketplaceNpc).GetMethod("ItemBossAfterPriceEdit", BindingFlags.NonPublic | BindingFlags.Static);
+        string BossAfter(bool given, string requested, string existing) =>
+            (string)keepBoss.Invoke(null, new object[] { given, requested, existing });
+        Check("a Mercador price saved with no boss keeps the item's pass", BossAfter(false, "", "gd_king") == "gd_king");
+        Check("a Mercador price saved with a boss sets that pass (control)", BossAfter(true, "Bonemass", "gd_king") == "Bonemass");
+        Check("RPC_SetPrice decides the pass through that rule",
+              BodyReaches(typeof(MarketplaceNpc), "RPC_SetPrice", "ItemBossAfterPriceEdit", null));
+
         System.Console.WriteLine();
         System.Console.WriteLine(failed == 0 ? $"ALL {passed} CHECKS PASSED" : $"{failed} FAILED, {passed} passed");
         return failed == 0 ? 0 : 1;

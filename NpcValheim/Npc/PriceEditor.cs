@@ -159,6 +159,10 @@ namespace NpcValheim.Npc
             try
             {
                 string error = Apply(config ?? "", entry ?? "", key ?? "", value, GameApi.GetPlayerName(sender));
+                // A refusal used to reach only the admin's screen, so the console could not
+                // tell a price that was refused from one that was never sent.
+                if (error != null)
+                    Plugin.Log.LogWarning($"NpcValheim: set price {config} \"{entry}\" {key}={value} from peer {sender} refused: {error}");
                 ServiceNpcAuthority.SendStatus(sender, error ?? "Preço salvo.");
             }
             catch (Exception e)
@@ -202,19 +206,76 @@ namespace NpcValheim.Npc
             if (value == 0 && key == "price")
                 return "O preço precisa ser maior que zero.";
 
-            var entries = new List<string>((cfg.Value ?? "").Split('|'));
-            int index = entries.FindIndex(e => string.Equals(e.Trim(), entry, StringComparison.Ordinal));
-            if (index < 0) return "A lista mudou desde que você abriu. Feche e abra o NPC de novo.";
+            string after = ReplacePrice(cfg.Value, entry, key, value, out string error);
+            if (after == null) return error;
+
+            cfg.Value = after;
+            Plugin.Log.LogInfo($"NpcValheim: admin {admin} set {config} \"{entry}\": {key}={value}");
+            return null;
+        }
+
+        /// <summary>
+        /// The list with one price changed, or null with `error` set.
+        ///
+        /// `seen` is the entry as the admin's panel showed it, prices included. Matching it
+        /// letter for letter is what made the boss pass "not save": its entry carries two
+        /// prices (gold= and deadcoins=), so saving one changed the text the other row was
+        /// still holding, and the second Salvar was refused as "a lista mudou" -- the same
+        /// for an edit made while the first save's sync was still on its way. The entry is
+        /// now found by what names it (boss/name/shop, skill/mount/currency...), with the
+        /// prices left out; an exact match still wins, and a name shared by two entries is
+        /// refused rather than guessed. Pure text, so the wire check runs it.
+        /// </summary>
+        internal static string ReplacePrice(string raw, string seen, string key, int value, out string error)
+        {
+            error = null;
+            var entries = new List<string>((raw ?? "").Split('|'));
+            string wanted = (seen ?? "").Trim();
+            int index = entries.FindIndex(e => string.Equals(e.Trim(), wanted, StringComparison.Ordinal));
+            if (index < 0)
+            {
+                string identity = Identity(wanted);
+                for (int i = 0; i < entries.Count && identity.Length > 0; i++)
+                {
+                    if (!string.Equals(Identity(entries[i]), identity, StringComparison.Ordinal)) continue;
+                    if (index >= 0)
+                    {
+                        error = "Há duas entradas iguais na config; corrija o cfg do servidor.";
+                        return null;
+                    }
+                    index = i;
+                }
+            }
+            if (index < 0)
+            {
+                error = "Essa entrada não está mais na config. Feche e abra o NPC de novo.";
+                return null;
+            }
 
             var parts = new List<string>(entries[index].Trim().Split(';'));
             int at = parts.FindIndex(p => p.Trim().StartsWith(key + "=", StringComparison.OrdinalIgnoreCase));
-            if (at < 0) return "A lista mudou desde que você abriu. Feche e abra o NPC de novo.";
+            if (at < 0)
+            {
+                error = "Essa entrada não tem esse preço. Feche e abra o NPC de novo.";
+                return null;
+            }
             parts[at] = parts[at].Substring(0, parts[at].IndexOf('=') + 1) + value.ToString(CultureInfo.InvariantCulture);
             entries[index] = string.Join(";", parts);
+            return string.Join("|", entries);
+        }
 
-            cfg.Value = string.Join("|", entries);
-            Plugin.Log.LogInfo($"NpcValheim: admin {admin} set {config} \"{entry}\": {key}={value}");
-            return null;
+        /// <summary>An entry without its prices: what tells it apart from the others.</summary>
+        private static string Identity(string entry)
+        {
+            var kept = new List<string>();
+            foreach (var part in (entry ?? "").Split(';'))
+            {
+                int eq = part.IndexOf('=');
+                string name = (eq > 0 ? part.Substring(0, eq) : part).Trim().ToLowerInvariant();
+                if (name.Length == 0 || Array.IndexOf(PriceKeys, name) >= 0) continue;
+                kept.Add(name + "=" + (eq > 0 ? part.Substring(eq + 1).Trim() : ""));
+            }
+            return string.Join(";", kept);
         }
     }
 }
