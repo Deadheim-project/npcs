@@ -46,18 +46,44 @@ namespace NpcValheim.Npc
             var inventory = player.GetInventory();
             if (inventory == null) return 0;
 
-            int given = 0;
-            while (given < amount)
+            // Counted in the bag rather than added up from the calls: a refused AddItem has
+            // already topped up whatever partial stacks it found before giving up, and those
+            // units used to be counted as not given and dropped on the ground a second time.
+            string sharedName = drop.m_itemData.m_shared.m_name;
+            int before = CountInBag(inventory, sharedName);
+            int sent = 0;
+            while (sent < amount)
             {
-                int stack = Mathf.Min(maxStack, amount - given);
+                int stack = Mathf.Min(maxStack, amount - sent);
                 // A refusal means the bag is full; stop rather than retry a smaller stack,
                 // so a full inventory costs one failed call and not one per unit.
                 // cheated:false / pickedUp:true sao novos e obrigatorios no 1.0 -- um item
                 // entregue por NPC conta como coletado, e nao como spawn de trapaca.
                 if (inventory.AddItem(prefabName, stack, safeQuality, 0, 0L, "", false, true) == null) break;
-                given += stack;
+                sent += stack;
             }
-            return given;
+            return Mathf.Clamp(CountInBag(inventory, sharedName) - before, 0, amount);
+        }
+
+        private static int CountInBag(Inventory inventory, string sharedName)
+        {
+            long total = 0;
+            foreach (var item in inventory.GetAllItems())
+                if (item?.m_shared != null && item.m_shared.m_name == sharedName) total += item.m_stack;
+            return total > int.MaxValue ? int.MaxValue : (int)total;
+        }
+
+        /// <summary>Whether the whole amount fits in the player's bag right now: free room in
+        /// the stacks already there plus the empty slots. Inventory.CanAddItem, which the
+        /// Deadheim mod teaches about the Coins slot.</summary>
+        public static bool FitsInBag(Player player, string prefabName, int amount)
+        {
+            if (player == null || amount <= 0 || ObjectDB.instance == null) return false;
+            var prefab = ObjectDB.instance.GetItemPrefab(prefabName);
+            var drop = prefab != null ? prefab.GetComponent<ItemDrop>() : null;
+            var inventory = player.GetInventory();
+            if (drop?.m_itemData?.m_shared == null || inventory == null) return false;
+            return inventory.CanAddItem(drop.m_itemData, amount);
         }
 
         public static bool TrySpawn(string prefabName, int amount, int quality, Vector3 position)

@@ -187,6 +187,7 @@ namespace NpcValheim.UI
                         // Paid up front, exactly like the shop. If the listing has since left
                         // the board, the server hands its price back once, from its own record
                         // of the listing -- see MarketDatabase.Buy.
+                        if (!market.CanSendPaidRequest(Player, out string refused)) { Say(refused); return; }
                         if (!MarketplaceNpc.TryPay(Player, unitPrice))
                         {
                             Say($"Você tem {MarketplaceNpc.CoinsOf(Player)} moedas; custa {unitPrice}.");

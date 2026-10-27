@@ -103,6 +103,41 @@ namespace NpcValheim.Npc
             return true;
         }
 
+        /// <summary>Distance the panel allows before paying: under the server's 6 m
+        /// (NpcRequestGuard.AllowNearby), because the server measures with a position that
+        /// arrives late.</summary>
+        private const float PayDistance = 4.5f;
+
+        /// <summary>Gap the panel keeps between two paid requests: the server lets 8 counter
+        /// purchases and 6 auction purchases through every 2 s.</summary>
+        private const float PayGapSeconds = 0.4f;
+
+        private static float _lastPaidRequest = -999f;
+
+        /// <summary>
+        /// Client side, before any coin leaves the bag: would the server take this request?
+        /// The server refuses a purchase from more than 6 m away or in too quick a run, and by
+        /// then the coins are gone and never paid back (RPC_BuyFromNpc), so the panel stops it
+        /// here instead and says why.
+        /// </summary>
+        public bool CanSendPaidRequest(Player player, out string reason)
+        {
+            reason = null;
+            if (player == null) { reason = "Personagem não encontrado."; return false; }
+            if (Vector3.Distance(player.transform.position, transform.position) > PayDistance)
+            {
+                reason = "Chegue mais perto do Mercador para comprar.";
+                return false;
+            }
+            if (Time.unscaledTime - _lastPaidRequest < PayGapSeconds)
+            {
+                reason = "Calma: espere um instante entre uma compra e outra.";
+                return false;
+            }
+            _lastPaidRequest = Time.unscaledTime;
+            return true;
+        }
+
         /// <summary>Hands coins to the player who is standing right here. Falls back to the
         /// ground at their feet when the inventory is full, which is what the game itself does
         /// -- the one thing that must never happen is the coins simply not existing.</summary>
@@ -1220,10 +1255,7 @@ namespace NpcValheim.Npc
                 }
             }
 
-            // Handed to the buyer rather than dropped at the merchant's feet. Goods on the
-            // ground are goods somebody else can pick up, and they are easy to walk away from
-            // without noticing.
-            SendDelivery(sender, itemName, amount);
+            PostPurchase(sender, playerId, itemName, amount);
 
             Plugin.Log.LogInfo(
                 $"NpcValheim: merchant sold {amount}x {itemName} to {playerId} for {PayoutFor(unitPrice, lots)}" +
@@ -1325,6 +1357,39 @@ namespace NpcValheim.Npc
         }
 
         /// <summary>
+        /// Server: what the counter sold goes to the buyer's Caixa Postal, written there before
+        /// the buyer hears about it.
+        ///
+        /// It used to be handed straight into the bag, and that delivery had nowhere to wait:
+        /// a buyer who dropped, died or closed the game in that second lost the goods, and a
+        /// sale too big for the bag "fell on the ground" without ever being spawned. A letter
+        /// survives all of it, and the mailbox only lets it go once it is in the bag. Only when
+        /// the letter cannot be written at all does the old direct delivery stand in -- the
+        /// buyer has already paid.
+        /// </summary>
+        private void PostPurchase(long sender, long playerId, string itemName, int amount)
+        {
+            string display = ItemNames.Display(itemName);
+            var prefab = ObjectDB.instance != null ? ObjectDB.instance.GetItemPrefab(itemName) : null;
+            int maxStack = prefab != null && prefab.GetComponent<ItemDrop>()?.m_itemData?.m_shared != null
+                ? Mathf.Max(1, prefab.GetComponent<ItemDrop>().m_itemData.m_shared.m_maxStackSize)
+                : 1;
+            try
+            {
+                int letters = MarketDatabase.QueuePurchase("compra-" + Guid.NewGuid().ToString("N"), playerId,
+                    $"Compra em {GetHoverName()}", itemName, amount, maxStack);
+                Plugin.Log.LogInfo($"NpcValheim: {amount}x {itemName} for {playerId} posted as {letters} letter(s)");
+                ServiceNpcAuthority.SendStatus(sender,
+                    $"Compra enviada para a sua Caixa Postal: {amount}x {display}.");
+            }
+            catch (Exception e)
+            {
+                Plugin.Log.LogError($"NpcValheim: could not post {amount}x {itemName} to {playerId} ({e.Message}); delivering straight to the bag");
+                SendDelivery(sender, itemName, amount);
+            }
+        }
+
+        /// <summary>
         /// Client side: goods bought from the merchant, delivered into the bag.
         ///
         /// Run on the buyer's own machine because that is the only place their inventory can
@@ -1395,13 +1460,13 @@ namespace NpcValheim.Npc
         /// <summary>
         /// Server: charges, delivers and logs a Deadcoins purchase of this merchant's own sell
         /// list, called only from <see cref="MarketDeadcoinSale.ServeBuy"/> once it has charged
-        /// the buyer's Deadcoins ledger. Delivery reuses the same global answer and the same
-        /// client handler as a Coins purchase (SendDelivery / DeliverLocal). The balance update
-        /// stays on the NPC's RPC: losing it only delays the number, the next status fixes it.
+        /// the buyer's Deadcoins ledger. The goods go to the Caixa Postal, as a Coins purchase
+        /// does (PostPurchase). The balance update stays on the NPC's RPC: losing it only
+        /// delays the number, the next status fixes it.
         /// </summary>
-        internal void DeliverDeadcoinsPurchase(long sender, string itemName, int amount, int deadcoinsAfter)
+        internal void DeliverDeadcoinsPurchase(long sender, long playerId, string itemName, int amount, int deadcoinsAfter)
         {
-            SendDelivery(sender, itemName, amount);
+            PostPurchase(sender, playerId, itemName, amount);
             Nview.InvokeRPC(sender, "RPC_DeadcoinsUpdate", deadcoinsAfter);
         }
 

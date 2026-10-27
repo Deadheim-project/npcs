@@ -495,6 +495,20 @@ namespace NpcValheim.Npc
 
         // ---- travelling ----
 
+        /// <summary>
+        /// Ore and metal do not travel by teleporter, the same as the game's portal and the Totem
+        /// da Cidade (a world with "teleport everything" lets them through, inside IsTeleportable
+        /// itself). Checked on the client, before the request and again right before the jump:
+        /// the server cannot see the bag. [Teleporter] BlockOre = false turns it off.
+        /// </summary>
+        private static bool RefuseOre(Player player)
+        {
+            if (Plugin.TeleportBlockOre == null || !Plugin.TeleportBlockOre.Value || player.IsTeleportable(false))
+                return false;
+            player.Message(MessageHud.MessageType.Center, "Carregando minério ou metal você não usa o teleportador", 0, null);
+            return true;
+        }
+
         public bool TryTeleport(Player player, string destinationId)
         {
             if (player == null || Nview == null || !Nview.IsValid()) return false;
@@ -512,6 +526,7 @@ namespace NpcValheim.Npc
                 player.Message(MessageHud.MessageType.Center, "Destino não encontrado", 0, null);
                 return false;
             }
+            if (RefuseOre(player)) return false;
 
             string costItem = CostItemOf(destination);
             int costAmount = CostOf(destination);
@@ -617,6 +632,7 @@ namespace NpcValheim.Npc
             var player = Player.m_localPlayer;
             var destination = GetDestinations().Find(d => d.Id == destinationId);
             if (player == null || destination == null) return;
+            if (RefuseOre(player)) return;
 
             // Fare collection remains client-side until Deadheim exposes a server-character
             // inventory transaction. Recheck immediately before consuming it so ordinary
@@ -754,6 +770,7 @@ namespace NpcValheim.Npc
                 return false;
             }
             _pendingDestinationId = null;
+            if (RefuseOre(player)) return false;
 
             string costItem = CostItemOf(null);
             int costAmount = CostOf(null);
@@ -859,6 +876,7 @@ namespace NpcValheim.Npc
             _pendingSince = 0f;
             var player = Player.m_localPlayer;
             if (player == null || !IsValidDestinationPosition(position)) return;
+            if (RefuseOre(player)) return;
 
             // Same order as a route: recheck the fare, teleport, and charge only once vanilla
             // (and Deadheim's combat rules) accepted the teleport.

@@ -89,9 +89,13 @@ servidor: os pedidos vão pelo canal de serviço e as respostas voltam ao jogado
 por RPC global, nunca pelo ZNetView da caixa (que roda em quem for dono do ZDO).
 Três abas:
 
-- **Correio** — encomendas do leilão/missões e cartas escritas. Itens vão para o
-  inventário (o que não couber cai aos pés do jogador); cartas só se excluem.
-  Só o destinatário retira.
+- **Correio** — encomendas do leilão, do balcão do Mercador e das missões, e
+  cartas escritas. O item vai para o inventário e a carta só sai da caixa quando
+  o jogo do jogador confirma que ele entrou; com a bolsa cheia, a carta fica e o
+  jogador é avisado. Se a confirmação não chegar em 30 s (queda, jogo fechado), a
+  carta volta a poder ser retirada, e o personagem guarda as cartas que já
+  recebeu para não receber em dobro. Cartas só se excluem. Só o destinatário
+  retira.
 - **Enviar** — mensagem para **qualquer jogador** pelo nome (vale offline se ele
   já entrou no servidor). A lista de destinatários filtra pelo que se digita.
 - **Parcela** — carta com item. Se o servidor recusar (destinatário
@@ -239,6 +243,11 @@ quer, dá um nome e clica em *Adicionar aqui*; o jogador escolhe da lista, que
 mostra a distância de cada ponto. Custo e cooldown continuam por NPC e valem para
 qualquer viagem.
 
+Minério e metal não passam, como no portal do jogo: quem carrega não viaja, nem
+pelas rotas nem pelo *Voltar para casa* (`[Teleporter] BlockOre`, ligado por
+padrão; o mundo com "teletransportar tudo" libera). A conferência é no cliente,
+antes do pedido e de novo antes do salto, porque o servidor não vê a bolsa.
+
 A lista mora numa única string empacotada no ZDO (`id;nome;x;y;z;yaw` por linha) e
 é espelhada no perfil YAML, então **uma rede inteira vira modelo reutilizável**:
 salve o hub como modelo e aplique noutro NPC com todas as rotas. Aplicar um
@@ -297,7 +306,11 @@ do que um cliente honesto pagou**, contado com os números do servidor:
   leva o item, sem troco. Pagou exatamente o que a quantidade custava num preço
   recente: leva pelo preço que viu. Qualquer outro valor não é algo que o
   cliente do mod mande; não entrega nem devolve nada, e fica um aviso no log do
-  servidor.
+  servidor. O que é vendido vai para a **Caixa Postal** do comprador, uma carta
+  por pilha (moedas ou Deadcoins), gravada no servidor antes de ele ser avisado.
+  Como as moedas não voltam, o painel confere distância (4,5 m) e ritmo (0,4 s
+  entre compras) antes de cobrar, abaixo dos 6 m e 8 pedidos em 2 s do servidor;
+  o leilão usa a mesma conferência.
 - **Leilão** (`MarketDatabase.Buy`): o preço de um anúncio nunca muda, então o
   comprador honesto paga exatamente o preço e não existe troco. A única recusa
   que ele pode encontrar é o anúncio sair do quadro antes do pedido chegar

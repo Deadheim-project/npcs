@@ -32,6 +32,10 @@ namespace NpcValheim.Persistence
         /// </summary>
         public string DeliveryState { get; set; }
         public string DeliveryToken { get; set; }
+        /// <summary>When the claim in flight was sent, as raw UTC ticks (the DateTime
+        /// timezone trap, see Listing.ExpiresUtcTicks). 0 on a claim written before the
+        /// claimant had to confirm: that one stays locked for an admin, as it always did.</summary>
+        public long DeliveringSinceTicks { get; set; }
 
         public bool IsCoins => Coins > 0 && string.IsNullOrEmpty(ItemName);
         public bool IsMessage => !IsCoins && string.IsNullOrEmpty(ItemName);
@@ -240,6 +244,18 @@ namespace NpcValheim.Persistence
 
         public static int CountMail(long playerId) => GetMail(playerId).Count;
 
+        /// <summary>How long a parcel waits for the claimant to say it reached the bag. A
+        /// claim with no answer by then -- the player dropped, the game closed -- can be made
+        /// again; the claimant's own record of received letters keeps the retry from paying
+        /// twice (MailboxNpc.ReceiveClaim).</summary>
+        public static readonly TimeSpan ClaimTimeout = TimeSpan.FromSeconds(30);
+
+        /// <summary>A parcel on its way to the claimant's bag, still waiting for the answer.</summary>
+        public static bool ClaimInFlight(MailEntry entry) =>
+            entry != null &&
+            string.Equals(entry.DeliveryState, Delivering, StringComparison.OrdinalIgnoreCase) &&
+            (entry.DeliveringSinceTicks <= 0L || DateTime.UtcNow.Ticks - entry.DeliveringSinceTicks <= ClaimTimeout.Ticks);
+
         /// <summary>Locks a parcel for one delivery attempt, but does not remove it. The
         /// mailbox calls CompleteClaim only after the attachment was actually created.</summary>
         public static MailEntry BeginClaim(string mailId, long playerId, string deliveryToken)
@@ -250,12 +266,43 @@ namespace NpcValheim.Persistence
                 var entry = Mail.FindById(mailId);
                 if (entry == null || entry.PlayerId != playerId) return null;
                 if (string.Equals(entry.DeliveryState, Delivering, StringComparison.OrdinalIgnoreCase))
-                    return string.Equals(entry.DeliveryToken, deliveryToken, StringComparison.Ordinal)
-                        ? entry
-                        : null;
+                {
+                    if (string.Equals(entry.DeliveryToken, deliveryToken, StringComparison.Ordinal)) return entry;
+                    if (ClaimInFlight(entry)) return null;
+                }
 
                 entry.DeliveryState = Delivering;
                 entry.DeliveryToken = deliveryToken;
+                entry.DeliveringSinceTicks = DateTime.UtcNow.Ticks;
+                Mail.Update(entry);
+                return entry;
+            }
+        }
+
+        /// <summary>
+        /// The claimant's answer to a parcel: it is in the bag (the letter goes) or the bag
+        /// had no room (the letter stays, claimable again). Only the claim that answer is
+        /// for: a stale token -- a claim that timed out and was made again -- changes nothing.
+        /// </summary>
+        public static MailEntry FinishClaim(string mailId, string deliveryToken, bool received,
+            ICollection<long> ownerIds)
+        {
+            if (string.IsNullOrEmpty(mailId) || string.IsNullOrEmpty(deliveryToken) || ownerIds == null) return null;
+            lock (Gate)
+            {
+                var entry = Mail.FindById(mailId);
+                if (entry == null || !ownerIds.Contains(entry.PlayerId)) return null;
+                if (!string.Equals(entry.DeliveryState, Delivering, StringComparison.OrdinalIgnoreCase) ||
+                    !string.Equals(entry.DeliveryToken, deliveryToken, StringComparison.Ordinal)) return null;
+
+                if (received)
+                {
+                    Mail.Delete(mailId);
+                    return entry;
+                }
+                entry.DeliveryState = Available;
+                entry.DeliveryToken = "";
+                entry.DeliveringSinceTicks = 0L;
                 Mail.Update(entry);
                 return entry;
             }
@@ -283,6 +330,7 @@ namespace NpcValheim.Persistence
                     !string.Equals(entry.DeliveryToken, deliveryToken, StringComparison.Ordinal)) return;
                 entry.DeliveryState = Available;
                 entry.DeliveryToken = "";
+                entry.DeliveringSinceTicks = 0L;
                 Mail.Update(entry);
             }
         }

@@ -1,8 +1,10 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
 using System.Text;
+using HarmonyLib;
 using UnityEngine;
 using NpcValheim.Persistence;
 using NpcValheim.UI;
@@ -47,6 +49,10 @@ namespace NpcValheim.Npc
         internal const string ActionSend = "RPC_SendMail";
 
         private const string RpcResponse = "NpcValheim_MailResponse";
+        /// <summary>Client -> server: which parcels reached the bag and which found it full.
+        /// A global RPC, not a service action: the player may have walked away from the box
+        /// by the time the answer leaves.</summary>
+        private const string RpcClaimAnswer = "NpcValheim_MailClaimAnswer";
 
         // ---- client cache ----
         //
@@ -74,7 +80,11 @@ namespace NpcValheim.Npc
             _status = "";
             _synced = _directoryOnce = false;
             _rememberedThisSession.Clear();
+            _answers.Clear();
+            _answerFlushPending = _answerNeedsSave = false;
+            _answerFull = 0;
             rpc.Register(RpcResponse, (Action<long, string, string>)RPC_Response);
+            rpc.Register(RpcClaimAnswer, (Action<long, string>)RPC_ClaimAnswer);
         }
 
         protected override void OnPlacedExtra()
@@ -166,6 +176,10 @@ namespace NpcValheim.Npc
                 return;
             }
             GameApi.RememberIdentity(sender);
+            // Letters still in the outbox -- a purchase made while this box was at
+            // MaxMailPerPlayer -- get another chance the moment the player looks.
+            try { MarketDatabase.FlushOutbox(); }
+            catch (Exception e) { Plugin.Log.LogError($"NpcValheim: economy outbox not flushed: {e.Message}"); }
             SendMailTo(sender);
         }
 
@@ -204,6 +218,8 @@ namespace NpcValheim.Npc
                 .FirstOrDefault(entry => entry.Id == mailId);
             if (owned == null)
                 ReplyStatus(sender, "Esta encomenda não está mais na sua caixa.");
+            else if (MailDatabase.ClaimInFlight(owned))
+                ReplyStatus(sender, "Esta encomenda já está a caminho do seu inventário.");
             else if (!TryDeliverClaim(sender, mailId, owned.PlayerId))
                 ReplyStatus(sender, "Não foi possível entregar esta encomenda; ela continua guardada.");
             SendMailTo(sender);
@@ -224,16 +240,19 @@ namespace NpcValheim.Npc
                 return;
             }
 
+            // Parcels already on their way are left alone: a second click while the first
+            // batch is still being answered moves on to the next letters.
             int delivered = 0, failed = 0;
-            foreach (var entry in MailDatabase.GetMail(playerId, GameApi.GetPlayerName(sender)).Take(MaxClaimsPerRequest))
+            foreach (var entry in MailDatabase.GetMail(playerId, GameApi.GetPlayerName(sender))
+                         .Where(entry => !MailDatabase.ClaimInFlight(entry)).Take(MaxClaimsPerRequest))
             {
                 if (TryDeliverClaim(sender, entry.Id, entry.PlayerId)) delivered++;
                 else failed++;
             }
             if (failed > 0)
-                ReplyStatus(sender, $"{delivered} entregue(s); {failed} não puderam ser entregues e continuam guardadas.");
+                ReplyStatus(sender, $"{delivered} a caminho; {failed} não puderam ser entregues e continuam guardadas.");
             else if (delivered >= MaxClaimsPerRequest)
-                ReplyStatus(sender, $"{delivered} entregue(s). Clique de novo para receber o resto.");
+                ReplyStatus(sender, $"{delivered} a caminho. Clique de novo para receber o resto.");
             SendMailTo(sender);
         }
 
@@ -357,44 +376,51 @@ namespace NpcValheim.Npc
             return cap > int.MaxValue ? int.MaxValue : (int)cap;
         }
 
-        /// <summary>Hands a parcel over. Coins become a real Coins stack rather than market
+        /// <summary>
+        /// Starts handing a parcel over. Coins become a real Coins stack rather than market
         /// balance, so mail is useful without ever touching a marketplace. A written letter
-        /// has nothing to hand over -- claiming it just removes it.</summary>
+        /// has nothing to hand over -- claiming it just removes it.
+        ///
+        /// A parcel is not removed here. It goes to the claimant's own machine, the only place
+        /// their inventory can be written, and stays in the box, locked to this claim, until
+        /// that machine answers (RPC_ClaimAnswer): in the bag, and the letter goes; no room,
+        /// and it is claimable again. It used to be removed as it was sent, so a claimant who
+        /// dropped in that second, or had no room, lost it or had it dropped at their feet.
+        /// No answer at all -- the game closed -- and the claim times out
+        /// (MailDatabase.ClaimTimeout); the claimant's record of received letters stops the
+        /// retry from paying twice.
+        /// </summary>
         private static bool TryDeliverClaim(long sender, string mailId, long recipient)
         {
             string token = Guid.NewGuid().ToString("N");
             var entry = MailDatabase.BeginClaim(mailId, recipient, token);
             if (entry == null) return false;
 
-            if (!Deliver(sender, entry, recipient))
+            if (!TryReadParcel(entry, out string itemName, out int quality, out int amount))
             {
+                if (entry.IsMessage && MailDatabase.CompleteClaim(mailId, recipient, token)) return true;
                 MailDatabase.ReleaseClaim(mailId, recipient, token);
                 return false;
             }
 
-            if (MailDatabase.CompleteClaim(mailId, recipient, token)) return true;
-
-            // Do not unlock after the parcel was sent: retrying could duplicate it. Keeping
-            // the persisted "delivering" state makes the exceptional case visible and safe
-            // for administrative reconciliation.
-            Plugin.Log.LogError($"NpcValheim: delivered mail {mailId} but could not finalize its claim");
-            return false;
+            Plugin.Log.LogInfo($"NpcValheim: mail {entry.Id} on its way to {recipient}: {amount}x {itemName}");
+            Respond(sender, "claim", PackClaim(entry.Id, token, itemName, quality, amount));
+            return true;
         }
 
-        /// <summary>Sends the parcel to the claimant's own machine, the only place their
-        /// inventory can be written. Validated here so the client is only ever told to create
-        /// something TrySpawn would also have accepted.</summary>
-        private static bool Deliver(long sender, MailEntry entry, long recipient)
+        /// <summary>What a letter carries, validated so the client is only ever told to create
+        /// something TrySpawn would also have accepted. False for a written message.</summary>
+        private static bool TryReadParcel(MailEntry entry, out string itemName, out int quality, out int amount)
         {
-            if (entry == null || entry.PlayerId != recipient) return false;
+            itemName = "";
+            quality = 1;
+            amount = 0;
+            if (entry == null) return false;
 
-            string itemName;
-            int amount, quality;
             if (entry.IsCoins)
             {
                 itemName = MarketplaceNpc.CoinPrefabName;
                 amount = entry.Coins;
-                quality = 1;
             }
             else if (!string.IsNullOrEmpty(entry.ItemName) && entry.Amount > 0)
             {
@@ -402,21 +428,49 @@ namespace NpcValheim.Npc
                 amount = entry.Amount;
                 quality = Mathf.Max(1, entry.Quality);
             }
-            else
+            else return false;
+
+            if (amount > 0 && amount <= ItemSpawner.MaxDeliverableAmount(itemName)) return true;
+            Plugin.Log.LogWarning($"NpcValheim: refused to deliver mail parcel {amount}x {itemName}");
+            return false;
+        }
+
+        /// <summary>
+        /// Server: the claimant's answer, "id;token;ok|full" per line. Only claims this
+        /// character has in flight are touched; anything else -- a stale token, a letter that
+        /// is not theirs -- is ignored and times out like an unanswered claim.
+        /// </summary>
+        private static void RPC_ClaimAnswer(long sender, string packed)
+        {
+            if (ZNet.instance == null || !ZNet.instance.IsServer()) return;
+            if (!NpcRequestGuard.AllowRate(sender, "mail-claim-answer", 10, 2f))
             {
-                // Written messages have no attachment. Claiming one is just an acknowledgement.
-                return entry.IsMessage;
+                Plugin.Log.LogWarning($"NpcValheim: mail claim answer from peer {sender} dropped by the rate limit");
+                return;
+            }
+            long playerId = GameApi.GetPlayerId(sender);
+            if (playerId == 0L)
+            {
+                Plugin.Log.LogWarning($"NpcValheim: mail claim answer from peer {sender} with no character; the claims will time out");
+                return;
             }
 
-            if (amount <= 0 || amount > ItemSpawner.MaxDeliverableAmount(itemName))
+            var owners = PlayerDirectory.IdsFor(playerId, GameApi.GetPlayerName(sender));
+            foreach (var line in (packed ?? "").Split('\n').Take(MaxClaimsPerRequest * 2))
             {
-                Plugin.Log.LogWarning($"NpcValheim: refused to deliver mail parcel {amount}x {itemName}");
-                return false;
+                var parts = line.Split(';');
+                if (parts.Length != 3 || (parts[2] != "ok" && parts[2] != "full")) continue;
+                bool received = parts[2] == "ok";
+                var entry = MailDatabase.FinishClaim(parts[0], parts[1], received, owners);
+                if (entry == null)
+                    Plugin.Log.LogWarning($"NpcValheim: mail claim answer '{parts[2]}' for {parts[0]} from {playerId} matches no claim in flight");
+                else if (received)
+                    Plugin.Log.LogInfo($"NpcValheim: mail {entry.Id} delivered to {playerId}: " +
+                                       (entry.IsCoins ? $"{entry.Coins} coins" : $"{entry.Amount}x {entry.ItemName}"));
+                else
+                    Plugin.Log.LogInfo($"NpcValheim: mail {entry.Id} stays in the box of {playerId}: no room in the bag");
             }
-
-            Plugin.Log.LogInfo($"NpcValheim: mail {entry.Id} delivered to {recipient}: {amount}x {itemName}");
-            Respond(sender, "parcel", PackStack(itemName, quality, amount));
-            return true;
+            SendMailTo(sender);
         }
 
         private static void ReturnAttachment(long sender, string itemName, int quality, int amount)
@@ -505,6 +559,9 @@ namespace NpcValheim.Npc
                 case "status":
                     _status = payload ?? "";
                     break;
+                case "claim":
+                    ReceiveClaim(payload);
+                    break;
                 case "parcel":
                     ReceiveStack(payload, "Recebido");
                     break;
@@ -517,8 +574,161 @@ namespace NpcValheim.Npc
             }
         }
 
-        /// <summary>Client side: a parcel arrives, or a refused one comes back. The bag first;
-        /// only what does not fit goes on the ground, at the player's feet, and they are told.</summary>
+        // ---- client: claiming a parcel ----
+
+        /// <summary>Letters this character has already put in the bag, in its own save
+        /// (m_customData, written with the inventory). A claim the server sends again --
+        /// the answer was lost, the game closed before it left -- is answered without paying
+        /// twice. The server times a claim out in seconds, so the last hundred is plenty.</summary>
+        private const string ReceivedKey = "NpcValheim_CorreioRecebidas";
+        private const int MaxReceived = 100;
+
+        private static readonly System.Reflection.FieldInfo CustomDataField =
+            AccessTools.Field(typeof(Player), "m_customData");
+
+        private static readonly List<string> _answers = new List<string>();
+        private static bool _answerFlushPending;
+        private static bool _answerNeedsSave;
+        private static int _answerFull;
+        private static string _answerFullWhat = "";
+
+        /// <summary>
+        /// Client side: a parcel the server is holding for me. All of it goes into the bag or
+        /// none of it does: with no room the letter stays in the box and the player is told
+        /// to make space, instead of the old "caiu no chão".
+        /// </summary>
+        private static void ReceiveClaim(string packed)
+        {
+            if (!TryUnpackClaim(packed, out string mailId, out string token,
+                    out string itemName, out int quality, out int amount))
+            {
+                Plugin.Log.LogError($"NpcValheim: malformed mail claim \"{packed}\"");
+                return;
+            }
+            var player = Player.m_localPlayer;
+            if (player == null)
+            {
+                // No answer: the claim times out on the server and the letter stays.
+                Plugin.Log.LogWarning($"NpcValheim: mail claim {mailId} arrived with no local player");
+                return;
+            }
+
+            var received = ReadReceived(player);
+            if (received != null && received.Contains(ReceivedEntry(mailId)))
+            {
+                Plugin.Log.LogInfo($"NpcValheim: mail {mailId} was already received; confirming only");
+                QueueAnswer(mailId, token, true);
+                return;
+            }
+
+            if (!ItemSpawner.FitsInBag(player, itemName, amount))
+            {
+                Plugin.Log.LogInfo($"NpcValheim: mail {mailId}: no room for {amount}x {itemName}");
+                _answerFull++;
+                _answerFullWhat = $"{amount}x {ItemNames.Display(itemName)}";
+                QueueAnswer(mailId, token, false);
+                return;
+            }
+
+            int given = ItemSpawner.GiveToInventory(player, itemName, amount, quality);
+            Plugin.Log.LogInfo($"NpcValheim: mail {mailId} {amount}x {itemName}: {given} went into the bag");
+            if (given > 0)
+                player.Message(MessageHud.MessageType.TopLeft,
+                    $"Recebido: {given}x {ItemNames.Display(itemName)}", given, null);
+            int left = amount - given;
+            if (left > 0)
+            {
+                // The room was counted a moment ago and the bag still said no. Rare, and the
+                // letter is half delivered by now, so the rest goes where it always went.
+                Plugin.Log.LogError($"NpcValheim: mail {mailId}: {left}x {itemName} did not fit after all");
+                ItemSpawner.TrySpawn(itemName, left, quality,
+                    player.transform.position + Vector3.up + UnityEngine.Random.insideUnitSphere * 0.5f);
+                player.Message(MessageHud.MessageType.Center,
+                    $"Inventário cheio: {left}x {ItemNames.Display(itemName)} caiu no chão", 0, null);
+            }
+
+            if (received != null) Remember(player, received, mailId);
+            _answerNeedsSave = true;
+            QueueAnswer(mailId, token, true);
+        }
+
+        private static List<string> ReadReceived(Player player)
+        {
+            if (CustomDataField?.GetValue(player) is not Dictionary<string, string> data) return null;
+            return data.TryGetValue(ReceivedKey, out string value) && !string.IsNullOrEmpty(value)
+                ? value.Split(',').ToList()
+                : new List<string>();
+        }
+
+        private static void Remember(Player player, List<string> received, string mailId)
+        {
+            if (CustomDataField?.GetValue(player) is not Dictionary<string, string> data) return;
+            received.Add(ReceivedEntry(mailId));
+            if (received.Count > MaxReceived) received.RemoveRange(0, received.Count - MaxReceived);
+            data[ReceivedKey] = string.Join(",", received);
+        }
+
+        /// <summary>The record is comma-separated; a mail id never holds one, but it is kept out anyway.</summary>
+        private static string ReceivedEntry(string mailId) => mailId.Replace(',', '_');
+
+        /// <summary>Answers go out together, a moment later: a "Receber tudo" brings up to
+        /// MaxClaimsPerRequest parcels at once, and the character is saved once for all of
+        /// them -- before the answer, because an answered letter is gone for good.</summary>
+        private static void QueueAnswer(string mailId, string token, bool received)
+        {
+            _answers.Add(mailId + ";" + token + ";" + (received ? "ok" : "full"));
+            if (_answerFlushPending) return;
+            _answerFlushPending = true;
+            if (Game.instance != null) Game.instance.StartCoroutine(FlushAnswersSoon());
+            else FlushAnswers();
+        }
+
+        private static IEnumerator FlushAnswersSoon()
+        {
+            yield return new WaitForSecondsRealtime(0.2f);
+            FlushAnswers();
+        }
+
+        private static void FlushAnswers()
+        {
+            _answerFlushPending = false;
+            if (_answers.Count == 0) return;
+            if (_answerNeedsSave) SaveProfile();
+
+            string packed = string.Join("\n", _answers);
+            _answers.Clear();
+            _answerNeedsSave = false;
+            ZRoutedRpc.instance?.InvokeRoutedRPC(GameApi.GetServerPeerId(), RpcClaimAnswer, new object[] { packed });
+
+            if (_answerFull <= 0) return;
+            _status = _answerFull == 1
+                ? $"Inventário cheio: não cabe {_answerFullWhat}. A encomenda continua no Correio; libere espaço e tente de novo."
+                : $"Inventário cheio: {_answerFull} encomendas continuam no Correio. Libere espaço e tente de novo.";
+            Player.m_localPlayer?.Message(MessageHud.MessageType.Center, _status, 0, null);
+            _answerFull = 0;
+        }
+
+        /// <summary>Saves the character now (the game's own save comes every few minutes).
+        /// Same call as the Deadheim Troca, by reflection: the method's signature has moved
+        /// between game versions.</summary>
+        private static void SaveProfile()
+        {
+            try
+            {
+                var method = AccessTools.Method(typeof(Game), "SavePlayerProfile");
+                if (method == null || Game.instance == null) return;
+                method.Invoke(Game.instance, method.GetParameters()
+                    .Select(p => p.ParameterType == typeof(bool) ? (object)false : null).ToArray());
+            }
+            catch (Exception e)
+            {
+                Plugin.Log.LogWarning($"NpcValheim: could not save the character after a mail claim: {e.Message}");
+            }
+        }
+
+        /// <summary>Client side: a refused parcel comes back, or a parcel from a server that
+        /// does not wait for an answer yet. The bag first; only what does not fit goes on the
+        /// ground, at the player's feet, and they are told.</summary>
         private static void ReceiveStack(string packed, string caption)
         {
             var player = Player.m_localPlayer;
@@ -548,6 +758,27 @@ namespace NpcValheim.Npc
         private static string PackStack(string itemName, int quality, int amount) =>
             itemName + ";" + quality.ToString(CultureInfo.InvariantCulture) + ";" +
             amount.ToString(CultureInfo.InvariantCulture);
+
+        /// <summary>"id;token;item;quality;amount".</summary>
+        private static string PackClaim(string mailId, string token, string itemName, int quality, int amount) =>
+            mailId + ";" + token + ";" + PackStack(itemName, quality, amount);
+
+        private static bool TryUnpackClaim(string packed, out string mailId, out string token,
+            out string itemName, out int quality, out int amount)
+        {
+            mailId = token = "";
+            var parts = (packed ?? "").Split(new[] { ';' }, 3);
+            if (parts.Length != 3 || parts[0].Length == 0 || parts[1].Length == 0)
+            {
+                itemName = "";
+                quality = 1;
+                amount = 0;
+                return false;
+            }
+            mailId = parts[0];
+            token = parts[1];
+            return TryUnpackStack(parts[2], out itemName, out quality, out amount);
+        }
 
         private static bool TryUnpackStack(string packed, out string itemName, out int quality, out int amount)
         {

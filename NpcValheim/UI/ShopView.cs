@@ -362,6 +362,7 @@ namespace NpcValheim.UI
             Plugin.Log.LogInfo($"NpcValheim: buy click {amount}x {item} ({lots} lot(s) of {offer.Lot}) at {offer.Gold} -> cost {cost}, " +
                                $"coins in bag {MarketplaceNpc.CoinsOf(Player)}");
             if (cost <= 0) { Say("Quantidade inválida."); return; }
+            if (!market.CanSendPaidRequest(Player, out string tooFar)) { Say(tooFar); return; }
 
             // The coins leave the pocket here. The server closes the sale at the price this
             // row showed even if an admin changes it meanwhile, and never pays coins back on
@@ -372,9 +373,8 @@ namespace NpcValheim.UI
                 return;
             }
 
-            // The server answers with a delivery (MarketplaceNpc.DeliverLocal), which reports what reached the bag and
-            // what (if anything) had to go on the floor. Promising the floor up front
-            // described the old delivery, and described it wrongly.
+            // The server answers with a status: the goods are in the Caixa Postal
+            // (MarketplaceNpc.PostPurchase), or why the purchase was refused.
             market.RequestBuyFromNpc(item, amount, cost);
         }
 

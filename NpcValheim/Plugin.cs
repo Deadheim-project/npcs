@@ -20,7 +20,7 @@ namespace NpcValheim
     {
         public const string Guid = "com.npcvalheim.mod";
         public const string Name = "NpcValheim";
-        public const string Version = "0.1.85";
+        public const string Version = "0.1.86";
 
         internal static ManualLogSource Log;
         private Harmony _harmony;
@@ -63,6 +63,7 @@ namespace NpcValheim
         internal static ConfigEntry<string> TeleportCostItem;
         internal static ConfigEntry<int> TeleportCostAmount;
         internal static ConfigEntry<float> TeleportCooldownSeconds;
+        internal static ConfigEntry<bool> TeleportBlockOre;
         internal static ConfigEntry<int> ListingDurationHours;
         internal static ConfigEntry<int> MaxListingsPerPlayer;
         internal static ConfigEntry<int> VipMaxListings;
@@ -164,6 +165,9 @@ namespace NpcValheim
                 "How many of CostItem are consumed per teleport");
             TeleportCooldownSeconds = Config.Bind("Teleporter", "CooldownSeconds", 0f,
                 "Seconds a player must wait between uses of the same teleporter");
+            TeleportBlockOre = Config.Bind("Teleporter", "BlockOre", true,
+                "Bloqueia o teleportador (rotas e Voltar para casa) para quem carrega minério ou metal, como o portal do jogo. " +
+                "O mundo com 'teletransportar tudo' libera mesmo ligado.");
 
             QuestJournalKey = Config.Bind("Quests", "JournalKey", UnityEngine.KeyCode.J,
                 "Opens the player's quest journal from anywhere in the world.");
@@ -198,10 +202,14 @@ namespace NpcValheim
             VipMaxListings = Config.Bind("Marketplace", "VipMaxListings", 100,
                 "Máximo de anúncios simultâneos para jogadores VIP. Só vale quando o quadro tem menos de 400 anúncios no total.");
 
+            // Capped at what one delivery can carry: above it the server refuses the parcel as
+            // "Anexo inválido", after the client has already taken it out of the bag.
             VipMaxAttachments = Config.Bind("Mail", "VipMaxAttachments", 3,
-                "Quantos stacks de itens um jogador VIP pode anexar a uma única carta. " +
-                "Não-VIP pode enviar apenas 1 stack por carta. " +
-                "O destinatário nunca é limitado para receber.");
+                new ConfigDescription(
+                    "Quantos stacks de itens um jogador VIP pode anexar a uma única carta. " +
+                    "Não-VIP pode enviar apenas 1 stack por carta. " +
+                    "O destinatário nunca é limitado para receber.",
+                    new AcceptableValueRange<int>(1, Npc.ItemSpawner.MaxStacksPerDelivery)));
 
             // Same text as the ShopItems line of the retired DonationShop mod, so the server's
             // value can be pasted in as it is. Synchronized for display only: the server reads
@@ -351,6 +359,7 @@ namespace NpcValheim
             ConfigSync.AddConfigEntry(TeleportCostItem).SynchronizedConfig = true;
             ConfigSync.AddConfigEntry(TeleportCostAmount).SynchronizedConfig = true;
             ConfigSync.AddConfigEntry(TeleportCooldownSeconds).SynchronizedConfig = true;
+            ConfigSync.AddConfigEntry(TeleportBlockOre).SynchronizedConfig = true;
             ConfigSync.AddConfigEntry(ListingDurationHours).SynchronizedConfig = true;
             ConfigSync.AddConfigEntry(MaxListingsPerPlayer).SynchronizedConfig = true;
             ConfigSync.AddConfigEntry(VipMaxListings).SynchronizedConfig = true;

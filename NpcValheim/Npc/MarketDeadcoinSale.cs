@@ -15,9 +15,9 @@ namespace NpcValheim.Npc
     /// balance and leave one trail. The boss lock on the counter (BossPass.CanTrade) gates this
     /// exactly as it gates Coins, through <see cref="MarketplaceNpc.ItemOpenFor"/>.
     ///
-    /// Delivery goes out through the merchant's global answer (MarketplaceNpc.SendDelivery),
-    /// the same one a Coins purchase uses: an instance RPC is dropped by a client that does
-    /// not have the NPC loaded, and the Deadcoins are already charged by then.
+    /// The goods go to the buyer's Caixa Postal (MarketplaceNpc.PostPurchase), the same as a
+    /// Coins purchase: the Deadcoins are already charged by then, and a letter survives the
+    /// buyer dropping or a full bag.
     /// </summary>
     internal static class MarketDeadcoinSale
     {
@@ -239,7 +239,7 @@ namespace NpcValheim.Npc
                 }
             }
 
-            npc.DeliverDeadcoinsPurchase(sender, item, amount, after);
+            npc.DeliverDeadcoinsPurchase(sender, playerId, item, amount, after);
 
             Plugin.Log.LogInfo($"NpcValheim: {who} bought {amount}x {item} for {total} Deadcoins at {where} ({balance} -> {after})");
             try { DeadcoinLedger.AppendLogLine($"{who} bought {amount}x {item} at the Mercador {where} for {total} Deadcoins (balance {balance} -> {after})"); }

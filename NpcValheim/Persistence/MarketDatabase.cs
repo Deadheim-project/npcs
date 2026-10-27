@@ -415,6 +415,35 @@ namespace NpcValheim.Persistence
             return true;
         }
 
+        /// <summary>
+        /// A purchase from a merchant's counter, posted to the buyer's Caixa Postal: one
+        /// letter per stack, so a letter only ever needs one free slot and a nearly full bag
+        /// takes what it can and leaves the rest in the box. Written to the outbox first, so a
+        /// box at MailDatabase.MaxMailPerPlayer, or a crash before the mail is written, only
+        /// delays the letters. Returns the number of letters.
+        /// </summary>
+        public static int QueuePurchase(string purchaseId, long playerId, string subject,
+            string itemName, int amount, int maxStack)
+        {
+            if (_file == null) throw new InvalidOperationException("market.db is not open");
+            if (string.IsNullOrEmpty(purchaseId) || playerId == 0L || string.IsNullOrEmpty(itemName) || amount <= 0)
+                return 0;
+            maxStack = Math.Max(1, maxStack);
+
+            int letters = 0;
+            _file.Write(db =>
+            {
+                for (int left = amount; left > 0; letters++)
+                {
+                    int stack = Math.Min(maxStack, left);
+                    QueueItem(db, purchaseId + "-" + letters, playerId, subject, itemName, 1, stack);
+                    left -= stack;
+                }
+            });
+            FlushOutbox();
+            return letters;
+        }
+
         /// <summary>Retries committed deliveries. The mail id is the outbox id, so a crash
         /// after inserting mail but before deleting the outbox row is harmless.</summary>
         public static int FlushOutbox()
