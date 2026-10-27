@@ -3,6 +3,7 @@ using System.Linq;
 using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
+using NpcValheim.Integration;
 using NpcValheim.Npc;
 
 namespace NpcValheim.UI
@@ -47,21 +48,24 @@ namespace NpcValheim.UI
             if (teleporter == null) return;
 
             var destinations = teleporter.GetDestinations();
+            int homes = HomeRows(teleporter);
 
             // Affordability is part of the signature, not just the price: the row has to go
             // from "can't pay" to "can pay" the moment the player picks up the last coin,
             // and nothing else would tell it to redraw.
-            var signature = string.Join("|", destinations.Select(d =>
-                $"{d.Id}:{d.Name}:{teleporter.CostOf(d)}:{teleporter.CostItemOf(d)}:{CanPay(teleporter, d)}"));
+            var signature = $"home:{homes}:{DeadheimTotemApi.LocalCount()}:{teleporter.CostOf(null)}:" +
+                            $"{teleporter.CostItemOf(null)}:{CanPay(teleporter, null)}|" +
+                            string.Join("|", destinations.Select(d =>
+                                $"{d.Id}:{d.Name}:{teleporter.CostOf(d)}:{teleporter.CostItemOf(d)}:{CanPay(teleporter, d)}"));
             if (signature != _signature)
             {
                 _signature = signature;
-                Rebuild(teleporter, destinations);
+                Rebuild(teleporter, destinations, homes);
             }
 
-            bool any = destinations.Count > 0;
+            bool any = destinations.Count > 0 || homes > 0;
             _empty.gameObject.SetActive(!any);
-            _header.text = any ? $"Destinos — {destinations.Count}" : "Destinos";
+            _header.text = destinations.Count > 0 ? $"Destinos — {destinations.Count}" : "Destinos";
 
             // The "ask an admin" half of this stays hidden from visitors: pointing someone at
             // a tab they cannot open is noise.
@@ -82,12 +86,50 @@ namespace NpcValheim.UI
             return player != null && ItemNames.Count(player.GetInventory(), item, -1) >= cost;
         }
 
-        private void Rebuild(TeleporterNpc teleporter, List<TeleportDestination> destinations)
+        /// <summary>
+        /// How many "Voltar para casa" rows this teleporter shows: none when it does not offer the
+        /// trip (or Deadheim has no totem), one per totem the server counted for this player, and
+        /// one while the count is unknown or zero -- the server answers that trip either way.
+        /// </summary>
+        private static int HomeRows(TeleporterNpc teleporter)
+        {
+            if (!teleporter.HomeEnabled || !DeadheimTotemApi.IsAvailable || !DeadheimTotemApi.IsEnabled()) return 0;
+            int count = DeadheimTotemApi.LocalCount();
+            return count >= 999 || count <= 1 ? 1 : Mathf.Min(count, TeleporterNpc.MaxHomes);
+        }
+
+        private void Rebuild(TeleporterNpc teleporter, List<TeleportDestination> destinations, int homes)
         {
             foreach (var row in _rows) if (row != null) Object.Destroy(row);
             _rows.Clear();
 
             var player = Player;
+
+            // Home first: it is the one trip every visitor who came by totem is here to take.
+            bool noTotem = DeadheimTotemApi.LocalCount() == 0;
+            for (int i = 0; i < homes; i++)
+            {
+                var row = Row(_list, 56f);
+                _rows.Add(row.gameObject);
+
+                string title = homes > 1 ? $"Voltar para casa {i + 1}" : "Voltar para casa";
+                string detail = noTotem
+                    ? "Você ainda não construiu um Totem da Cidade"
+                    : "Para o Totem da Cidade que você construiu";
+                var label = ValheimUi.CreateLabel(row,
+                    $"{title}\n<size=12><color=#9a9188>{detail}</color></size>",
+                    16, ValheimUi.Beige, TextAlignmentOptions.Left);
+                Flexible(label.gameObject);
+
+                AddFare(row, teleporter, null);
+
+                int index = i;
+                var go = ValheimUi.CreateButton(row, "Viajar", 130f, 42f, 16);
+                go.onClick.AddListener(() =>
+                {
+                    Teleporter?.TryGoHome(Player, index);
+                });
+            }
 
             foreach (var destination in destinations)
             {
@@ -98,38 +140,15 @@ namespace NpcValheim.UI
                     ? Vector3.Distance(player.transform.position, destination.Position)
                     : 0f;
 
-                // The fare belongs on the row, not only inside TryTeleport: charging someone
-                // and only then telling them the price is how you get a player who thinks the
-                // teleporter ate their coins.
-                int cost = teleporter.CostOf(destination);
-                string costItem = teleporter.CostItemOf(destination);
-                bool free = cost <= 0 || string.IsNullOrEmpty(costItem);
-                bool affordable = CanPay(teleporter, destination);
-
                 var label = ValheimUi.CreateLabel(row,
                     $"{destination.Name}\n<size=12><color=#9a9188>{distance:0} m daqui</color></size>",
                     16, ValheimUi.Beige, TextAlignmentOptions.Left);
                 Flexible(label.gameObject);
 
-                // The fare gets its own little group instead of riding along in the label's
-                // second line: a row-level icon lines up with the *row*, so next to a two-line
-                // label it sat beside the wrong line entirely.
-                var fare = Row(row, 40f, spacing: 4f);
-                ValheimUi.SetWidth(fare.gameObject, 96f);
-
-                if (free)
-                {
-                    var freeLabel = ValheimUi.CreateLabel(fare, "grátis", 14, ValheimUi.Muted,
-                        TextAlignmentOptions.Right);
-                    Flexible(freeLabel.gameObject);
-                }
-                else
-                {
-                    var amount = ValheimUi.CreateLabel(fare, cost.ToString(), 16,
-                        affordable ? ValheimUi.Yellow : ValheimUi.Danger, TextAlignmentOptions.Right);
-                    Flexible(amount.gameObject);
-                    ValheimUi.CreateItemIcon(fare, costItem, 26f);
-                }
+                // The fare belongs on the row, not only inside TryTeleport: charging someone
+                // and only then telling them the price is how you get a player who thinks the
+                // teleporter ate their coins.
+                AddFare(row, teleporter, destination);
 
                 var id = destination.Id;
                 var go = ValheimUi.CreateButton(row, "Viajar", 130f, 42f, 16);
@@ -141,6 +160,32 @@ namespace NpcValheim.UI
                     Teleporter?.TryTeleport(Player, id);
                 });
             }
+        }
+
+        /// <summary>The fare of a route (null = the teleporter's default, which the trip home pays).
+        /// Its own little group instead of riding along in the label's second line: a row-level
+        /// icon lines up with the *row*, so next to a two-line label it sat beside the wrong line.</summary>
+        private void AddFare(RectTransform row, TeleporterNpc teleporter, TeleportDestination destination)
+        {
+            int cost = teleporter.CostOf(destination);
+            string costItem = teleporter.CostItemOf(destination);
+            bool free = cost <= 0 || string.IsNullOrEmpty(costItem);
+
+            var fare = Row(row, 40f, spacing: 4f);
+            ValheimUi.SetWidth(fare.gameObject, 96f);
+
+            if (free)
+            {
+                var freeLabel = ValheimUi.CreateLabel(fare, "grátis", 14, ValheimUi.Muted,
+                    TextAlignmentOptions.Right);
+                Flexible(freeLabel.gameObject);
+                return;
+            }
+
+            var amount = ValheimUi.CreateLabel(fare, cost.ToString(), 16,
+                CanPay(teleporter, destination) ? ValheimUi.Yellow : ValheimUi.Danger, TextAlignmentOptions.Right);
+            Flexible(amount.gameObject);
+            ValheimUi.CreateItemIcon(fare, costItem, 26f);
         }
     }
 }
