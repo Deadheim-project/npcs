@@ -48,7 +48,12 @@ namespace NpcValheim.UI
                 ("Mensagem", new AdminMessageView()),
                 ("Jogadores", new AdminPlayersView()),
                 ("Buffs", new AdminBuffView()),
+                // The same pages as the Mestre da Arena / Intendente admin tabs; with no NPC they
+                // go through the arena's global channel, where the server checks the adminlist.
+                ("Arenas", new ArenaAdminView()),
+                ("Intendente", new ArenaVendorAdminView()),
             }, Player.m_localPlayer);
+            Arena.ArenaClient.RequestData();
         }
     }
 
