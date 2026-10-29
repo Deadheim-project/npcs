@@ -64,9 +64,25 @@ namespace NpcValheim.Arena
         private static float _nextGateMessage;
         private static float _nextTick;
         private static float _nextData;
+        private static string _lastState;
+
+        // The last player who hit this one, for the knockout: poison and fire ticks carry no
+        // attacker, so a match finished by a burn or a poison would credit nobody.
+        private static long _lastAttacker;
+        private static float _lastAttackerAt;
+        internal const float DotCreditSeconds = 30f;
+
+        internal static void NoteAttacker(long playerId)
+        {
+            if (playerId == 0L) return;
+            _lastAttacker = playerId;
+            _lastAttackerAt = Time.time;
+        }
 
         internal static void ResetSession()
         {
+            _lastState = null;
+            _lastAttacker = 0L;
             Snapshot = new ArenaSnapshot();
             Revision++;
             LastMessage = null;
@@ -107,7 +123,13 @@ namespace NpcValheim.Arena
                 case State:
                     Snapshot = ArenaSnapshot.Parse(payload);
                     SnapshotAt = Time.realtimeSinceStartup;
-                    Revision++;
+                    // The server answers every poll (5 s) with the whole state. Counting only a
+                    // state that changed keeps the pages from being redrawn under the reader.
+                    if (!string.Equals(payload, _lastState, System.StringComparison.Ordinal))
+                    {
+                        _lastState = payload;
+                        Revision++;
+                    }
                     break;
 
                 case Notice:
@@ -214,7 +236,7 @@ namespace NpcValheim.Arena
             MapName = Str(f, 6);
             _gateRadius = Mathf.Max(2f, Float(f, 7, 6f));
             var map = Side > ArenaSide.Green
-                ? ArenaSettingsParser.ParseMaps(ArenaConfig.Maps?.Value, null)
+                ? ArenaConfig.ConfiguredMaps(null)
                     .FirstOrDefault(m => string.Equals(m.Name, MapName, System.StringComparison.OrdinalIgnoreCase))
                 : null;
             _gate = map != null ? map.SpawnOf(Side) : _spawn;
@@ -306,6 +328,9 @@ namespace NpcValheim.Arena
                 var zdo = ZDOMan.instance.GetZDO(lastHit.m_attacker);
                 if (zdo != null) attacker = zdo.GetLong(ZDOVars.s_playerID, 0L);
             }
+            if (attacker == 0L && _lastAttacker != 0L && Time.time - _lastAttackerAt <= DotCreditSeconds)
+                attacker = _lastAttacker;
+            _lastAttacker = 0L;
             ArenaNet.Request(ActKo, attacker.ToString());
             player.Message(MessageHud.MessageType.Center, "Você foi derrotado!", 0, null);
         }

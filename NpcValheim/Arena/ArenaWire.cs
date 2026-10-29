@@ -52,7 +52,6 @@ namespace NpcValheim.Arena
         internal const string ActReturned = "match.returned";
         internal const string ActLadder = "ladder";
         internal const string ActVendorBuy = "vendor.buy";
-        internal const string ActAdminDistribute = "admin.distribute";
         internal const string ActAdminGrant = "admin.grant";
         internal const string ActAdminZoneSet = "admin.zone.set";
         internal const string ActAdminZoneRemove = "admin.zone.del";
@@ -61,6 +60,7 @@ namespace NpcValheim.Arena
         internal const string ActAdminOfferSet = "admin.offer.set";
         internal const string ActAdminOfferRemove = "admin.offer.del";
         internal const string ActAdminPointsSet = "admin.points.set";
+        internal const string ActAdminChallengeSet = "admin.challenge.set";
 
         internal static string Clean(string text) =>
             string.IsNullOrEmpty(text) ? "" : text.Replace('\t', ' ').Replace('\n', ' ').Replace('\r', ' ');

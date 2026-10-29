@@ -28,6 +28,10 @@ namespace NpcValheim.Npc
         /// <summary>Deadcoins for this level/mount, or 0 when it cannot be bought with Deadcoins.</summary>
         public int Deadcoins;
 
+        /// <summary>Boss (creature prefab, as in [BossPass] Bosses) the buyer must have killed
+        /// first -- a pass won by a kill or given by an admin, not one bought; empty = none.</summary>
+        public string RequiredBoss = "";
+
         public string Title => Kind == MountOfferKind.Skill
             ? MontariasApi.RankName(Rank)
             : MontariasApi.MountName(Id);
@@ -59,7 +63,7 @@ namespace NpcValheim.Npc
             "mount=neck;price=300;currency=deadcoins|mount=deer;price=300;currency=deadcoins|" +
             "mount=boar;price=1000;currency=coins|mount=boar;price=300;currency=deadcoins|" +
             "mount=eikthyr;price=300;currency=deadcoins|" +
-            "mount=moder;price=10000;currency=coins|mount=moder;price=600;currency=deadcoins";
+            "mount=moder;price=10000;currency=coins;boss=Fader|mount=moder;price=600;currency=deadcoins;boss=Fader";
 
         /// <summary>Defaults this mod shipped before; a config still holding one of them was
         /// never edited and is moved to <see cref="DefaultOffers"/>. Until 0.1.67 only the
@@ -102,7 +106,7 @@ namespace NpcValheim.Npc
                 var text = entry.Trim();
                 if (text.Length == 0) continue;
 
-                string skill = null, mount = null, currency = null;
+                string skill = null, mount = null, currency = null, boss = null;
                 bool hasPrice = false;
                 int price = 0;
                 foreach (var field in text.Split(';'))
@@ -114,6 +118,7 @@ namespace NpcValheim.Npc
                     if (key.Equals("skill", StringComparison.OrdinalIgnoreCase)) skill = value;
                     else if (key.Equals("mount", StringComparison.OrdinalIgnoreCase)) mount = value;
                     else if (key.Equals("currency", StringComparison.OrdinalIgnoreCase)) currency = value;
+                    else if (key.Equals("boss", StringComparison.OrdinalIgnoreCase)) boss = value;
                     else if (key.Equals("price", StringComparison.OrdinalIgnoreCase))
                         hasPrice = int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out price);
                 }
@@ -166,6 +171,8 @@ namespace NpcValheim.Npc
                     byKey[offerKey] = offer;
                     offers.Add(offer);
                 }
+                // On either currency's entry, it locks the mount or level as a whole.
+                if (!string.IsNullOrEmpty(boss)) offer.RequiredBoss = boss;
 
                 if (paidWithDeadcoins)
                 {
@@ -230,6 +237,7 @@ namespace NpcValheim.Npc
                 {
                     if (offer.Gold > 0 && merged.Gold <= 0) merged.Gold = offer.Gold;
                     if (offer.Deadcoins > 0 && merged.Deadcoins <= 0) merged.Deadcoins = offer.Deadcoins;
+                    if (merged.RequiredBoss.Length == 0) merged.RequiredBoss = offer.RequiredBoss;
                     continue;
                 }
                 byKey[key] = offer;
@@ -237,6 +245,29 @@ namespace NpcValheim.Npc
             }
             return result;
         }
+
+        /// <summary>Whether the character has killed the boss: a pass won by a kill, or one an
+        /// admin gave. A pass bought with Coins or Deadcoins does not count. Closed when the
+        /// ledger cannot be read.</summary>
+        internal static bool HasKilled(long playerId, string boss)
+        {
+            if (string.IsNullOrEmpty(boss)) return true;
+            try
+            {
+                return BossPassLedger.KindsOf(playerId).TryGetValue(boss, out string kind) && KillKind(kind);
+            }
+            catch (Exception e)
+            {
+                Plugin.Log.LogError($"NpcValheim: could not read {BossPassLedger.FileName}: {e.Message}");
+                return false;
+            }
+        }
+
+        internal static bool KillKind(string kind) =>
+            kind == BossPassLedger.KindKill || kind == BossPassLedger.KindAdmin;
+
+        /// <summary>The boss as players read it ("Fader"), from [BossPass] Bosses.</summary>
+        internal static string BossName(string boss) => BossPassCatalog.Find(boss)?.Name ?? boss;
 
         private static string ResolveMountId(string id, HashSet<string> mounts)
         {
@@ -377,6 +408,13 @@ namespace NpcValheim.Npc
             {
                 Refuse(sender, $"the buyer saw {shownPrice} {shownCurrency}, the price is {price} {shownCurrency}",
                     $"O preço de {offer.Title} agora é {price} {currencyName}. Confira e compre de novo.");
+                return;
+            }
+
+            if (!string.IsNullOrEmpty(offer.RequiredBoss) && !MountCatalog.HasKilled(GameApi.GetPlayerId(sender), offer.RequiredBoss))
+            {
+                Refuse(sender, $"{offer.Id} needs a {offer.RequiredBoss} kill",
+                    $"{offer.Title} só pode ser comprada depois de matar {MountCatalog.BossName(offer.RequiredBoss)}.");
                 return;
             }
 

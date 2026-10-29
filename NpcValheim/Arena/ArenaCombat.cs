@@ -80,7 +80,9 @@ namespace NpcValheim.Arena
                     var attacker = PlayerZdo(hit.m_attacker);
                     var self = ZdoOf(victim);
                     if (attacker == null || attacker == self) return true;
-                    return !Forbidden(attacker, self);
+                    if (Forbidden(attacker, self)) return false;
+                    ArenaClient.NoteAttacker(attacker.GetLong(ZDOVars.s_playerID, 0L));
+                    return true;
                 }
                 catch (Exception e)
                 {

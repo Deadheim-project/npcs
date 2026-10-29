@@ -68,6 +68,7 @@ namespace NpcValheim.UI
 
             _seenMessage = MountTrainer.MessageRevision;
             MontariasApi.RequestLocalState();
+            BossPass.RequestLocalStatus();
         }
 
         public override void Refresh()
@@ -97,7 +98,7 @@ namespace NpcValheim.UI
             // from the server on their own (ServerSync, Montarias' state push).
             string raw = Plugin.MountTrainerOffers.Value ?? "";
             string signature = raw + "#" + MontariasApi.IsAvailable + "#" + MontariasApi.LocalKnown() + "#" +
-                               MontariasApi.LocalRevision();
+                               MontariasApi.LocalRevision() + "#" + BossPass.LocalPassSignature;
             if (signature != _signature)
             {
                 _signature = signature;
@@ -137,6 +138,7 @@ namespace NpcValheim.UI
                 string detail = offer.Kind == MountOfferKind.Skill
                     ? $"velocidade das montarias {MontariasApi.RankSpeed(offer.Rank) * 100f:0}%{CastText(MontariasApi.RankCast(offer.Rank))}"
                     : $"exige {MontariasApi.RankName(MontariasApi.MountRequiredRank(offer.Id))}";
+                if (offer.RequiredBoss.Length > 0) detail += $" · só depois de matar {MountCatalog.BossName(offer.RequiredBoss)}";
                 // A4: an offer can price both currencies; say whichever it actually has.
                 string priceText = offer.Gold > 0 && offer.Deadcoins > 0
                     ? $"{offer.Gold} Coins ou {offer.Deadcoins} Deadcoins"
@@ -176,6 +178,12 @@ namespace NpcValheim.UI
         private static string StateOf(MountOffer offer, bool known, int rank)
         {
             if (!known) return "Consultando...";
+            if (offer.RequiredBoss.Length > 0)
+            {
+                if (!BossPass.Known) return "Consultando...";
+                if (!MountCatalog.KillKind(BossPass.LocalPassKind(offer.RequiredBoss)))
+                    return $"Mate {MountCatalog.BossName(offer.RequiredBoss)} antes";
+            }
             if (offer.Kind == MountOfferKind.Skill)
             {
                 if (rank >= offer.Rank) return "Aprendida";

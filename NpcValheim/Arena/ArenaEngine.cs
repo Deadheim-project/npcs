@@ -27,6 +27,9 @@ namespace NpcValheim.Arena
         void Send(long playerId, string kind, string payload);
         void MailItem(long playerId, string subject, string prefab, int amount);
         void MailLetter(long playerId, string subject, string body);
+        /// <summary>Adds Deadcoins to the balance of someone online; false (and why) when the
+        /// account cannot be found or written, and then nothing changed.</summary>
+        bool CreditDeadcoins(long playerId, int amount, string reason, out int balance, out string error);
         /// <summary>Challenge: puts the match's creature in the world; false when it could not.</summary>
         bool SpawnCreature(long matchId, ArenaChallengeDef def, Vector3 at, float yaw);
         /// <summary>Whether the match's creature still exists -- false once it died.</summary>
@@ -256,11 +259,6 @@ namespace NpcValheim.Arena
                 case ActData: SendState(playerId); return;
                 case ActHello: Hello(playerId); return;
                 case ActLadder: SendLadder(playerId, Int(f, 0)); return;
-                case ActAdminDistribute:
-                    if (!isAdmin) { Say(playerId, "Só admin."); return; }
-                    int paid = DistributePoints(manual: true);
-                    Say(playerId, $"Pontos de Arena distribuídos para {paid} jogador(es).");
-                    return;
                 case ActAdminGrant:
                     if (!isAdmin) { Say(playerId, "Só admin."); return; }
                     AdminGrant(playerId, Str(f, 0), Int(f, 1));
@@ -1651,12 +1649,16 @@ namespace NpcValheim.Arena
         /// PorPartida: Arena Points to everyone who finished the match inside the arena, the
         /// winners' amount or the losers' (a draw pays the loss), up to the daily cap. A match
         /// that never opened its gates (or a challenge whose creature never came) pays nothing.
+        /// A PvP win nobody was knocked out for -- the other side fled, declined or dropped --
+        /// pays the loss amount: otherwise two friends trading walk-overs farm the win to the cap.
         /// </summary>
         private void PayMatchPoints(ArenaMatch match, int winner)
         {
             if (match.StartedAt <= 0 || (match.IsChallenge && !match.CreatureSpawned)) return;
             string mode = ArenaSettingsParser.MatchPointsMode(match.IsChallenge, match.Size);
             if (!_t.MatchPoints.TryGetValue(mode, out var pay) || (pay.Win == 0 && pay.Loss == 0)) return;
+            bool walkover = !match.IsChallenge && winner != ArenaSide.None &&
+                            !match.Seats.Any(s => s.Side != winner && s.State == SeatState.Entered && !s.Offline && !s.Alive);
 
             int today = int.Parse(_host.UtcNow.ToString("yyyyMMdd", CultureInfo.InvariantCulture), CultureInfo.InvariantCulture);
             var changed = new List<ArenaPlayerRecord>();
@@ -1668,19 +1670,26 @@ namespace NpcValheim.Arena
                     p.PointsDay = today;
                     p.DayPoints = 0;
                 }
-                int amount = winner != ArenaSide.None && winner == seat.Side ? pay.Win : pay.Loss;
+                bool won = winner != ArenaSide.None && winner == seat.Side;
+                int due = won && !walkover ? pay.Win : pay.Loss;
+                int amount = due;
                 if (_t.MatchPointsDailyCap > 0) amount = Math.Min(amount, Math.Max(0, _t.MatchPointsDailyCap - p.DayPoints));
+                bool capped = amount < due;
                 amount = Math.Min(amount, Math.Max(0, _t.MaxPoints - p.Points));
                 if (amount <= 0)
                 {
-                    if (_t.MatchPointsDailyCap > 0 && p.DayPoints >= _t.MatchPointsDailyCap)
-                        Say(seat.PlayerId, $"Você já ganhou o máximo de {_t.MatchPointsDailyCap} Pontos de Arena por partida hoje.");
+                    if (due <= 0) continue;
+                    Say(seat.PlayerId, capped
+                        ? $"Você já ganhou o máximo de {_t.MatchPointsDailyCap} Pontos de Arena por partida hoje."
+                        : $"Seu saldo está no teto de {_t.MaxPoints} Pontos de Arena: gaste no Intendente para voltar a ganhar.");
                     continue;
                 }
                 p.Points += amount;
                 p.DayPoints += amount;
                 changed.Add(p);
-                Say(seat.PlayerId, $"+{amount} Pontos de Arena. Saldo: {p.Points}.");
+                string note = won && walkover ? " (vitória sem luta paga como derrota)"
+                    : capped ? $" (teto diário de {_t.MatchPointsDailyCap} atingido)" : "";
+                Say(seat.PlayerId, $"+{amount} Pontos de Arena{note}. Saldo: {p.Points}.");
             }
             if (changed.Count > 0)
             {
@@ -2045,8 +2054,10 @@ namespace NpcValheim.Arena
             foreach (var seat in match.Seats) SendState(seat.PlayerId);
         }
 
-        // ------------------------------------------------------------------ weekly points
+        // ------------------------------------------------------------------ weekly games
 
+        /// <summary>Arena Points come only from the matches (PorPartida); the week only counts
+        /// games for the team page and starts over every Tuesday 15:00 UTC.</summary>
         private void CheckWeek()
         {
             var now = _host.UtcNow;
@@ -2055,45 +2066,15 @@ namespace NpcValheim.Arena
                 _state.ResetKey = _t.ResetKey;
                 _state.NextResetUtcTicks = _t.NextResetAfter(now).Ticks;
                 _db.SaveState(_state);
-                _host.Log($"Arena: próxima distribuição de pontos em {new DateTime(_state.NextResetUtcTicks, DateTimeKind.Utc):yyyy-MM-dd HH:mm} UTC");
                 return;
             }
             if (now.Ticks >= _state.NextResetUtcTicks)
-                DistributePoints(manual: false);
+                ResetWeek();
         }
 
-        /// <summary>
-        /// ArenaTeamMgr::DistributeArenaPoints. A team that played at least 10 games this week
-        /// pays each member who played at least 30% of them; a player on several teams gets the
-        /// best of them, not the sum. Then every team's week starts over.
-        /// </summary>
-        internal int DistributePoints(bool manual)
+        /// <summary>Every team's week starts over. Nothing is paid.</summary>
+        internal void ResetWeek()
         {
-            var award = new Dictionary<long, int>();
-            foreach (var team in _teams.Values)
-            {
-                if (team.WeekGames < _t.GamesPerWeek) continue;
-                int required = ArenaRules.RequiredGames(team.WeekGames, _t.ParticipationPercent);
-                foreach (var m in team.Members)
-                {
-                    int points = m.WeekGames >= required
-                        ? ArenaRules.Points(team.Size, team.Rating, m.PersonalRating, _t.PointsRate)
-                        : 0;
-                    award[m.PlayerId] = award.TryGetValue(m.PlayerId, out int had) ? Math.Max(had, points) : points;
-                }
-            }
-
-            var paidPlayers = new List<ArenaPlayerRecord>();
-            foreach (var kv in award.Where(kv => kv.Value > 0))
-            {
-                var p = Player(kv.Key, NameOf(kv.Key));
-                int before = p.Points;
-                p.Points = Math.Min(Math.Max(0, _t.MaxPoints), p.Points + kv.Value);
-                paidPlayers.Add(p);
-                _host.MailLetter(kv.Key, "Pontos de Arena",
-                    $"Você recebeu {p.Points - before} Pontos de Arena pelo período. Saldo: {p.Points}.");
-            }
-
             foreach (var team in _teams.Values)
             {
                 if (team.WeekGames == 0 && team.Members.All(m => m.WeekGames == 0)) continue;
@@ -2109,23 +2090,10 @@ namespace NpcValheim.Arena
             var now = _host.UtcNow;
             _state.LastDistributionUtcTicks = now.Ticks;
             _state.Week++;
-            if (!manual || _state.NextResetUtcTicks <= now.Ticks)
-            {
-                _state.ResetKey = _t.ResetKey;
-                _state.NextResetUtcTicks = _t.NextResetAfter(now).Ticks;
-            }
-            _db.SaveWeek(_teams.Values, paidPlayers, _state);
-
-            _host.Log($"Arena: pontos do período distribuídos ({(manual ? "manual" : "automático")}, {_t.IntervalText}): " +
-                      string.Join(", ", paidPlayers.Select(p => $"{p.Name} +{award[p.PlayerId]}")));
-            foreach (var id in _players.Keys.Where(_host.IsOnline).ToList())
-            {
-                Say(id, award.TryGetValue(id, out int got) && got > 0
-                    ? $"Pontos de Arena do período: +{got}."
-                    : "Os Pontos de Arena do período foram distribuídos.", alert: true);
-                SendState(id);
-            }
-            return paidPlayers.Count;
+            _state.ResetKey = _t.ResetKey;
+            _state.NextResetUtcTicks = _t.NextResetAfter(now).Ticks;
+            _db.SaveWeek(_teams.Values, new List<ArenaPlayerRecord>(), _state);
+            _host.Log("Arena: jogos da semana zerados");
         }
 
         private void AdminGrant(long admin, string name, int points)
@@ -2171,6 +2139,22 @@ namespace NpcValheim.Arena
                     Say(id, $"Requer rating {offer.Rating}{where}. O seu é {best}.", alert: true);
                     return;
                 }
+            }
+
+            if (offer.IsDeadcoins)
+            {
+                // The Deadcoins first: if the ledger refuses, no point is taken.
+                if (!_host.CreditDeadcoins(id, offer.Amount, $"Intendente da Arena, {offer.Points} Pontos de Arena", out int coins, out string error))
+                {
+                    Say(id, "Não foi possível creditar os Deadcoins: " + error + " Nenhum ponto foi cobrado.", alert: true);
+                    return;
+                }
+                me.Points -= offer.Points;
+                _db.SavePlayers(new[] { me });
+                _host.Log($"Arena: {me.Name} trocou {offer.Points} pontos por {offer.Amount} Deadcoins (saldo {me.Points} pontos, {coins} Deadcoins)");
+                Say(id, $"+{offer.Amount} Deadcoins (saldo {coins}). Pontos de Arena: {me.Points}.", alert: true);
+                SendState(id);
+                return;
             }
 
             me.Points -= offer.Points;

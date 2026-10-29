@@ -46,7 +46,7 @@ namespace NpcValheim.UI
             ArenaClient.RequestData();
         }
 
-        /// <summary>1v1 is always on: the arena is 1v1, 2v2, FFA and PvE.</summary>
+        /// <summary>1v1 is always on: the arena is 1v1, 2v2, 3v3, FFA and PvE.</summary>
         protected static bool SoloOn => true;
 
         protected static bool IsSolo(int size) => SoloOn && size == 1;
@@ -486,9 +486,7 @@ namespace NpcValheim.UI
                 }
             }
             Gap();
-            Line($"Para receber Pontos de Arena: o time joga {ArenaConfig.GamesPerWeek?.Value ?? 10}+ partidas no período " +
-                 $"({ArenaConfig.Current.IntervalText}) e você joga " +
-                 $"{ArenaConfig.ParticipationPercent?.Value ?? 30}% delas.", 13, ValheimUi.Muted, 22f);
+            Line("Pontos de Arena vêm de cada partida terminada dentro da arena (vitória vale mais que derrota).", 13, ValheimUi.Muted, 22f);
 
             if (solo) return;
             var actions = ButtonRow();
@@ -805,13 +803,15 @@ namespace NpcValheim.UI
         protected override void Rebuild()
         {
             var s = ArenaClient.Snapshot;
+            var offers = ArenaSettingsParser.ParseOffers(ArenaConfig.VendorItems?.Value, null)
+                .Where(o => ArenaConfig.MaxOfferAmount(o.Prefab) > 0).ToList();
+
             Line($"<color=#9a9188>Seus Pontos de Arena:</color> {s.Points}", 18, ValheimUi.Yellow, 30f);
-            Line($"Os itens chegam pela Caixa Postal. A distribuição de pontos é {ArenaConfig.Current.IntervalText}; " +
-                 "cada partida também dá pontos.", 13, ValheimUi.Muted, 22f);
+            Line(offers.Any(o => o.IsDeadcoins)
+                ? "Os itens chegam pela Caixa Postal; Deadcoins vão direto para o seu saldo. Pontos de Arena vêm de cada partida."
+                : "Os itens chegam pela Caixa Postal. Pontos de Arena vêm de cada partida.", 13, ValheimUi.Muted, 22f);
             Gap();
 
-            var offers = ArenaSettingsParser.ParseOffers(ArenaConfig.VendorItems?.Value, null)
-                .Where(o => ItemSpawner.MaxDeliverableAmount(o.Prefab) > 0).ToList();
             if (offers.Count == 0)
             {
                 Line("O Intendente não tem nada à venda.", 15, ValheimUi.Muted);
@@ -822,7 +822,7 @@ namespace NpcValheim.UI
             {
                 var o = offer;
                 var row = ButtonRow(48f);
-                ValheimUi.CreateItemIcon(row, o.Prefab, 38f);
+                ArenaConfig.OfferIcon(row, o.Prefab, 38f);
                 string requirement = "";
                 bool meets = true;
                 if (o.Rating > 0)
@@ -832,7 +832,7 @@ namespace NpcValheim.UI
                     string where = o.Bracket > 1 ? $" ({ArenaRules.BracketName(o.Bracket)}+)" : "";
                     requirement = $"   <color={(meets ? "#73db6b" : "#ee6b57")}>requer rating {o.Rating}{where}</color>";
                 }
-                Cell(row, $"{o.Amount}x {ItemNames.Display(o.Prefab)}\n<size=13><color=#9a9188>{o.Points} pontos</color>{requirement}</size>", 15);
+                Cell(row, $"{o.Amount}x {ArenaConfig.OfferName(o.Prefab)}\n<size=13><color=#9a9188>{o.Points} pontos</color>{requirement}</size>", 15);
                 var buy = Btn(row, "Comprar", 120f, () => Buy(o));
                 buy.interactable = meets && s.Points >= o.Points;
             }
@@ -853,7 +853,7 @@ namespace NpcValheim.UI
             if (Time.unscaledTime - _sentAt < 2f) { Say("Aguarde a compra anterior."); return; }
             _sentAt = Time.unscaledTime;
             Ask(ArenaWire.ActVendorBuy, $"{offer.Prefab}\n{offer.Points}");
-            Say($"Comprando {offer.Amount}x {ItemNames.Display(offer.Prefab)}...");
+            Say($"Comprando {offer.Amount}x {ArenaConfig.OfferName(offer.Prefab)}...");
         }
     }
 
@@ -873,12 +873,17 @@ namespace NpcValheim.UI
             CreateList(Vector2.zero, new Vector2(0f, -76f));
         }
 
-        protected override string Signature() => base.Signature() + ":" + ArenaConfig.VendorItems?.Value;
+        // Only the list: the arena state the base page follows has nothing to show here, and
+        // redrawing on it reset the scroll under the admin every few seconds.
+        protected override string Signature() => ArenaConfig.VendorItems?.Value ?? "";
 
         private void Save()
         {
-            string prefab = OfferForm.Resolve(_form.Item.text);
-            if (prefab == null) { Say("Escolha um item que o jogo conhece."); return; }
+            string typed = (_form.Item.text ?? "").Trim();
+            string prefab = string.Equals(typed, ArenaSettingsParser.DeadcoinsPrefab, StringComparison.OrdinalIgnoreCase)
+                ? ArenaSettingsParser.DeadcoinsPrefab
+                : OfferForm.Resolve(_form.Item.text);
+            if (prefab == null) { Say("Escolha um item que o jogo conhece (ou escreva Deadcoins)."); return; }
             int? amount = _form.Number(0), points = _form.Number(1), rating = _form.Number(2), bracket = _form.Number(3);
             if (amount == null || amount <= 0 || points == null || points <= 0)
             {
@@ -892,7 +897,7 @@ namespace NpcValheim.UI
             }
             var offer = new ArenaOffer { Prefab = prefab, Amount = amount.Value, Points = points.Value, Rating = rating.Value, Bracket = bracket.Value };
             Ask(ArenaWire.ActAdminOfferSet, ArenaSettingsParser.FormatOffer(offer));
-            Say($"Salvando {offer.Amount}x {ItemNames.Display(prefab)}...");
+            Say($"Salvando {offer.Amount}x {ArenaConfig.OfferName(prefab)}...");
         }
 
         protected override void Rebuild()
@@ -909,14 +914,15 @@ namespace NpcValheim.UI
             {
                 var o = offer;
                 var row = ButtonRow(48f);
-                ValheimUi.CreateItemIcon(row, o.Prefab, 38f);
-                int max = ItemSpawner.MaxDeliverableAmount(o.Prefab);
+                ArenaConfig.OfferIcon(row, o.Prefab, 38f);
+                int max = ArenaConfig.MaxOfferAmount(o.Prefab);
                 string fault = max <= 0 ? "   <color=#ee6b57>não é item do jogo: fora da venda</color>"
                     : o.Amount > max ? $"   <color=#ee6b57>mais que uma entrega ({max}): fora da venda</color>" : "";
                 string requirement = o.Rating > 0
                     ? $" · rating {o.Rating}{(o.Bracket > 1 ? $" ({ArenaRules.BracketName(o.Bracket)}+)" : "")}"
                     : "";
-                Cell(row, $"{o.Amount}x {ItemNames.Display(o.Prefab)}  <size=12><color=#9a9188>{o.Prefab}</color></size>\n" +
+                Cell(row, $"{o.Amount}x {ArenaConfig.OfferName(o.Prefab)}  <size=12><color=#9a9188>" +
+                          (o.IsDeadcoins ? "vai para o saldo de Deadcoins" : o.Prefab) + "</color></size>\n" +
                           $"<size=13><color=#9a9188>{o.Points} pontos{requirement}</color>{fault}</size>", 15);
                 Btn(row, "Editar", 90f, () => _form.Load(o.Prefab, o.Amount, o.Points, o.Rating, o.Bracket));
                 Btn(row, "Remover", 100f, () => Ask(ArenaWire.ActAdminOfferRemove, o.Prefab));
@@ -941,7 +947,6 @@ namespace NpcValheim.UI
         private TMP_InputField _mapName;
         private TMP_InputField _matchPoints;
         private TMP_InputField _matchPointsCap;
-        private TMP_InputField _interval;
 
         // The arena being put together: each start is taken where the admin stands when the
         // button is pressed, and nothing reaches the server until Salvar.
@@ -949,6 +954,12 @@ namespace NpcValheim.UI
         private float _goldYaw, _greenYaw;
         // What the arena being built is for; nothing marked = everything.
         private readonly ArenaMapDef _usage = new ArenaMapDef();
+
+        // The challenge being edited ([Arena - Desafio N]): a draft the form fills, loaded
+        // from the cfg by Editar and kept across redraws until Salvar.
+        private int _chSlot = -1;
+        private bool _chOn;
+        private string _chName = "", _chCreature = "", _chLevel = "", _chHealth = "", _chReward = "", _chAmount = "", _chExtras = "";
 
         protected override void OnBuild()
         {
@@ -1021,10 +1032,6 @@ namespace NpcValheim.UI
             ValheimUi.SetWidth(capHint.gameObject, 70f);
             _matchPointsCap = ValheimUi.CreateInputField(pts,
                 (ArenaConfig.MatchPointsDailyCap?.Value ?? 300).ToString(CultureInfo.InvariantCulture), 70f, 34f);
-            var intervalHint = ValheimUi.CreateLabel(pts, "distribuir a cada (h):", 15, ValheimUi.Muted, TextAlignmentOptions.Left);
-            ValheimUi.SetWidth(intervalHint.gameObject, 150f);
-            _interval = ValheimUi.CreateInputField(pts,
-                (ArenaConfig.ResetIntervalHours?.Value ?? 168).ToString(CultureInfo.InvariantCulture), 70f, 34f);
             ValheimUi.CreateButton(pts, "Salvar", 90f, 34f, 14).onClick.AddListener(SavePoints);
             CreateList(Vector2.zero, new Vector2(0f, -178f));
         }
@@ -1035,7 +1042,7 @@ namespace NpcValheim.UI
             var points = ArenaSettingsParser.ParseMatchPoints(_matchPoints.text, problems);
             if (problems.Count > 0) { Say(problems[0]); return; }
             Ask(ArenaWire.ActAdminPointsSet,
-                ArenaSettingsParser.FormatMatchPoints(points) + "\n" + _matchPointsCap.text.Trim() + "\n" + _interval.text.Trim());
+                ArenaSettingsParser.FormatMatchPoints(points) + "\n" + _matchPointsCap.text.Trim());
             Say("Salvando os pontos por partida...");
         }
 
@@ -1153,10 +1160,103 @@ namespace NpcValheim.UI
             Ask(ArenaWire.ActAdminZoneSet, $"{name}\n{radius.ToString(CultureInfo.InvariantCulture)}");
         }
 
+        // The cfg only, not the arena state: that changes every few seconds during a match, and
+        // each redraw put the saved values back in the boxes being filled in (the "Salvar não
+        // pega" of the points line) and threw away a click landing on a rebuilt button.
         protected override string Signature() =>
-            base.Signature() + ":" + ArenaConfig.Maps?.Value + ":" + ArenaDeadheim.ZonesText + ":" +
-            ArenaConfig.MatchPoints?.Value + ":" + ArenaConfig.MatchPointsDailyCap?.Value + ":" + ArenaConfig.ResetIntervalHours?.Value + ":" +
-            ArenaConfig.ResetDay?.Value + ":" + ArenaConfig.ResetHourUtc?.Value;
+            ArenaConfig.MapsText() + ":" + ArenaDeadheim.ZonesText + ":" +
+            ArenaConfig.MatchPoints?.Value + ":" + ArenaConfig.MatchPointsDailyCap?.Value + ":" + ChallengesText() + ":" + _chSlot;
+
+        private static string ChallengesText() =>
+            string.Join("|", ArenaConfig.ChallengeSlots.Select(s => string.Join(";", s.On.Value, s.Name.Value, s.Creature.Value,
+                s.Level.Value, s.Health.Value.ToString(CultureInfo.InvariantCulture), s.RewardItem.Value, s.RewardAmount.Value, s.ExtraRewards.Value)));
+
+        private void LoadChallenge(int slot)
+        {
+            var s = ArenaConfig.ChallengeSlots[slot];
+            _chSlot = slot;
+            _chOn = s.On.Value;
+            _chName = s.Name.Value;
+            _chCreature = s.Creature.Value;
+            _chLevel = s.Level.Value.ToString(CultureInfo.InvariantCulture);
+            _chHealth = s.Health.Value.ToString("0.##", CultureInfo.InvariantCulture);
+            _chReward = s.RewardItem.Value;
+            _chAmount = s.RewardAmount.Value.ToString(CultureInfo.InvariantCulture);
+            _chExtras = s.ExtraRewards.Value;
+            Invalidate();
+        }
+
+        private void StepCreature(int delta)
+        {
+            var list = ArenaSettingsParser.ChallengeCreatures;
+            int at = Array.FindIndex(list, c => string.Equals(c, _chCreature, StringComparison.OrdinalIgnoreCase));
+            _chCreature = list[((at < 0 ? 0 : at + delta) % list.Length + list.Length) % list.Length];
+            Invalidate();
+        }
+
+        private TMP_InputField Field(RectTransform row, string value, float width, Action<string> set)
+        {
+            var field = ValheimUi.CreateInputField(row, value ?? "", width, 34f);
+            if (width <= 0f) Flexible(field.gameObject);
+            field.onValueChanged.AddListener(v => set(v));
+            return field;
+        }
+
+        private void SaveChallenge()
+        {
+            if (_chSlot < 0) return;
+            Ask(ArenaWire.ActAdminChallengeSet, string.Join("\n", (_chSlot + 1).ToString(CultureInfo.InvariantCulture),
+                _chOn ? "1" : "0", _chName.Trim(), _chCreature, _chLevel.Trim(), _chHealth.Trim(), _chReward.Trim(),
+                _chAmount.Trim(), (_chExtras ?? "").Replace("\n", " ").Trim()));
+            Say($"Salvando o Desafio {_chSlot + 1}...");
+        }
+
+        /// <summary>The challenges against a creature, each slot of the cfg, and the form of the
+        /// one being edited.</summary>
+        private void ChallengeSection()
+        {
+            Heading("Desafios (PvE)");
+            Line("O grupo enfrenta a criatura numa arena com uso PvE. Clique Editar num desafio, ajuste e clique Salvar. " +
+                 "Nível 1 = sem estrela, 3 = duas estrelas; Vida multiplica a vida por cima do nível. A recompensa vai pelo correio.",
+                13, ValheimUi.Muted, 40f);
+            for (int i = 0; i < ArenaConfig.ChallengeSlots.Count; i++)
+            {
+                var s = ArenaConfig.ChallengeSlots[i];
+                int slot = i;
+                var row = ButtonRow();
+                string reward = s.RewardItem.Value.Length > 0 && s.RewardAmount.Value > 0
+                    ? $"{s.RewardAmount.Value}x {ItemNames.Display(s.RewardItem.Value)}" : "sem recompensa";
+                if (s.ExtraRewards.Value.Length > 0) reward += " + " + s.ExtraRewards.Value;
+                Cell(row, $"{i + 1}. {(s.On.Value ? "<color=#73db6b>ligado</color>" : "<color=#9a9188>desligado</color>")} · " +
+                          $"{s.Name.Value} · {s.Creature.Value} nível {s.Level.Value} · vida x{s.Health.Value.ToString("0.##", CultureInfo.InvariantCulture)} · {reward}", 14);
+                Btn(row, slot == _chSlot ? "Editando" : "Editar", 90f, () => LoadChallenge(slot));
+            }
+            if (_chSlot < 0) return;
+
+            Line($"Editando o Desafio {_chSlot + 1}", 15, ValheimUi.Yellow, 26f);
+            var top = ButtonRow();
+            Btn(top, _chOn ? "Ligado" : "Desligado", 110f, () => { _chOn = !_chOn; Invalidate(); });
+            Cell(top, "Nome:", 14, ValheimUi.Muted, 50f);
+            Field(top, _chName, 0f, v => _chName = v);
+            var mid = ButtonRow();
+            Cell(mid, "Criatura:", 14, ValheimUi.Muted, 70f);
+            Btn(mid, "<", 34f, () => StepCreature(-1));
+            Cell(mid, _chCreature, 14, ValheimUi.Yellow, 150f, TextAlignmentOptions.Center);
+            Btn(mid, ">", 34f, () => StepCreature(1));
+            Cell(mid, "Nível:", 14, ValheimUi.Muted, 50f);
+            Field(mid, _chLevel, 50f, v => _chLevel = v);
+            Cell(mid, "Vida x:", 14, ValheimUi.Muted, 56f);
+            Field(mid, _chHealth, 60f, v => _chHealth = v);
+            var low = ButtonRow();
+            Cell(low, "Recompensa:", 14, ValheimUi.Muted, 92f);
+            Field(low, _chReward, 110f, v => _chReward = v);
+            Field(low, _chAmount, 60f, v => _chAmount = v);
+            Cell(low, "Extras:", 14, ValheimUi.Muted, 56f);
+            Field(low, _chExtras, 0f, v => _chExtras = v);
+            Btn(low, "Salvar", 90f, SaveChallenge);
+            Line("Extras: item:qtd separados por vírgula (ex.: TrophyTroll:1,MeadHealthMajor:5). Recompensa = prefab (Coins = moedas).",
+                12, ValheimUi.Muted, 22f);
+        }
 
         private static string Here(Player player) =>
             ArenaConfig.Describe(player.transform.position, player.transform.eulerAngles.y);
@@ -1192,15 +1292,16 @@ namespace NpcValheim.UI
 
             Heading("Pontos de Arena por partida");
             Line("Quanto cada modo dá no fim da partida, a quem terminou dentro da arena: modo=vitória/derrota, " +
-                 "separados por | (ex.: 1v1=15/5|2v2=20/8|ffa=25/5|pve=10/0). Empate paga a derrota. Edite acima e clique Salvar.",
+                 "separados por | (ex.: 1v1=15/5|2v2=20/8|3v3=25/10|ffa=40/10|pve=10/0). Empate paga a derrota. Edite acima e clique Salvar.",
                 13, ValheimUi.Muted, 40f);
             Line(DescribePoints(), 14, ValheimUi.Beige, 40f);
             if (_matchPoints != null && !_matchPoints.isFocused && ArenaConfig.MatchPoints != null)
                 _matchPoints.text = ArenaConfig.MatchPoints.Value;
             if (_matchPointsCap != null && !_matchPointsCap.isFocused && ArenaConfig.MatchPointsDailyCap != null)
                 _matchPointsCap.text = ArenaConfig.MatchPointsDailyCap.Value.ToString(CultureInfo.InvariantCulture);
-            if (_interval != null && !_interval.isFocused && ArenaConfig.ResetIntervalHours != null)
-                _interval.text = ArenaConfig.ResetIntervalHours.Value.ToString(CultureInfo.InvariantCulture);
+            Gap();
+
+            ChallengeSection();
             Gap();
 
             Heading("Montar arena");
@@ -1217,8 +1318,8 @@ namespace NpcValheim.UI
                 _mapName.text = "";
                 Say("Rascunho limpo.");
             });
-            Line("Uso: para que a arena serve. Clique 1v1/2v2, FFA (todos contra todos) e/ou PvE (desafio contra criatura); " +
-                 "Só PvP = 1v1, 2v2 e FFA; Todos = qualquer partida. Cada fila só usa arenas do seu uso.", 13, ValheimUi.Muted, 40f);
+            Line("Uso: para que a arena serve. Clique 1v1/2v2/3v3, FFA (todos contra todos) e/ou PvE (desafio contra criatura); " +
+                 "Só PvP = 1v1, 2v2, 3v3 e FFA; Todos = qualquer partida. Cada fila só usa arenas do seu uso.", 13, ValheimUi.Muted, 40f);
             var usageRow = ButtonRow();
             foreach (int size in ArenaConfig.Current.ActiveBrackets)
             {
@@ -1295,7 +1396,7 @@ namespace NpcValheim.UI
             }
             // A map the server refuses (outside every area, say) is not in the list above, but
             // it is still in the cfg; name it so it can be removed from here too.
-            var refused = ArenaSettingsParser.ParseMaps(ArenaConfig.Maps?.Value, null)
+            var refused = ArenaConfig.ConfiguredMaps(null)
                 .Where(m => maps.All(ok => !string.Equals(ok.Name, m.Name, StringComparison.OrdinalIgnoreCase))).ToList();
             foreach (var map in refused)
             {
@@ -1309,15 +1410,6 @@ namespace NpcValheim.UI
             foreach (var problem in problems) Line(problem, 13, ValheimUi.Danger, 22f);
             Gap();
 
-            Heading("Pontos de Arena");
-            var tuning = ArenaConfig.Current;
-            Line($"Distribuição {tuning.IntervalText} (a cada {tuning.ResetIntervalHours} h, contando de {tuning.ResetDay} " +
-                 $"{tuning.ResetHourUtc:00}:00 UTC). Próxima: {tuning.NextResetAfter(DateTime.UtcNow).ToLocalTime():dd/MM HH:mm} (seu horário). " +
-                 "O intervalo se muda na linha de pontos acima.", 13, ValheimUi.Beige, 40f);
-            var actions = ButtonRow();
-            Btn(actions, "Distribuir os pontos do período agora", 360f, () => Ask(ArenaWire.ActAdminDistribute));
-            Line($"Paga o período como a distribuição automática ({tuning.GamesPerWeek} jogos, {tuning.ParticipationPercent}%) e zera os jogos do período.",
-                13, ValheimUi.Muted, 22f);
         }
     }
 }

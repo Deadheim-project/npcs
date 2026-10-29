@@ -42,7 +42,7 @@ namespace NpcValheim.Arena
                 _root = new GameObject("NpcValheim_ArenaGates");
                 var runner = _root.AddComponent<ArenaGateRunner>();
 
-                var map = ArenaSettingsParser.ParseMaps(ArenaConfig.Maps?.Value, null)
+                var map = ArenaConfig.ConfiguredMaps(null)
                     .FirstOrDefault(m => string.Equals(m.Name, mapName, StringComparison.OrdinalIgnoreCase));
                 foreach (int side in new[] { ArenaSide.Gold, ArenaSide.Green })
                 {

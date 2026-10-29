@@ -129,7 +129,7 @@ namespace NpcValheim.Arena
                 }
                 if (action == ArenaWire.ActAdminMapSet || action == ArenaWire.ActAdminMapRemove ||
                     action == ArenaWire.ActAdminOfferSet || action == ArenaWire.ActAdminOfferRemove ||
-                    action == ArenaWire.ActAdminPointsSet)
+                    action == ArenaWire.ActAdminPointsSet || action == ArenaWire.ActAdminChallengeSet)
                 {
                     HandleCfgEdit(sender, name, admin, action, payload ?? "");
                     return;
@@ -236,21 +236,24 @@ namespace NpcValheim.Arena
                         ArenaNet.Send(sender, ArenaWire.Notice, "Nome de arena inválido (sem ; ou |, até 32 letras).");
                         return;
                     }
-                    ArenaConfig.Maps.Value = ArenaSettingsParser.SetMap(ArenaConfig.Maps.Value, map);
-                    done = $"Arena \"{map.Name}\" salva (uso: {map.UsageLabel}).";
+                    int slot = ArenaConfig.SaveMap(map, out string full);
+                    if (slot == 0)
+                    {
+                        ArenaNet.Send(sender, ArenaWire.Notice, "Não salvei: " + full + ".");
+                        return;
+                    }
+                    done = $"Arena \"{map.Name}\" salva em [Arena - Local {slot}] (uso: {map.UsageLabel}).";
                     if (!ArenaDeadheim.CoversMap(map, out string why)) done += " Ainda não vale: " + why + ".";
                     break;
                 }
                 case ArenaWire.ActAdminMapRemove:
                 {
                     string map = payload.Trim();
-                    string after = ArenaSettingsParser.RemoveMap(ArenaConfig.Maps.Value, map, out bool removed);
-                    if (!removed)
+                    if (!ArenaConfig.RemoveMap(map))
                     {
                         ArenaNet.Send(sender, ArenaWire.Notice, $"Não há arena \"{map}\".");
                         return;
                     }
-                    ArenaConfig.Maps.Value = after;
                     done = $"Arena \"{map}\" removida.";
                     break;
                 }
@@ -263,7 +266,8 @@ namespace NpcValheim.Arena
                         return;
                     }
                     var offer = offers[0];
-                    int max = ItemSpawner.MaxDeliverableAmount(offer.Prefab);
+                    if (offer.IsDeadcoins) offer.Prefab = ArenaSettingsParser.DeadcoinsPrefab;
+                    int max = ArenaConfig.MaxOfferAmount(offer.Prefab);
                     if (max <= 0)
                     {
                         ArenaNet.Send(sender, ArenaWire.Notice, $"\"{offer.Prefab}\" não é um item que o jogo conhece.");
@@ -271,11 +275,11 @@ namespace NpcValheim.Arena
                     }
                     if (offer.Amount > max)
                     {
-                        ArenaNet.Send(sender, ArenaWire.Notice, $"{ItemNames.Display(offer.Prefab)}: no máximo {max} por entrega.");
+                        ArenaNet.Send(sender, ArenaWire.Notice, $"{ArenaConfig.OfferName(offer.Prefab)}: no máximo {max} por compra.");
                         return;
                     }
                     ArenaConfig.VendorItems.Value = ArenaSettingsParser.SetOffer(ArenaConfig.VendorItems.Value, offer);
-                    done = $"Intendente: {offer.Amount}x {ItemNames.Display(offer.Prefab)} por {offer.Points} pontos.";
+                    done = $"Intendente: {offer.Amount}x {ArenaConfig.OfferName(offer.Prefab)} por {offer.Points} pontos.";
                     break;
                 }
                 case ArenaWire.ActAdminOfferRemove:
@@ -288,13 +292,12 @@ namespace NpcValheim.Arena
                         return;
                     }
                     ArenaConfig.VendorItems.Value = after;
-                    done = $"Intendente: {ItemNames.Display(prefab)} retirado.";
+                    done = $"Intendente: {ArenaConfig.OfferName(prefab)} retirado.";
                     break;
                 }
                 case ArenaWire.ActAdminPointsSet:
                 {
-                    // "1v1=15/5|2v2=20/8|ffa=25/5|pve=10/0\n300\n168": the points per match, the daily
-                    // cap and the hours between two distributions.
+                    // "1v1=15/5|2v2=20/8|ffa=25/5|pve=10/0\n300": the points per match and the daily cap.
                     var lines = payload.Split('\n');
                     var points = ArenaSettingsParser.ParseMatchPoints(lines[0], problems);
                     if (problems.Count > 0)
@@ -310,21 +313,71 @@ namespace NpcValheim.Arena
                         ArenaNet.Send(sender, ArenaWire.Notice, "Teto diário inválido (0 = sem teto).");
                         return;
                     }
-                    int interval = ArenaConfig.ResetIntervalHours.Value;
-                    if (lines.Length > 2 && lines[2].Trim().Length > 0 &&
-                        (!int.TryParse(lines[2].Trim(), System.Globalization.NumberStyles.Integer,
-                            System.Globalization.CultureInfo.InvariantCulture, out interval) ||
-                         interval < ArenaTuning.MinResetIntervalHours || interval > ArenaTuning.MaxResetIntervalHours))
-                    {
-                        ArenaNet.Send(sender, ArenaWire.Notice,
-                            $"Intervalo de distribuição entre {ArenaTuning.MinResetIntervalHours} e {ArenaTuning.MaxResetIntervalHours} horas.");
-                        return;
-                    }
                     ArenaConfig.MatchPoints.Value = ArenaSettingsParser.FormatMatchPoints(points);
                     ArenaConfig.MatchPointsDailyCap.Value = cap;
-                    ArenaConfig.ResetIntervalHours.Value = interval;
-                    done = $"Pontos por partida: {ArenaConfig.MatchPoints.Value} · teto diário {(cap > 0 ? cap.ToString() : "nenhum")} · " +
-                           $"distribuição a cada {interval} h.";
+                    done = $"Pontos por partida: {ArenaConfig.MatchPoints.Value} · teto diário {(cap > 0 ? cap.ToString() : "nenhum")}.";
+                    break;
+                }
+                case ArenaWire.ActAdminChallengeSet:
+                {
+                    // "slot/ativo/nome/criatura/nivel/vida/recompensa/quantidade/extras", uma linha cada:
+                    // one [Arena - Desafio N] block, as the Battlemaster's form fills it.
+                    var f = payload.Split('\n');
+                    var inv = System.Globalization.CultureInfo.InvariantCulture;
+                    if (f.Length != 9 ||
+                        !int.TryParse(f[0].Trim(), System.Globalization.NumberStyles.Integer, inv, out int slot) ||
+                        slot < 1 || slot > ArenaConfig.ChallengeSlots.Count)
+                    {
+                        ArenaNet.Send(sender, ArenaWire.Notice, "Pedido de desafio malformado.");
+                        return;
+                    }
+                    string creature = System.Array.Find(ArenaSettingsParser.ChallengeCreatures,
+                        c => string.Equals(c, f[3].Trim(), StringComparison.OrdinalIgnoreCase));
+                    if (creature == null)
+                    {
+                        ArenaNet.Send(sender, ArenaWire.Notice, $"\"{f[3].Trim()}\" não está na lista de criaturas do desafio.");
+                        return;
+                    }
+                    if (!int.TryParse(f[4].Trim(), System.Globalization.NumberStyles.Integer, inv, out int level) || level < 1 || level > 10)
+                    {
+                        ArenaNet.Send(sender, ArenaWire.Notice, "Nível de 1 a 10.");
+                        return;
+                    }
+                    if (!float.TryParse(f[5].Trim().Replace(',', '.'), System.Globalization.NumberStyles.Float, inv, out float health) ||
+                        health < 0.1f || health > 100f)
+                    {
+                        ArenaNet.Send(sender, ArenaWire.Notice, "Vida de 0.1 a 100 (multiplicador).");
+                        return;
+                    }
+                    if (!int.TryParse(f[7].Trim(), System.Globalization.NumberStyles.Integer, inv, out int amount) || amount < 0 || amount > 9999)
+                    {
+                        ArenaNet.Send(sender, ArenaWire.Notice, "Quantidade da recompensa de 0 a 9999.");
+                        return;
+                    }
+                    string reward = f[6].Trim();
+                    if (reward.Length > 0 && ObjectDB.instance != null && ObjectDB.instance.GetItemPrefab(reward) == null)
+                    {
+                        ArenaNet.Send(sender, ArenaWire.Notice, $"\"{reward}\" não é um item que o jogo conhece (use o prefab, ex.: Coins).");
+                        return;
+                    }
+                    string label = "Desafio " + slot;
+                    var def = ArenaSettingsParser.MakeChallenge(label, f[2], creature, level, health, reward, amount, f[8], problems);
+                    if (def == null || problems.Count > 0)
+                    {
+                        ArenaNet.Send(sender, ArenaWire.Notice, problems.Count > 0 ? problems[0] : "Desafio inválido.");
+                        return;
+                    }
+                    var s = ArenaConfig.ChallengeSlots[slot - 1];
+                    s.On.Value = f[1].Trim() == "1";
+                    s.Name.Value = def.Name;
+                    s.Creature.Value = creature;
+                    s.Level.Value = level;
+                    s.Health.Value = health;
+                    s.RewardItem.Value = reward;
+                    s.RewardAmount.Value = amount;
+                    s.ExtraRewards.Value = f[8].Trim();
+                    done = $"{label} salvo: {def.Name} ({creature}, nível {level}, vida x{health.ToString("0.##", inv)})" +
+                           (s.On.Value ? ", ligado." : ", desligado.");
                     break;
                 }
                 default:
@@ -439,6 +492,44 @@ namespace NpcValheim.Arena
 
             public void MailLetter(long playerId, string subject, string body) =>
                 MailDatabase.SendMessage(playerId, 0L, "Mestre da Arena", subject, body);
+
+            public bool CreditDeadcoins(long playerId, int amount, string reason, out int balance, out string error)
+            {
+                balance = 0;
+                error = null;
+                if (!_online.TryGetValue(playerId, out var p))
+                {
+                    error = "você precisa estar online.";
+                    return false;
+                }
+                if (!Npc.DeadcoinLedger.TryResolveAccount(p.Peer, out string path, out string who))
+                {
+                    error = "o servidor não identificou a sua conta.";
+                    return false;
+                }
+                int before;
+                try
+                {
+                    if (!Npc.DeadcoinLedger.TryRead(path, out before))
+                    {
+                        Plugin.Log.LogError($"NpcValheim Arena: Deadcoins balance of {who} is not a number: {path}");
+                        error = "seu saldo de Deadcoins está ilegível no servidor. Fale com um admin.";
+                        return false;
+                    }
+                    balance = (int)Math.Min(int.MaxValue, (long)before + amount);
+                    Npc.DeadcoinLedger.Write(path, balance);
+                }
+                catch (Exception e)
+                {
+                    Plugin.Log.LogError($"NpcValheim Arena: could not credit {amount} Deadcoins to {who}: {e.Message}");
+                    error = "falha ao gravar o saldo.";
+                    return false;
+                }
+                try { Npc.DeadcoinLedger.AppendLogLine($"{who} got {amount} Deadcoins at the {reason} (balance {before} -> {balance})"); }
+                catch (Exception e) { Plugin.Log.LogWarning($"NpcValheim Arena: Deadcoins log not written: {e.Message}"); }
+                Npc.DeadcoinShop.SendBalance(p.Peer, balance);
+                return true;
+            }
 
             private readonly Dictionary<long, ZDOID> _creatures = new Dictionary<long, ZDOID>();
 

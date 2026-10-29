@@ -67,6 +67,17 @@ class Program
 
         public void MailItem(long playerId, string subject, string prefab, int amount) => Items.Add((playerId, prefab, amount));
         public void MailLetter(long playerId, string subject, string body) => Letters.Add((playerId, body));
+        public readonly Dictionary<long, int> Deadcoins = new Dictionary<long, int>();
+        public bool LedgerBroken;
+        public bool CreditDeadcoins(long playerId, int amount, string reason, out int balance, out string error)
+        {
+            error = LedgerBroken ? "falha ao gravar o saldo." : null;
+            Deadcoins.TryGetValue(playerId, out balance);
+            if (LedgerBroken) return false;
+            balance += amount;
+            Deadcoins[playerId] = balance;
+            return true;
+        }
         public void Log(string text) => Logs.Add(text);
         public void Warn(string text) => Logs.Add("WARN " + text);
 
@@ -233,19 +244,6 @@ class Program
                 ArenaRules.MatchmakerRatingMod(r.own, r.opp, r.won, t) == r.expect,
                 "got " + ArenaRules.MatchmakerRatingMod(r.own, r.opp, r.won, t));
 
-        (int size, int team, int personal, int expect)[] points =
-        {
-            (2, 1500, 1500, 261), (5, 1500, 1500, 344), (3, 1800, 1800, 669), (3, 2000, 1700, 534),
-            (3, 2000, 1900, 928), (5, 2400, 2400, 1395), (2, 0, 0, 261), (3, 1501, 1501, 303),
-        };
-        foreach (var p in points)
-            Check($"points {p.size}v{p.size} team {p.team} personal {p.personal} = {p.expect}",
-                ArenaRules.Points(p.size, p.team, p.personal, 1f) == p.expect, "got " + ArenaRules.Points(p.size, p.team, p.personal, 1f));
-
-        Check("30% of 10 games is 3", ArenaRules.RequiredGames(10, 30) == 3);
-        Check("30% of 11 games rounds up to 4", ArenaRules.RequiredGames(11, 30) == 4);
-        Check("30% of 20 games is 6", ArenaRules.RequiredGames(20, 30) == 6);
-        Check("a team with no games requires none", ArenaRules.RequiredGames(0, 30) == 0);
         Check("joining a team below 1000 starts at 0", ArenaRules.StartingPersonalRating(999, 0) == 0);
         Check("joining a 1000+ team starts at 1000", ArenaRules.StartingPersonalRating(1000, 0) == 1000);
         Check("a configured start wins", ArenaRules.StartingPersonalRating(500, 1200) == 1200);
@@ -831,7 +829,7 @@ class Program
     static void FreeForAll()
     {
         Section("FFA: everyone against everyone");
-        Check("the server default is 1v1 and 2v2 only", string.Join(",", new ArenaTuning().ActiveBrackets) == "1,2");
+        Check("the server default is 1v1, 2v2 and 3v3", string.Join(",", new ArenaTuning().ActiveBrackets) == "1,2,3");
         Check("the FFA goes by its own name", ArenaRules.BracketName(ArenaRules.FfaSize) == "FFA");
 
         var poco = UsageMap("Poço", "ffa", 100);
@@ -905,7 +903,7 @@ class Program
         Check("bad entries are named and left out", problems.Count == 3, string.Join(" / ", problems));
         Check("written back in the usual order",
             ArenaSettingsParser.FormatMatchPoints(parsed) == "1v1=15/5|2v2=20/20|ffa=25/5|pve=10/0", ArenaSettingsParser.FormatMatchPoints(parsed));
-        Check("the default line reads whole", ArenaSettingsParser.ParseMatchPoints(ArenaSettingsParser.DefaultMatchPoints, null).Count == 4);
+        Check("the default line reads whole", ArenaSettingsParser.ParseMatchPoints(ArenaSettingsParser.DefaultMatchPoints, null).Count == 5);
 
         // 1v1 skirmish: the winner gets the win, the loser the loss.
         var t = Tuning();
@@ -933,6 +931,17 @@ class Program
         Duel();
         Check("a new UTC day, a new cap", e.PlayerRecord(A).Points == 40, $"A={e.PlayerRecord(A).Points}");
 
+        // A walk-over (the other side leaves, nobody knocked out) pays the winner the loss.
+        h.Utc = h.Utc.AddDays(1);
+        Do(e, A, ArenaEngine.AtBattlemaster, ArenaWire.ActQueueJoin, "1\n0\n");
+        Do(e, B, ArenaEngine.AtBattlemaster, ArenaWire.ActQueueJoin, "1\n0\n");
+        EnterAll(e, e.MatchOf(A));
+        Advance(e, h, 61);
+        Do(e, B, "", ArenaWire.ActLeave);
+        Advance(e, h, 125);
+        Check("a win with nobody knocked out pays the loss (+5), the one who left 0",
+            e.PlayerRecord(A).Points == 45 && e.PlayerRecord(B).Points == 15, $"A={e.PlayerRecord(A).Points} B={e.PlayerRecord(B).Points}");
+
         // Someone who walks out before the end gets nothing; a mode left out pays nothing.
         t = FfaTuning();
         t.MatchPoints = ArenaSettingsParser.ParseMatchPoints("ffa=25/5", null);
@@ -953,53 +962,19 @@ class Program
 
     static void WeeklyPoints()
     {
-        Section("weekly Arena Points (ArenaTeamMgr::DistributeArenaPoints)");
+        Section("no periodic payout: points come only from matches");
         var (e, h, _) = NewEngine();
         var lobos = MakeTeam(e, A, B, "Lobos");
-        var ursos = MakeTeam(e, C, D, "Ursos");
-        Do(e, E, "", ArenaWire.ActData);
-
-        // Lobos: 10 games; A played 10, B played 2 (below 30% = 3).
         lobos.WeekGames = 10;
         lobos.Rating = 1500;
         lobos.Member(A).WeekGames = 10;
         lobos.Member(B).WeekGames = 2;
-        // Ursos: 9 games, not active.
-        ursos.WeekGames = 9;
-        ursos.Member(C).WeekGames = 9;
-        // A is also on a 3v3 team at 1800 that played 10, which pays more.
-        Do(e, A, ArenaEngine.AtOrganizer, ArenaWire.ActCharterBuy, "3\nTrio\n120");
-        Do(e, A, "", ArenaWire.ActCharterOffer, "3\nEcho");
-        Do(e, E, "", ArenaWire.ActCharterSign, $"{A}\n3\n1");
-        Do(e, A, "", ArenaWire.ActCharterOffer, "3\nFoxtrot");
-        Do(e, F, "", ArenaWire.ActCharterSign, $"{A}\n3\n1");
-        Do(e, A, ArenaEngine.AtOrganizer, ArenaWire.ActCharterTurnIn, "3");
-        var trio = e.TeamOf(A, 3);
-        trio.Rating = 1800;
-        trio.WeekGames = 10;
-        foreach (var m in trio.Members) { m.WeekGames = 10; m.PersonalRating = 1800; }
 
-        Do(e, G, "", ArenaWire.ActAdminDistribute, "");
-        Check("only an admin can run the payout by hand", e.PlayerRecord(A).Points == 0);
-
-        int paid = e.DistributePoints(manual: true);
-        Check("A gets the better of their teams, not the sum: 3v3 at 1800 = 669", e.PlayerRecord(A).Points == 669, "got " + e.PlayerRecord(A).Points);
-        Check("B played under 30% of the games: nothing", (e.PlayerRecord(B)?.Points ?? 0) == 0);
-        Check("an inactive team (9 games) pays nothing", (e.PlayerRecord(C)?.Points ?? 0) == 0);
-        Check("E and F get 669 from the 3v3", e.PlayerRecord(E).Points == 669 && e.PlayerRecord(F).Points == 669);
-        Check("three players were paid", paid == 3);
-        Check("each paid player gets a letter", h.Letters.Count(l => l.To == A) == 1 && h.Letters.Any(l => l.To == E));
-        Check("every team's week starts over", e.TeamOf(A, 2).WeekGames == 0 && e.TeamOf(C, 2).WeekGames == 0 &&
-                                               e.TeamOf(A, 2).Member(A).WeekGames == 0 && trio.WeekGames == 0);
-        Check("the season stays", trio.SeasonGames == 0 && e.TeamOf(A, 2).Rating == 1500);
-
-        var t = Tuning();
-        t.MaxPoints = 1000;
-        e.SetTuning(t);
-        trio.WeekGames = 10;
-        foreach (var m in trio.Members) m.WeekGames = 10;
-        e.DistributePoints(manual: true);
-        Check("the balance stops at the cap", e.PlayerRecord(A).Points == 1000);
+        e.ResetWeek();
+        Check("the weekly reset pays nothing", (e.PlayerRecord(A)?.Points ?? 0) == 0 && (e.PlayerRecord(B)?.Points ?? 0) == 0);
+        Check("and sends no letter", h.Letters.Count == 0);
+        Check("every team's week starts over", lobos.WeekGames == 0 && lobos.Member(A).WeekGames == 0);
+        Check("the season stays", lobos.Rating == 1500);
 
         Section("the weekly clock");
         var (e2, h2, db2) = NewEngine();
@@ -1010,14 +985,11 @@ class Program
         team.Member(A).WeekGames = 10;
         h2.Utc = new DateTime(2026, 10, 6, 15, 0, 1, DateTimeKind.Utc);
         Advance(e2, h2, 31, 1);
-        Check("Tuesday 15:00 UTC: paid automatically", e2.PlayerRecord(A).Points == 261, "got " + e2.PlayerRecord(A).Points);
+        Check("Tuesday 15:00 UTC: the week starts over, nothing paid", team.WeekGames == 0 && (e2.PlayerRecord(A)?.Points ?? 0) == 0);
         Check("and the next one is a week later", e2.State.NextResetUtcTicks == new DateTime(2026, 10, 13, 15, 0, 0, DateTimeKind.Utc).Ticks);
-        Advance(e2, h2, 31, 1);
-        Check("not paid twice", e2.PlayerRecord(A).Points == 261);
 
         var reopened = new ArenaEngine(new FakeHost(), new ArenaDatabase(db2));
-        Check("a restart keeps the clock and the balance", reopened.State.NextResetUtcTicks == e2.State.NextResetUtcTicks &&
-                                                           reopened.PlayerRecord(A).Points == 261);
+        Check("a restart keeps the clock", reopened.State.NextResetUtcTicks == e2.State.NextResetUtcTicks);
     }
 
     static void Vendor()
@@ -1047,6 +1019,21 @@ class Program
         Do(e, A, ArenaEngine.AtVendor, ArenaWire.ActVendorBuy, "WeaponKit4\n200");
         Check("both at 40+: sold", h.Items.Count == 2 && e.PlayerRecord(A).Points == 200);
         Check("the requirement is min(personal, team), best team", e.BestPurchaseRating(A, 2) == 45);
+
+        Section("Deadcoins for Arena Points");
+        var t = Tuning();
+        t.Offers = ArenaSettingsParser.ParseOffers("prefab=deadcoins;amount=10;points=150", null);
+        e.SetTuning(t);
+        Check("prefab=Deadcoins (any case) is a Deadcoins offer", t.Offers.Single().IsDeadcoins);
+        Do(e, A, ArenaEngine.AtVendor, ArenaWire.ActVendorBuy, "Deadcoins\n150");
+        Check("bought: 150 points become 10 Deadcoins, nothing in the mail",
+            e.PlayerRecord(A).Points == 50 && h.Deadcoins[A] == 10 && h.Items.Count == 2, $"points {e.PlayerRecord(A).Points}");
+        Do(e, A, ArenaEngine.AtVendor, ArenaWire.ActVendorBuy, "Deadcoins\n150");
+        Check("not enough points: no Deadcoins", e.PlayerRecord(A).Points == 50 && h.Deadcoins[A] == 10);
+        e.PlayerRecord(A).Points = 500;
+        h.LedgerBroken = true;
+        Do(e, A, ArenaEngine.AtVendor, ArenaWire.ActVendorBuy, "Deadcoins\n150");
+        Check("a ledger that refuses takes no points", e.PlayerRecord(A).Points == 500 && h.Deadcoins[A] == 10);
     }
 
     static void TeamManagement()

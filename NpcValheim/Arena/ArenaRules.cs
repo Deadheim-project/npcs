@@ -66,40 +66,6 @@ namespace NpcValheim.Arena
         /// <summary>Ratings stop at zero (ArenaTeam::FinishGame, ModifyPersonalRating).</summary>
         internal static int Apply(int rating, int change) => rating + change < 0 ? 0 : rating + change;
 
-        /// <summary>
-        /// ArenaTeam::GetPoints for season 6 and later: a flat 344 up to 1500, a logistic curve
-        /// above it, then 76% for 2v2 and 88% for 3v3. The rating used is the team's, unless the
-        /// player's own personal rating trails it by more than 150 -- a carried player earns what
-        /// they are worth, not what the team is.
-        ///
-        /// Brackets WoW never had (1v1) are paid like 2v2, the cheapest one there is.
-        /// </summary>
-        internal static int Points(int teamSize, int teamRating, int personalRating, float rate)
-        {
-            int rating = personalRating + 150 < teamRating ? personalRating : teamRating;
-            float points = rating <= 1500
-                ? 344f
-                : 1511.26f / (1.0f + 1639.28f * (float)Math.Exp(-0.00412f * rating));
-
-            if (teamSize <= 2) points *= 0.76f;
-            else if (teamSize == 3) points *= 0.88f;
-
-            points *= rate;
-            return (int)points;
-        }
-
-        /// <summary>
-        /// "To get points, a player has to participate in at least 30% of the matches":
-        /// ceil(weekGames x 0.3). Done in integers so it cannot round differently on another
-        /// machine; for every week length it equals TrinityCore's float version.
-        /// </summary>
-        internal static int RequiredGames(int teamWeekGames, int participationPercent)
-        {
-            if (teamWeekGames <= 0) return 0;
-            int percent = Math.Max(0, participationPercent);
-            return (teamWeekGames * percent + 99) / 100;
-        }
-
         /// <summary>ArenaTeam::AddMember: a new member starts at the configured personal rating,
         /// or at 1000 when the team is already at 1000 or more.</summary>
         internal static int StartingPersonalRating(int teamRating, int configuredStart) =>

@@ -149,6 +149,10 @@ namespace NpcValheim.Arena
         /// least <see cref="Bracket"/> players; 0 = no requirement.</summary>
         public int Rating;
         public int Bracket;
+
+        /// <summary>prefab=Deadcoins: the points buy donation currency, credited to the
+        /// buyer's Deadcoins balance, not an item sent by mail.</summary>
+        public bool IsDeadcoins => string.Equals(Prefab, ArenaSettingsParser.DeadcoinsPrefab, StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>
@@ -160,7 +164,7 @@ namespace NpcValheim.Arena
     {
         public bool Enabled = true;
         /// <summary>Team sizes that exist. WoW: 2v2, 3v3, 5v5.</summary>
-        public List<int> Brackets = new List<int> { 2 };
+        public List<int> Brackets = new List<int> { 2, 3 };
         /// <summary>1v1 with no team to make: the player queues alone and the queue keeps a
         /// one-person team for them behind the scenes. WoW never had it.</summary>
         public bool Solo = true;
@@ -204,10 +208,8 @@ namespace NpcValheim.Arena
         public float GateRadius = 6f;
         public List<ArenaMapDef> Maps = new List<ArenaMapDef>();
 
-        // Weekly points -- CONFIG_ARENA_GAMES_REQUIRED (10), the 30% rule, Rate.ArenaPoints, MaxArenaPoints
-        public int GamesPerWeek = 10;
-        public int ParticipationPercent = 30;
-        public float PointsRate = 1f;
+        // Arena Points come only from the matches (MatchPoints). The week below only resets the
+        // games counted on the team page; it is not in the cfg.
         public int MaxPoints = 10000;
         public DayOfWeek ResetDay = DayOfWeek.Tuesday;
         public int ResetHourUtc = 15;
@@ -305,10 +307,13 @@ namespace NpcValheim.Arena
             "prefab=WeaponKit4;amount=1;points=1000;rating=1500;bracket=2|prefab=ArmorKit4;amount=1;points=1000;rating=1500;bracket=2|" +
             "prefab=MeadHealthMajor;amount=5;points=60;rating=0|prefab=MeadStaminaLingering;amount=5;points=60;rating=0";
 
-        internal const string DefaultMatchPoints = "1v1=15/5|2v2=20/8|ffa=25/5|pve=10/0";
+        /// <summary>The Intendente's name for Deadcoins in Items (prefab=Deadcoins;amount=10;points=200).</summary>
+        internal const string DeadcoinsPrefab = "Deadcoins";
+
+        internal const string DefaultMatchPoints = "1v1=15/5|2v2=20/8|3v3=25/10|ffa=40/10|pve=10/0";
 
         /// <summary>The modes match points know, in the order the cfg and the admin page show them.</summary>
-        internal static readonly string[] MatchPointModes = { "1v1", "2v2", "ffa", "pve" };
+        internal static readonly string[] MatchPointModes = { "1v1", "2v2", "3v3", "ffa", "pve" };
 
         /// <summary>The match-points key of a match: "pve" for a challenge, "ffa", or the bracket ("2v2").</summary>
         internal static string MatchPointsMode(bool challenge, int size) =>
@@ -336,7 +341,7 @@ namespace NpcValheim.Arena
                           win >= 0 && loss >= 0 && win <= 100000 && loss <= 100000;
                 if (!ok)
                 {
-                    problems?.Add($"PorPartida: '{text}' ignorado (formato modo=vitoria/derrota, modo 1v1, 2v2, ffa ou pve)");
+                    problems?.Add($"PorPartida: '{text}' ignorado (formato modo=vitoria/derrota, modo 1v1, 2v2, 3v3, ffa ou pve)");
                     continue;
                 }
                 if (values.Length == 1) loss = win;
@@ -459,7 +464,7 @@ namespace NpcValheim.Arena
                     {
                         if (!TryUsage(usage, map, out string why))
                         {
-                            problems?.Add($"Maps: {name}: uso invalido ({why}). Use 1v1, 2v2, ffa, pve, pvp ou todos");
+                            problems?.Add($"Maps: {name}: uso invalido ({why}). Use 1v1, 2v2, 3v3, ffa, pve, pvp ou todos");
                             bad = true;
                         }
                     }
@@ -579,16 +584,16 @@ namespace NpcValheim.Arena
             if (t.Maps.Count == 0) return result;
             foreach (int size in t.ActiveBrackets)
                 if (!t.Maps.Any(m => t.MapServes(m, size)))
-                    result.Add($"Maps: nenhuma arena com uso {ArenaRules.BracketName(size)}: a fila {ArenaRules.BracketName(size)} recusa todo mundo");
+                    result.Add($"Arenas: nenhuma arena com uso {ArenaRules.BracketName(size)} (marque Tipo{ArenaRules.BracketName(size)} num [Arena - Local N]): a fila {ArenaRules.BracketName(size)} recusa todo mundo");
             if (t.FfaEnabled && !t.Maps.Any(m => t.MapServes(m, ArenaRules.FfaSize)))
-                result.Add("Maps: nenhuma arena com uso ffa: a fila FFA recusa todo mundo");
+                result.Add("Arenas: nenhuma arena com uso ffa (marque TipoFFA num [Arena - Local N]): a fila FFA recusa todo mundo");
             if (t.ChallengeEnabled && t.Challenges.Count > 0 && !t.Maps.Any(t.MapServesChallenge))
-                result.Add("Maps: nenhuma arena com uso pve" + (t.ChallengeMaps.Count > 0 ? " (e em Desafio.Maps)" : "") +
+                result.Add("Arenas: nenhuma arena com uso pve" + (t.ChallengeMaps.Count > 0 ? " (e em Desafio.Maps)" : " (marque TipoPvE num [Arena - Local N])") +
                            ": os desafios recusam todo mundo");
             foreach (var map in t.Maps)
                 foreach (int size in map.Sizes.OrderBy(s => s))
                     if (!t.HasBracket(size))
-                        result.Add($"Maps: {map.Name}: uso {ArenaRules.BracketName(size)}, mas a arena so tem 1v1, 2v2, ffa e pve");
+                        result.Add($"Arena {map.Name}: uso {ArenaRules.BracketName(size)}, mas a arena so tem 1v1, 2v2, 3v3, ffa e pve");
             return result;
         }
 
@@ -737,6 +742,7 @@ namespace NpcValheim.Arena
                     problems?.Add($"Items: {prefab}: quantidade e pontos precisam ser positivos");
                     continue;
                 }
+                if (string.Equals(prefab, DeadcoinsPrefab, StringComparison.OrdinalIgnoreCase)) prefab = DeadcoinsPrefab;
                 if (!seen.Add(prefab))
                 {
                     problems?.Add($"Items: {prefab} aparece mais de uma vez; vale a primeira");
