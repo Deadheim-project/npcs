@@ -116,6 +116,17 @@ namespace NpcValheim.Arena
 
         internal static void OnMessage(string kind, string payload)
         {
+            // JSON, not records: it must not go through Parse below.
+            if (kind == Bestiary)
+            {
+                ArenaBestiaryNet.Receive(payload);
+                return;
+            }
+            if (kind == BestiaryHash)
+            {
+                ArenaBestiaryNet.OnHash(payload);
+                return;
+            }
             var player = Player.m_localPlayer;
             var f = Parse(payload).FirstOrDefault();
             switch (kind)

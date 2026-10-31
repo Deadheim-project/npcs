@@ -97,6 +97,8 @@ namespace NpcValheim.UI
                 Say("Nome atualizado.");
             });
 
+            BuildFacing(column);
+
             var profile = Npc.BuildProfile();
 
             if (Npc is TeleporterNpc teleporter)
@@ -402,6 +404,37 @@ namespace NpcValheim.UI
         /// A requirement the config no longer lists still shows up in the list, under its
         /// prefab name: hiding it would make an item look open while the server keeps it shut.
         /// </summary>
+        /// <summary>One row for where the NPC faces: a step either way, "Virar para mim" (from
+        /// where the admin stands), and whether he turns to whoever talks to him.</summary>
+        private void BuildFacing(Transform column)
+        {
+            var row = Row(column, 38f);
+            var label = ValheimUi.CreateLabel(row, "Virar:", 15, ValheimUi.Muted, TextAlignmentOptions.Left);
+            ValheimUi.SetWidth(label.gameObject, 50f);
+            void Turn(float yaw)
+            {
+                Npc.RequestSetYaw(yaw);
+                Say($"Virando para {NpcFacing.Normalize(yaw):0}°...");
+            }
+            var left = ValheimUi.CreateButton(row, "-15°", 60f, 36f, 14);
+            left.onClick.AddListener(() => Turn(Npc.FacingYaw - 15f));
+            var right = ValheimUi.CreateButton(row, "+15°", 60f, 36f, 14);
+            right.onClick.AddListener(() => Turn(Npc.FacingYaw + 15f));
+            var me = ValheimUi.CreateButton(row, "Para mim", 100f, 36f, 14);
+            me.onClick.AddListener(() => Turn(NpcFacing.Toward(Npc.transform.position, Player.transform.position, Npc.FacingYaw)));
+            ValheimUi.AddTooltip(me.gameObject, "Virar para mim", "O NPC passa a olhar para onde você está agora. Fica gravado.");
+            var turns = ValheimUi.CreateButton(row, Npc.TurnsToTalker ? "Vira ao falar" : "Fica parado", 130f, 36f, 14);
+            ValheimUi.AddTooltip(turns.gameObject, "Ao falar com ele",
+                "Vira ao falar: o corpo gira para quem abre a janela e volta depois. Fica parado: só a cabeça acompanha (bom para balcão encostado na parede).");
+            turns.onClick.AddListener(() =>
+            {
+                bool next = !Npc.TurnsToTalker;
+                Npc.RequestSetTurnsToTalker(next);
+                var text = turns.GetComponentInChildren<TextMeshProUGUI>();
+                if (text != null) text.text = next ? "Vira ao falar" : "Fica parado";
+            });
+        }
+
         private void BuildBossLock(Transform column, MarketplaceNpc market)
         {
             _bossOptions = new List<string> { "" };

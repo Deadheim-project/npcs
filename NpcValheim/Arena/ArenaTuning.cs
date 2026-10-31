@@ -131,11 +131,18 @@ namespace NpcValheim.Arena
     internal sealed class ArenaChallengeDef
     {
         public string Name;
+        /// <summary>What spawns: the creature of the game, or the base of the Bestiário's one.</summary>
         public string Prefab;
+        /// <summary>"bestiario:id" in the cfg: the creature of the Bestiário, whose own level and
+        /// health then count instead of the two below. Null for a creature of the game.</summary>
+        public string BeastId;
         /// <summary>Stars + 1, as the game counts: 1 is a plain creature, 3 is two stars.</summary>
         public int Level = 1;
         /// <summary>On top of what the level already gives.</summary>
         public float HealthMultiplier = 1f;
+        /// <summary>The arena it is fought in ([Arena - Desafio N] Arena); null = any arena
+        /// that takes challenges.</summary>
+        public string Map;
         public readonly List<KeyValuePair<string, int>> Rewards = new List<KeyValuePair<string, int>>();
     }
 
@@ -257,6 +264,10 @@ namespace NpcValheim.Arena
         /// the old Desafio.Maps list is set, also named there.</summary>
         public bool MapServesChallenge(ArenaMapDef map) =>
             map.ServesPve && (ChallengeMaps.Count == 0 || ChallengeMaps.Contains(map.Name, StringComparer.OrdinalIgnoreCase));
+
+        /// <summary>The same, for one challenge: one that names its arena only goes there.</summary>
+        public bool MapServesChallenge(ArenaMapDef map, ArenaChallengeDef def) =>
+            MapServesChallenge(map) && (def?.Map == null || string.Equals(map.Name, def.Map, StringComparison.OrdinalIgnoreCase));
 
         /// <summary>Every bracket that is played: the cfg's, plus 1v1 when Solo is on.</summary>
         public List<int> ActiveBrackets => ArenaSettingsParser.WithSolo(Brackets, Solo);
@@ -495,7 +506,7 @@ namespace NpcValheim.Arena
             return result;
         }
 
-        private static bool TryPoint(string raw, bool withYaw, out Vector3 point, out float yaw)
+        internal static bool TryPoint(string raw, bool withYaw, out Vector3 point, out float yaw)
         {
             point = Vector3.zero;
             yaw = 0f;
@@ -783,10 +794,24 @@ namespace NpcValheim.Arena
                 return null;
             }
             name = CleanMapName(name);
+            string beastId = ArenaBestiary.BeastIdOf(prefab);
+            ArenaBeastDef beast = null;
+            if (beastId != null)
+            {
+                beast = ArenaBestiary.Find(beastId);
+                if (beast == null)
+                {
+                    // A client builds the challenges before the server's bestiary arrives: then
+                    // the creature is not missing, just not known yet. The server always has its file.
+                    if (ArenaBestiary.Loaded) problems?.Add($"{slot}: '{beastId}' nao esta no bestiario");
+                    return null;
+                }
+            }
             var def = new ArenaChallengeDef
             {
-                Name = name.Length > 0 ? name : prefab,
-                Prefab = prefab,
+                Name = name.Length > 0 ? name : beast != null ? CleanMapName(beast.Name) : prefab,
+                Prefab = beast != null ? beast.Base : prefab,
+                BeastId = beast?.Id,
                 Level = Mathf.Clamp(level, 1, 10),
                 HealthMultiplier = float.IsNaN(health) ? 1f : Mathf.Clamp(health, 0.1f, 100f),
             };

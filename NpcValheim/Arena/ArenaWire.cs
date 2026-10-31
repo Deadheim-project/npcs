@@ -25,9 +25,14 @@ namespace NpcValheim.Arena
         internal const string Ladder = "ladder";
         internal const string Feed = "feed";
         internal const string Celebrate = "celebrate";
+        /// <summary>The whole Bestiário as JSON: when a client asks for it, and to everyone after every change.</summary>
+        internal const string Bestiary = "bestiary";
+        /// <summary>The Bestiário's hash, on the hello: the client asks for the JSON only when its own differs.</summary>
+        internal const string BestiaryHash = "bestiaryHash";
 
         // client -> server actions
         internal const string ActData = "data";
+        internal const string ActBestiaryGet = "bestiary.get";
         internal const string ActHello = "hello";
         internal const string ActCharterBuy = "charter.buy";
         internal const string ActCharterOffer = "charter.offer";
@@ -61,6 +66,11 @@ namespace NpcValheim.Arena
         internal const string ActAdminOfferRemove = "admin.offer.del";
         internal const string ActAdminPointsSet = "admin.points.set";
         internal const string ActAdminChallengeSet = "admin.challenge.set";
+        internal const string ActAdminChallengeTest = "admin.challenge.test";
+        internal const string ActAdminZoneAround = "admin.zone.around";
+        internal const string ActAdminBeastSet = "admin.beast.set";
+        internal const string ActAdminBeastRemove = "admin.beast.del";
+        internal const string ActAdminBeastSpawn = "admin.beast.spawn";
 
         internal static string Clean(string text) =>
             string.IsNullOrEmpty(text) ? "" : text.Replace('\t', ' ').Replace('\n', ' ').Replace('\r', ' ');

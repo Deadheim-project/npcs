@@ -472,6 +472,37 @@ namespace NpcValheim.UI
             return icon;
         }
 
+        private static GameObject _tooltipPrefab;
+
+        /// <summary>
+        /// The game's own tooltip (UITooltip, the one of the inventory) on a widget: the box with
+        /// the title in orange and the text under it, after the same half-second of hover. The
+        /// widget needs a raycast target, as a button has. The tooltip prefab is borrowed from
+        /// any UITooltip the game has loaded (every inventory slot carries one). False, and no
+        /// tooltip, while none is loaded yet.
+        /// </summary>
+        public static bool AddTooltip(GameObject go, string title, string text)
+        {
+            if (go == null) return false;
+            if (_tooltipPrefab == null)
+            {
+                foreach (var existing in Resources.FindObjectsOfTypeAll<UITooltip>())
+                    if (existing != null && existing.m_tooltipPrefab != null)
+                    {
+                        _tooltipPrefab = existing.m_tooltipPrefab;
+                        break;
+                    }
+                if (_tooltipPrefab == null) return false;
+            }
+            var tooltip = go.GetComponent<UITooltip>() ?? go.AddComponent<UITooltip>();
+            tooltip.m_tooltipPrefab = _tooltipPrefab;
+            // Straight into the fields: Set() also raycasts for the pointer, which only matters
+            // for a tooltip changed under the mouse.
+            tooltip.m_topic = title ?? "";
+            tooltip.m_text = text ?? "";
+            return true;
+        }
+
         public static string Localize(string key)
         {
             if (string.IsNullOrEmpty(key) || Localization.instance == null) return key ?? "";

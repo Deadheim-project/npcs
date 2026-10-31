@@ -25,6 +25,62 @@ namespace NpcValheim.Patches
             new Terminal.ConsoleCommand("npc_trazer",
                 "(admin) npc_trazer [nome] - traz o NPC mais próximo com esse nome para onde você está",
                 args => Run(args));
+            new Terminal.ConsoleCommand("npc_girar",
+                "(admin) npc_girar [nome] <graus|mim> - vira o NPC mais próximo com esse nome (0 = norte, 90 = leste) ou para você",
+                args => Turn(args));
+        }
+
+        /// <summary>/npc_girar: the last word is the facing (degrees, or "mim"), the rest the name.</summary>
+        private static void Turn(Terminal.ConsoleEventArgs args)
+        {
+            var player = Player.m_localPlayer;
+            if (player == null) return;
+            if (!NpcBase.LocalPlayerIsAdmin())
+            {
+                args.Context?.AddString("Só admin pode girar NPC.");
+                return;
+            }
+            var words = (args.ArgsAll ?? "").Trim().Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+            if (words.Length == 0)
+            {
+                args.Context?.AddString("Use: npc_girar [nome] <graus|mim>");
+                return;
+            }
+            string how = words[words.Length - 1];
+            bool toMe = Fold(how) == "mim";
+            if (!toMe && !float.TryParse(how.Replace(',', '.'), NumberStyles.Float, CultureInfo.InvariantCulture, out _))
+            {
+                args.Context?.AddString("O último valor precisa ser graus (ex.: 90) ou mim.");
+                return;
+            }
+            string wanted = Fold(string.Join(" ", words, 0, words.Length - 1));
+            var npc = Nearest(player.transform.position, wanted, out float distance);
+            if (npc == null)
+            {
+                args.Context?.AddString($"Nenhum NPC{(wanted.Length > 0 ? " com esse nome" : "")} a menos de {NpcBase.MaxMoveDistance:0} m.");
+                return;
+            }
+            float yaw = toMe
+                ? NpcFacing.Toward(npc.transform.position, player.transform.position, npc.FacingYaw)
+                : float.Parse(how.Replace(',', '.'), NumberStyles.Float, CultureInfo.InvariantCulture);
+            npc.RequestSetYaw(yaw);
+            args.Context?.AddString($"Virando {npc.GetHoverName()} ({distance:0} m) para {NpcFacing.Normalize(yaw):0}°.");
+        }
+
+        private static NpcBase Nearest(Vector3 here, string wanted, out float bestDistance)
+        {
+            NpcBase best = null;
+            bestDistance = float.MaxValue;
+            foreach (var npc in NpcBase.Live)
+            {
+                if (npc == null) continue;
+                if (wanted.Length > 0 && !Fold(npc.GetHoverName()).Contains(wanted)) continue;
+                float distance = Vector3.Distance(here, npc.transform.position);
+                if (distance > NpcBase.MaxMoveDistance || distance >= bestDistance) continue;
+                best = npc;
+                bestDistance = distance;
+            }
+            return best;
         }
 
         private static void Run(Terminal.ConsoleEventArgs args)

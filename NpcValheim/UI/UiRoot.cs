@@ -71,6 +71,9 @@ namespace NpcValheim.UI
 
         public static bool IsOpen => _instance != null && _instance._window != null;
 
+        /// <summary>The NPC whose window is open here, or null (none, or the F8 panel).</summary>
+        internal static NpcBase OpenNpc => IsOpen && !_instance._standalone ? _instance._npc : null;
+
         private void Show(NpcBase npc, Player player, bool standalone, System.Func<NpcWindow> build)
         {
             if (UiInputBlocker.IsTyping) return;

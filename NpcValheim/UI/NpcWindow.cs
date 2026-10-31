@@ -127,16 +127,10 @@ namespace NpcValheim.UI
                 case BossPassNpc _:
                     AddTab("Passes", new BossPassView(), npc, player);
                     break;
-                case ArenaOrganizerNpc _:
-                    AddTab("Carta", new ArenaCharterView(), npc, player);
-                    AddTab("Times", new ArenaTeamsView(), npc, player);
-                    break;
-                case ArenaBattlemasterNpc _:
-                    AddTab("Arena", new ArenaQueueView(), npc, player);
-                    AddTab("Ranking", new ArenaLadderView(), npc, player);
-                    break;
-                case ArenaVendorNpc _:
-                    AddTab("Intendente", new ArenaVendorView(), npc, player);
+                // One arena NPC: the Organizer and the Intendente of older worlds open the same
+                // tabs as the Mestre da Arena (ArenaDesk).
+                case ArenaNpcBase _:
+                    foreach (var tab in ArenaDesk.Tabs) AddTab(tab, ArenaTabView(tab), npc, player);
                     break;
                 case GuildRegistrarNpc _:
                     AddTab("Guildas", new GuildRegistrarView(), npc, player);
@@ -196,10 +190,8 @@ namespace NpcValheim.UI
                     AddTab("Falas", new DialogueView(), npc, player);
                 if (npc is WarJudgeNpc)
                     AddTab("Atributos", new WarJudgeAdminView(), npc, player);
-                if (npc is ArenaBattlemasterNpc)
-                    AddTab("Arena (admin)", new ArenaAdminView(), npc, player);
-                if (npc is ArenaVendorNpc)
-                    AddTab("Recompensas", new ArenaVendorAdminView(), npc, player);
+                if (npc is ArenaNpcBase)
+                    AddTab(ArenaDesk.AdminTab, new ArenaSetupView(), npc, player);
                 if (PriceEditor.Applies(npc))
                     AddTab("Preços", new PriceEditView(), npc, player);
                 if (npc is DeadcoinShopNpc)
@@ -208,6 +200,18 @@ namespace NpcValheim.UI
                     AddTab("Passes (admin)", new BossPassAdminView(), npc, player);
             }
             FitTabs();
+        }
+
+        private static NpcViewBase ArenaTabView(string tab)
+        {
+            switch (tab)
+            {
+                case "Arena": return new ArenaQueueView();
+                case "Times": return new ArenaTeamsView();
+                case "Criar time": return new ArenaCharterView();
+                case "Ranking": return new ArenaLadderView();
+                default: return new ArenaVendorView();
+            }
         }
 
         /// <summary>Narrows the tabs when there are more than fit at full width (an admin at

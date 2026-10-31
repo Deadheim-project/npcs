@@ -167,9 +167,7 @@ namespace NpcValheim.Testing
                     Merchant(shops[i].Key, shops[i].Value));
             }
 
-            npcs += SpawnNpc("NpcValheim_ArenaOrganizer", hub + new Vector3(HubHalf - 3f, 0f, 4f), 270f, tag, Named("Organizador da Arena"));
             npcs += SpawnNpc("NpcValheim_ArenaBattlemaster", hub + new Vector3(HubHalf - 3f, 0f, 0f), 270f, tag, Named("Mestre da Arena"));
-            npcs += SpawnNpc("NpcValheim_ArenaVendor", hub + new Vector3(HubHalf - 3f, 0f, -4f), 270f, tag, Named("Intendente da Arena"));
             npcs += SpawnNpc("NpcValheim_Mailbox", hub + new Vector3(-HubHalf + 3f, 0f, 0f), 90f, tag, null);
 
             ConfigureZones(hub, arena, castle);

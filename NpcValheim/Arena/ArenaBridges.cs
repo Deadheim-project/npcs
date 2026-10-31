@@ -119,8 +119,8 @@ namespace NpcValheim.Arena
             if (!Installed) return true;
             bool gold = IsArena(map.Gold), green = IsArena(map.Green);
             if (gold && green) return true;
-            why = "o inicio " + (!gold ? "Ouro" : "Verde") + " esta fora de todas as ArenaZones do Deadheim " +
-                  "(marque a area na aba Admin do Mestre da Arena)";
+            why = "o inicio " + (!gold ? "Ouro" : "Verde") + " esta fora de qualquer area de PvP (ArenaZones do Deadheim; " +
+                  "no F8, aba Arena, clique Criar area em volta)";
             return false;
         }
     }

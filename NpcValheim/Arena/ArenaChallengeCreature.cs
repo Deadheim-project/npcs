@@ -24,9 +24,21 @@ namespace NpcValheim.Arena
 
         /// <summary>Whether a cfg entry can be played: a creature the game knows, not a boss,
         /// with rewards the post can carry. Before the world is up there is nothing to check.</summary>
+        /// <summary>A boss: m_boss, or a defeat key of the world's progression ("defeated_gdking"...).
+        /// Plain creatures carry keys too (the Troll's "KilledTroll" only lets the troll raid
+        /// come, and any troll killed anywhere sets it), so those do not count.</summary>
+        internal static bool IsBoss(Character character) =>
+            character != null && (character.m_boss ||
+                (character.m_defeatSetGlobalKey ?? "").StartsWith("defeated_", StringComparison.OrdinalIgnoreCase));
+
         internal static bool Usable(ArenaChallengeDef def, out string why)
         {
             why = null;
+            if (def.BeastId != null && ArenaBestiary.Find(def.BeastId) == null)
+            {
+                why = $"'{def.BeastId}' nao esta no bestiario";
+                return false;
+            }
             if (ZNetScene.instance == null) return true;
             var prefab = ZNetScene.instance.GetPrefab(def.Prefab);
             var character = prefab != null ? prefab.GetComponent<Character>() : null;
@@ -37,7 +49,7 @@ namespace NpcValheim.Arena
             }
             // A boss counts as defeated for whoever hit it (and Deadheim's boss bands read that),
             // and its key opens the world's progression.
-            if (character.m_boss || !string.IsNullOrEmpty(character.m_defeatSetGlobalKey))
+            if (IsBoss(character))
             {
                 why = $"'{def.Prefab}' e chefe: matar contaria como chefe derrotado";
                 return false;
@@ -62,9 +74,29 @@ namespace NpcValheim.Arena
 
         // ------------------------------------------------------------------ server
 
-        internal static ZDOID Spawn(long matchId, ArenaChallengeDef def, Vector3 at, float yaw)
+        /// <summary>The challenge's creature: the game's, or the base of a creature of the
+        /// Bestiário with its mark, its level and its health for <paramref name="players"/>.</summary>
+        internal static ZDOID Spawn(long matchId, ArenaChallengeDef def, Vector3 at, float yaw, int players)
         {
-            var prefab = ZNetScene.instance != null ? ZNetScene.instance.GetPrefab(def.Prefab) : null;
+            if (def.BeastId == null) return Create(def.Prefab, matchId, null, def.Level, def.HealthMultiplier, at, yaw, 0L);
+            var beast = ArenaBestiary.Find(def.BeastId);
+            if (beast == null)
+            {
+                Plugin.Log.LogError($"NpcValheim Arena: a criatura '{def.BeastId}' do desafio saiu do bestiario");
+                return ZDOID.None;
+            }
+            return Create(beast.Base, matchId, beast, beast.Level, ArenaBestiary.HealthFactor(beast, players), at, yaw, 0L);
+        }
+
+        /// <summary>"Invocar perto de mim": a creature of the Bestiário outside any match, for the
+        /// admin to look at and hit. It goes by itself at <paramref name="untilUtcTicks"/>.</summary>
+        internal static ZDOID SpawnTest(ArenaBeastDef beast, Vector3 at, float yaw, long untilUtcTicks) =>
+            Create(beast.Base, 0L, beast, beast.Level, ArenaBestiary.HealthFactor(beast, 1), at, yaw, untilUtcTicks);
+
+        private static ZDOID Create(string prefabName, long matchId, ArenaBeastDef beast, int level, float health,
+            Vector3 at, float yaw, long untilUtcTicks)
+        {
+            var prefab = ZNetScene.instance != null ? ZNetScene.instance.GetPrefab(prefabName) : null;
             if (prefab == null || prefab.GetComponent<Character>() == null) return ZDOID.None;
 
             GameObject go = null;
@@ -73,10 +105,17 @@ namespace NpcValheim.Arena
                 go = UnityEngine.Object.Instantiate(prefab, at + Vector3.up * 0.5f, Quaternion.Euler(0f, yaw, 0f));
                 var character = go.GetComponent<Character>();
                 var zdo = go.GetComponent<ZNetView>().GetZDO();
-                zdo.Set(ZdoMatch, matchId);
-                zdo.Set(ZdoHealth, def.HealthMultiplier);
+                if (matchId != 0L) zdo.Set(ZdoMatch, matchId);
+                zdo.Set(ZdoHealth, health);
+                if (beast != null)
+                {
+                    zdo.Set(ArenaBeastBody.ZdoBeast, beast.Id);
+                    if (untilUtcTicks > 0L) zdo.Set(ArenaBeastBody.ZdoUntil, untilUtcTicks);
+                    // Character.Awake ran before the mark existed.
+                    ArenaBeastBody.Apply(character);
+                }
                 // SetLevel runs SetupMaxHealth, which the patch below multiplies.
-                character.SetLevel(def.Level);
+                character.SetLevel(level);
                 character.SetHealth(character.GetMaxHealth());
 
                 // A creature that leaves at dawn or with its raid would end the challenge as if
@@ -92,7 +131,7 @@ namespace NpcValheim.Arena
             }
             catch (Exception e)
             {
-                Plugin.Log.LogError($"NpcValheim Arena: falha ao criar a criatura '{def.Prefab}' do desafio: {e}");
+                Plugin.Log.LogError($"NpcValheim Arena: falha ao criar a criatura '{prefabName}'{(beast != null ? $" ({beast.Id})" : "")}: {e}");
                 if (go != null) ZNetScene.instance.Destroy(go);
                 return ZDOID.None;
             }
@@ -146,10 +185,13 @@ namespace NpcValheim.Arena
             if (removed > 0) Plugin.Log.LogInfo($"NpcValheim Arena: {removed} criatura(s) de desafio sem partida removida(s)");
         }
 
+
         // ------------------------------------------------------------------ every machine
 
         /// <summary>The level's health times the challenge's, again every time the game works
-        /// the health out (a new owner, a level set).</summary>
+        /// the health out (a new owner, a level set). For a creature of the Bestiário the ZDO
+        /// holds vidaMult x (1 + vidaPorJogadorExtra x (jogadores - 1)), worked out at spawn, so
+        /// a new owner without the bestiary still keeps it.</summary>
         [HarmonyPatch(typeof(Character), "SetupMaxHealth")]
         private static class HealthPatch
         {
@@ -158,7 +200,8 @@ namespace NpcValheim.Arena
                 try
                 {
                     var zdo = __instance is Player ? null : ArenaCombat.ZdoOf(__instance);
-                    if (MatchOf(zdo) == 0L) return;
+                    // A test creature of the Bestiário has no match; its health is set the same way.
+                    if (MatchOf(zdo) == 0L && !ArenaBeastBody.IsBeast(zdo)) return;
                     float multiplier = zdo.GetFloat(ZdoHealth, 1f);
                     if (multiplier > 0f && Mathf.Abs(multiplier - 1f) > 0.001f)
                         __instance.SetMaxHealth(__instance.GetMaxHealthBase() * __instance.GetLevel() * multiplier);
@@ -170,15 +213,23 @@ namespace NpcValheim.Arena
             }
         }
 
-        /// <summary>The reward is the post's; the creature itself drops nothing.</summary>
+        /// <summary>The reward is the post's; the creature itself drops nothing. Nor does a test
+        /// creature of the Bestiário, or an admin could farm it.</summary>
         [HarmonyPatch(typeof(CharacterDrop), nameof(CharacterDrop.GenerateDropList))]
         private static class DropPatch
         {
             private static void Postfix(CharacterDrop __instance, List<KeyValuePair<GameObject, int>> __result)
             {
-                if (__result != null && MatchOf(__instance.GetComponent<Character>()) != 0L) __result.Clear();
+                if (__result == null) return;
+                var character = __instance.GetComponent<Character>();
+                if (MatchOf(character) != 0L || (character != null && !(character is Player) && Beastly(ArenaCombat.ZdoOf(character))))
+                    __result.Clear();
             }
         }
+
+        /// <summary>A creature of the Bestiário or one of its lacaios (a test creature's have no match).</summary>
+        private static bool Beastly(ZDO zdo) =>
+            ArenaBeastBody.IsBeast(zdo) || (zdo != null && !zdo.GetZDOID(ArenaBeastBrain.ZdoMinionOwner).IsNone());
 
         /// <summary>Whether a hit on the creature of <paramref name="match"/> may land: only from
         /// a player of that match with the gates open. No attacker (a fall, the water) lands;

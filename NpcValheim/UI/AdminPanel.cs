@@ -48,10 +48,12 @@ namespace NpcValheim.UI
                 ("Mensagem", new AdminMessageView()),
                 ("Jogadores", new AdminPlayersView()),
                 ("Buffs", new AdminBuffView()),
-                // The same pages as the Mestre da Arena / Intendente admin tabs; with no NPC they
-                // go through the arena's global channel, where the server checks the adminlist.
-                ("Arenas", new ArenaAdminView()),
-                ("Intendente", new ArenaVendorAdminView()),
+                // The arena's own creatures; the server checks the adminlist on every save.
+                ("Bestiário", new BestiaryAdminView()),
+                // Arenas, desafios, pontos e loja: the same page as the Configurar tab of the
+                // Mestre da Arena; with no NPC it goes through the arena's global channel, where
+                // the server checks the adminlist.
+                ("Arena", new ArenaSetupView()),
             }, Player.m_localPlayer);
             Arena.ArenaClient.RequestData();
         }

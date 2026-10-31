@@ -38,6 +38,10 @@ namespace NpcValheim.Persistence
 
         public static string AssetsDirectory => ResolveBundledDirectory("Assets");
 
+        /// <summary>The arena's Bestiário, beside the cfg so an admin finds it with the rest of
+        /// the server's settings: config/NpcValheim/arena-bestiario.json.</summary>
+        public static string BestiaryFile => Path.Combine(Paths.ConfigPath, "NpcValheim", "arena-bestiario.json");
+
         public static string DatabaseDirectory
         {
             get

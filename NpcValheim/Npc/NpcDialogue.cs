@@ -141,8 +141,14 @@ namespace NpcValheim.Npc
         private float _nextGreet;
         private float _nextCheck;
         private float _nextRandomTalk;
+        private float _nextIdle;
 
-        private void Awake() => _npc = GetComponent<NpcBase>();
+        private void Awake()
+        {
+            _npc = GetComponent<NpcBase>();
+            // Each NPC on its own clock, so a square of them does not flex in unison.
+            _nextIdle = NpcFacing.NextIdle(Time.time, UnityEngine.Random.value);
+        }
 
         private void Update()
         {
@@ -153,6 +159,12 @@ namespace NpcValheim.Npc
             if (player == null) { _near = false; return; }
 
             float distance = Vector3.Distance(player.transform.position, transform.position);
+            if (NpcFacing.IdleDue(Time.time, _nextIdle, distance, UiRoot.OpenNpc == _npc))
+            {
+                _nextIdle = NpcFacing.NextIdle(Time.time, UnityEngine.Random.value);
+                var idle = _npc.IdleEmotes;
+                if (idle != null && idle.Length > 0 && !_near) PlayEmote(idle[UnityEngine.Random.Range(0, idle.Length)]);
+            }
             if (!_near && distance < GreetRange)
             {
                 _near = true;
@@ -205,6 +217,16 @@ namespace NpcValheim.Npc
         /// creature body's puppet if it happens to have one. Checked first, because Unity logs
         /// a warning for every trigger an animator has no parameter for.
         /// </summary>
+        private const float EmoteSeconds = 3.5f;
+        private Coroutine _stopEmote;
+
+        private System.Collections.IEnumerator StopEmoteLater(Animator animator)
+        {
+            yield return new WaitForSeconds(EmoteSeconds);
+            _stopEmote = null;
+            if (animator != null && animator.isActiveAndEnabled) animator.SetTrigger("emote_stop");
+        }
+
         private void PlayEmote(string emote)
         {
             if (string.IsNullOrEmpty(emote)) return;
@@ -213,8 +235,16 @@ namespace NpcValheim.Npc
             {
                 if (animator == null || !animator.isActiveAndEnabled || animator.runtimeAnimatorController == null) continue;
                 if (!animator.parameters.Any(p => p.type == AnimatorControllerParameterType.Trigger && p.name == trigger)) continue;
-                if (animator.parameters.Any(p => p.name == "emote_stop")) animator.ResetTrigger("emote_stop");
+                bool stops = animator.parameters.Any(p => p.name == "emote_stop");
+                if (stops) animator.ResetTrigger("emote_stop");
                 animator.SetTrigger(trigger);
+                // Some of the player's emotes (challenge, flex...) hold their pose until the
+                // player moves, which an NPC never does: one stood with his arms out for good.
+                if (stops)
+                {
+                    if (_stopEmote != null) StopCoroutine(_stopEmote);
+                    _stopEmote = StartCoroutine(StopEmoteLater(animator));
+                }
                 return;
             }
         }

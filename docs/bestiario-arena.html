@@ -1,0 +1,458 @@
+<title>Bestiário da Arena</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Averia+Serif+Libre:wght@400;700&family=JetBrains+Mono:wght@400&display=swap">
+<style>
+/* Layout: a janela dos NPCs (NpcWindow 940x640) -- moldura de madeira, título laranja, abas em botões,
+   e a aba Bestiário no padrão da Aparência: lista à esquerda (190px), sub-abas + lista de linhas à direita.
+   Cores = as constantes do ValheimUi.cs. Visual único escuro, como no jogo. */
+:root{
+  --page:#14110d; --wood1:#5b4330; --wood2:#3e2d20; --woodEdge:#20160e;
+  --inlay:rgba(0,0,0,.62); --inlayEdge:#6a5440;
+  --orange:#ffa13c; --beige:#d9b988; --yellow:#ffe300; --muted:#9e9480; --danger:#ed6b57; --good:#73db6b;
+  --btn1:#4e3a29; --btn2:#2f2219; --btnEdge:#8b6b48;
+  --f-ui:"Averia Serif Libre",Georgia,serif; --f-mono:"JetBrains Mono",Consolas,monospace;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+body{background:var(--page);color:var(--beige);font:15px/1.4 var(--f-ui);padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px 64px}
+.wrap{max-width:1000px;margin:0 auto;display:flex;flex-direction:column;gap:22px}
+h1,h2,h3{font-family:var(--f-ui);font-weight:700;margin:0;text-wrap:balance}
+h1{font-size:1.8rem;color:var(--orange)}
+h2{font-size:1.3rem;color:var(--orange)}
+h3{font-size:1.05rem;color:var(--orange)}
+p{margin:0;max-width:70ch}
+.lead{color:var(--muted)}
+
+/* ---- janela ---- */
+.win{width:100%;max-width:940px;height:640px;margin:0 auto;position:relative;border-radius:10px;
+  background:repeating-linear-gradient(92deg,rgba(0,0,0,.06) 0 3px,transparent 3px 11px),linear-gradient(180deg,var(--wood1),var(--wood2));
+  border:3px solid var(--woodEdge);box-shadow:inset 0 0 0 2px #7a5b3e,inset 0 0 40px rgba(0,0,0,.55),0 20px 50px rgba(0,0,0,.6);
+  display:flex;flex-direction:column;padding:0 24px}
+.wtitle{height:58px;display:grid;place-items:center;font-size:30px;color:var(--orange);text-shadow:0 2px 3px #000;letter-spacing:.02em}
+.vbtn.wclose{position:absolute;top:14px;right:16px;width:36px;height:36px;padding:0}
+.wtabs{display:flex;gap:8px;height:44px;align-items:stretch}
+.wtabs .vbtn{flex:1 1 0;min-width:0}
+.wcontent{flex:1;min-height:0;margin-top:6px;display:flex;gap:10px}
+.wstatus{height:46px;display:flex;align-items:center;color:var(--yellow);font-size:15px;padding-left:2px}
+
+.vbtn{all:unset;box-sizing:border-box;cursor:pointer;display:inline-grid;place-items:center;padding:0 10px;height:34px;
+  font:15px var(--f-ui);color:var(--orange);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  background:linear-gradient(180deg,var(--btn1),var(--btn2));border:1px solid var(--btnEdge);border-radius:4px;box-shadow:inset 0 1px 0 rgba(255,255,255,.12)}
+.vbtn:hover{filter:brightness(1.18)}
+.vbtn:focus-visible{outline:2px solid var(--yellow);outline-offset:1px}
+.vbtn.on{color:var(--yellow);filter:brightness(1.25)}
+.vbtn.dim{filter:brightness(.72)}
+.wtabs .vbtn{height:40px;font-size:16px}
+
+.inlay{background:var(--inlay);border:2px solid var(--inlayEdge);border-radius:4px;box-shadow:inset 0 0 10px rgba(0,0,0,.7);min-height:0}
+.side{width:190px;flex:none;display:flex;flex-direction:column;gap:4px;padding:4px;overflow:auto}
+.side .vbtn{height:40px;width:100%}
+.side .foot{margin-top:auto;display:flex;flex-direction:column;gap:4px;padding-top:6px;border-top:1px solid rgba(255,255,255,.08)}
+.right{flex:1;min-width:0;display:flex;flex-direction:column}
+.subtabs{display:flex;gap:6px;padding:6px 8px;height:46px;flex-wrap:nowrap;overflow-x:auto}
+.subtabs .vbtn{height:34px;font-size:14px}
+.area{flex:1;min-height:0;overflow:auto;padding:5px 8px;display:flex;flex-direction:column;gap:3px}
+.bar{display:flex;gap:6px;padding:6px 8px;border-top:1px solid rgba(255,255,255,.08)}
+.bar .vbtn{height:34px;font-size:14px}
+
+/* linhas no padrão Row(): rótulo Dim, controles, ? */
+.row{display:flex;align-items:center;gap:8px;min-height:34px}
+.row .lab{width:170px;flex:none;color:var(--muted);font-size:14px}
+.row .val{color:var(--yellow);text-align:center;font-size:14px;min-width:150px}
+.row .txt{flex:1;min-width:0;font-size:14px;color:var(--beige)}
+.head{color:var(--orange);font-size:18px;margin-top:8px}
+.dimline{color:var(--muted);font-size:13px}
+.field{font:14px var(--f-ui);color:var(--beige);background:rgba(0,0,0,.55);border:1px solid #5a4632;border-radius:3px;height:30px;padding:0 8px;width:70px}
+.field.w{width:auto;flex:1;min-width:0}
+.field:focus{outline:2px solid var(--orange);outline-offset:0}
+.sw{width:30px;height:30px;border:1px solid #000;border-radius:3px;flex:none}
+.q{all:unset;cursor:help;width:20px;height:20px;flex:none;display:inline-grid;vertical-align:middle;box-sizing:border-box;place-items:center;border-radius:50%;border:1px solid var(--muted);color:var(--muted);font:700 12px var(--f-ui)}
+.q:hover,.q:focus-visible{border-color:var(--orange);color:var(--orange)}
+.pct{font-size:13px;min-width:44px;text-align:right;font-variant-numeric:tabular-nums}
+.pbar{position:relative;height:10px;flex:1;min-width:0;border:1px solid #000;background:#2a0d0a}
+.pbar i{position:absolute;inset:0;background:linear-gradient(180deg,#d33b2c,#8f1d14)}
+.pbar b{position:absolute;top:-4px;bottom:-4px;width:2px;background:var(--yellow)}
+.abrow{display:flex;align-items:center;gap:8px;min-height:38px;padding:2px 4px;border-radius:3px}
+.abrow:nth-child(odd){background:rgba(255,255,255,.03)}
+.abrow.sel{background:rgba(255,161,60,.12)}
+.rune{width:30px;height:30px;flex:none;display:grid;place-items:center;font-size:18px;color:var(--yellow);border:1px solid var(--btnEdge);border-radius:3px;background:radial-gradient(circle,#4a3418,#160f09)}
+
+#tooltip{position:fixed;z-index:50;max-width:330px;background:rgba(14,10,7,.96);border:1px solid #8b6b48;border-radius:4px;padding:10px 12px;font-size:14px;line-height:1.4;color:var(--beige);box-shadow:0 10px 24px rgba(0,0,0,.6);pointer-events:none}
+#tooltip b{color:var(--orange);display:block;font-size:16px;margin-bottom:4px}
+#tooltip .k{color:var(--yellow)}
+#tooltip .g{display:block;margin-top:6px;font:11.5px var(--f-mono);color:var(--muted)}
+
+details.json{background:#1c1712;border:1px solid #3c2f22;border-radius:6px;padding:10px 14px}
+details.json summary{cursor:pointer;color:var(--orange)}
+pre.code{margin:10px 0 0;background:#0f0c09;border:1px solid #3c2f22;border-radius:4px;padding:12px;font:12.5px/1.5 var(--f-mono);color:#d8c9ae;overflow:auto;max-height:380px}
+
+.spec{display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:16px}
+.spec section{background:#1c1712;border:1px solid #3c2f22;border-radius:6px;padding:14px 16px;display:flex;flex-direction:column;gap:8px;min-width:0}
+.spec ul,.spec ol{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:6px}
+code{font:12.5px var(--f-mono);color:var(--beige);background:#0f0c09;padding:1px 5px;border-radius:3px}
+.tw{overflow-x:auto}
+table.ref{border-collapse:collapse;width:100%;font-size:14px}
+table.ref th,table.ref td{border-bottom:1px solid #3c2f22;padding:6px 8px;text-align:left;vertical-align:top}
+table.ref th{color:var(--muted);font-weight:400}
+
+@media (max-width:820px){
+  .win{height:auto;padding:0 10px}
+  .wcontent{flex-direction:column}
+  .side{width:100%;flex-direction:row;overflow-x:auto}
+  .side .vbtn{width:auto;min-width:150px}
+  .side .foot{flex-direction:row;margin:0;border:none;padding:0}
+  .area{max-height:none}
+  .row{flex-wrap:wrap}
+  .row .lab{width:100%}
+  .wtabs{overflow-x:auto}
+  .wtabs .vbtn{flex:none;min-width:110px}
+}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+
+<div class="wrap">
+  <header style="display:flex;flex-direction:column;gap:6px">
+    <h1>Bestiário da Arena</h1>
+    <p class="lead">Protótipo da aba <b>Bestiário</b> no Painel de Admin, que abre com o <b>F8</b> e só para admin. Ela usa a mesma janela das telas dos NPCs, no layout da aba Aparência: criaturas à esquerda, sub-abas e linhas de campos à direita, status embaixo. Os campos funcionam aqui. O <span class="q" tabindex="0" data-tip="<b>Tooltip</b>No jogo é o tooltip do próprio Valheim (UITooltip), o mesmo do inventário.">?</span> abre a explicação de cada campo e de cada habilidade.</p>
+  </header>
+
+  <div class="win" id="win">
+    <div class="wtitle">Painel de Admin</div>
+    <button class="vbtn wclose" aria-label="Fechar">X</button>
+    <div class="wtabs" id="wtabs"></div>
+    <div class="wcontent">
+      <div class="inlay side" id="side"></div>
+      <div class="inlay right">
+        <div class="subtabs" id="subtabs"></div>
+        <div class="area" id="area"></div>
+        <div class="bar">
+          <button class="vbtn" id="save" style="width:110px">Salvar</button>
+          <button class="vbtn" id="spawn" style="width:190px">Invocar perto de mim</button>
+          <button class="vbtn" id="undo" style="width:110px">Desfazer</button>
+        </div>
+      </div>
+    </div>
+    <div class="wstatus" id="status"></div>
+  </div>
+
+  <details class="json"><summary>Como fica salvo (arena-bestiario.json, criatura selecionada)</summary><pre class="code" id="json"></pre></details>
+
+  <h2>Como funciona por dentro</h2>
+  <div class="spec">
+    <section>
+      <h3>Tela</h3>
+      <ul>
+        <li>Uma <code>BestiaryAdminView : ArenaViewBase</code> nova, como 4ª aba do Painel de Admin (F8), depois de Mensagem, Jogadores e Buffs. Não precisa ir até um NPC nem de tecla nova.</li>
+        <li>O F8 só abre para admin (<code>AdminPanelNet.LocalIsAdmin</code>), e o servidor confere de novo cada Salvar e cada Invocar, então um cliente alterado não consegue editar.</li>
+        <li>O layout é o mesmo da <code>AppearanceView</code>: inlay de 190 px com a lista, inlay da direita com sub-abas e uma lista com rolagem.</li>
+        <li>Só usa as peças que já existem no <code>ValheimUi</code>: campo de texto, botão, <code>&lt; valor &gt;</code> para escolher numa lista e botão Ligado/Desligado. A cor segue o editor RGB da Aparência.</li>
+        <li>A peça nova é o "?": um helper <code>ValheimUi.AddTooltip</code> que liga o <code>UITooltip</code> do jogo. Ele serve depois para as outras telas também.</li>
+        <li>"Invocar perto de mim" cria a criatura na frente do admin, fora de partida, para testar. Ela some sozinha em 5 minutos.</li>
+      </ul>
+    </section>
+    <section>
+      <h3>Variante, não prefab novo</h3>
+      <ul>
+        <li>A arena cria a criatura base com a marca <code>npcv_beast = id</code> no ZDO. Um patch em <code>Character.Awake</code> aplica o bestiário em todas as máquinas.</li>
+        <li>Para o jogo ela não é chefe: a barra grande é só visual, e não existe chave global. Nada mexe em progressão nem no passe de chefe do Deadheim.</li>
+        <li>O drop continua zerado. A recompensa sai do desafio, pelo correio.</li>
+      </ul>
+    </section>
+    <section>
+      <h3>Arquivo e sincronização</h3>
+      <ul>
+        <li><code>config/NpcValheim/arena-bestiario.json</code> no servidor. Vai para os clientes no login e a cada Salvar, pelo RPC da arena.</li>
+        <li>Só admin salva, e o servidor confere quem mandou. A edição vale a partir da próxima criatura criada.</li>
+        <li>O desafio aceita <code>bestiario:id</code> no campo Criatura: o <code>&lt; &gt;</code> do desafio passa a listar as criaturas do bestiário depois das do jogo.</li>
+      </ul>
+    </section>
+    <section>
+      <h3>Habilidades</h3>
+      <ul>
+        <li>O <code>ArenaBeastBrain</code> roda no dono da criatura. Recargas e fases ficam no ZDO, então a troca de dono não reinicia nada.</li>
+        <li>Toda habilidade perigosa tem aviso antes (círculo, brilho ou rugido), mandado a todos da partida.</li>
+        <li>Lacaios, totens e zonas levam a marca da partida, e o <code>Sweep</code> limpa tudo.</li>
+        <li>Limites: 6 habilidades e 8 lacaios vivos por criatura. Lacaio chefe é recusado.</li>
+      </ul>
+    </section>
+    <section>
+      <h3>Ordem de entrega</h3>
+      <ol>
+        <li><b>Fase 1:</b> arquivo, sincronização, aba Bestiário no F8 com Visual, Atributos e Resistências, tooltip, "Invocar perto de mim" e desafio com <code>bestiario:id</code>.</li>
+        <li><b>Fase 2:</b> Ataques e as 6 habilidades centrais.</li>
+        <li><b>Fase 3:</b> as outras 9 habilidades.</li>
+      </ol>
+    </section>
+  </div>
+
+  <h2>Catálogo de habilidades</h2>
+  <div class="tw"><table class="ref" id="refTable"><thead><tr><th>Runa</th><th>Habilidade</th><th>O que faz</th><th>Aviso ao jogador</th><th>Como reagir</th><th>Fase</th></tr></thead><tbody></tbody></table></div>
+</div>
+
+<div id="tooltip" hidden></div>
+
+<script>
+// ---------- catálogos ----------
+const BASES = {
+  Troll:{hp:600,label:"Troll"}, Draugr_Elite:{hp:210,label:"Draugr Elite"}, Wolf:{hp:80,label:"Lobo"},
+  Abomination:{hp:1600,label:"Abominação"}, StoneGolem:{hp:3000,label:"Golem de Pedra"},
+  Greydwarf_Elite:{hp:300,label:"Greydwarf Bruto"}, Fenring:{hp:1500,label:"Fenring"},
+  GoblinBrute:{hp:800,label:"Fuling Bruto"}, SeekerBrute:{hp:2000,label:"Buscador Soldado"}, Charred_Melee:{hp:900,label:"Carbonizado"}
+};
+const DMG = [["blunt","Contundente","#c9b28d"],["slash","Cortante","#e0e0e0"],["pierce","Perfurante","#b9c4cc"],["fire","Fogo","#ff7a2e"],
+  ["frost","Gelo","#7fc8ff"],["lightning","Raio","#f2e35c"],["poison","Veneno","#8fd14f"],["spirit","Espiritual","#d6b3ff"]];
+const MODS = [["Muito fraco",2],["Fraco",1.5],["Levemente fraco",1.25],["Normal",1],["Levemente resistente",.75],["Resistente",.5],["Muito resistente",.25],["Imune",0]];
+const STATUS = ["Nenhum","Queimando","Envenenado","Congelado (lento)","Molhado","Eletrizado","Sangrando"];
+const VFX = ["Nenhum","Chamas","Fumaça escura","Gotas de veneno","Névoa gelada","Faíscas","Runas brilhando"];
+const TRIG = {
+  start:{label:"Início da luta",tip:"Usa uma vez, assim que os portões abrem."},
+  hp:{label:"Vida ≤ %",tip:"Dispara quando a vida cai até o valor. Vira uma <span class='k'>fase</span> na barra."},
+  every:{label:"A cada N s",tip:"Repete com recarga, com ±20% de variação para não ficar previsível."},
+  time:{label:"Tempo de luta ≥",tip:"Dispara depois de tantos segundos de luta. Bom contra grupo que enrola."}
+};
+const ABIL = {
+  stomp:{rune:"ᚦ",name:"Pisão Sísmico",cat:"Área",phase:2,what:"Bate no chão e causa dano e empurrão a todos dentro do raio.",warn:"Um anel vermelho aparece no chão durante o preparo.",react:"Sair do anel ou rolar no último instante.",params:{dano:[60,"Dano"],raio:[6,"Raio (m)"],empurrao:[80,"Empurrão"],preparo:[1.2,"Preparo (s)"]},trigger:"every",tval:14},
+  charge:{rune:"ᚱ",name:"Investida",cat:"Movimento",phase:2,what:"Corre em linha reta até o jogador mais distante e derruba quem estiver no caminho.",warn:"Rugido e uma faixa no chão mostrando a linha.",react:"Sair da linha.",params:{dano:[45,"Dano"],distancia:[18,"Distância (m)"],preparo:[1,"Preparo (s)"]},trigger:"every",tval:20},
+  summon:{rune:"ᛗ",name:"Invocar Lacaios",cat:"Invocação",phase:2,what:"Chama criaturas de apoio. Os lacaios são da partida e somem quando a luta acaba.",warn:"Fumaça nos pontos de surgimento, 2 s antes.",react:"Matar os lacaios rápido ou afastar o chefe deles.",params:{prefab:["Greydwarf_Elite","Criatura"],qtd:[2,"Quantidade"],nivel:[1,"Nível"],maxVivos:[4,"Máx. vivos"]},trigger:"hp",tval:60},
+  enrage:{rune:"ᛏ",name:"Fúria",cat:"Fortalecer",phase:2,what:"Fica mais rápida e bate mais forte até o fim da luta.",warn:"Brilho vermelho, rugido longo e FÚRIA na barra.",react:"Guardar defesa e cura para essa parte.",params:{velocidade:[1.35,"Velocidade ×"],dano:[1.25,"Dano ×"]},trigger:"hp",tval:30},
+  zone:{rune:"ᚲ",name:"Zona Perigosa",cat:"Área",phase:2,what:"Marca o chão embaixo de um jogador. Depois do aviso, vira poça de fogo, veneno ou gelo.",warn:"Círculo pulsando sob o jogador.",react:"Sair do círculo e não lutar em cima da poça.",params:{tipo:["fire","Tipo"],dps:[15,"Dano/s"],raio:[3,"Raio (m)"],duracao:[8,"Duração (s)"],aviso:[1.5,"Aviso (s)"]},trigger:"every",tval:12},
+  timerage:{rune:"ᛊ",name:"Fúria do Tempo",cat:"Fortalecer",phase:2,what:"Depois de um tempo de luta, o dano sobe a cada 10 s. Impede vencer só enrolando.",warn:"Mensagem no centro da tela e a barra pisca.",react:"Derrubar antes.",params:{aumento:[10,"+% dano/10 s"]},trigger:"time",tval:300},
+  shield:{rune:"ᛒ",name:"Escudo Rúnico",cat:"Defesa",phase:3,what:"Fica imune e faz surgir totens. O escudo cai quando todos os totens forem destruídos.",warn:"Bolha de runas e totens brilhando.",react:"Dividir o grupo para quebrar os totens.",params:{totens:[3,"Totens"],vidaTotem:[400,"Vida do totem"]},trigger:"hp",tval:50},
+  rain:{rune:"ᚺ",name:"Chuva de Projéteis",cat:"Área",phase:3,what:"Faz cair pedras ou meteoros em volta dos jogadores.",warn:"Sombra no chão onde cada um vai cair.",react:"Andar entre as sombras.",params:{projeteis:[8,"Projéteis"],dano:[40,"Dano"],raio:[12,"Área (m)"],tipo:["blunt","Tipo"]},trigger:"every",tval:25},
+  blink:{rune:"ᛉ",name:"Piscar",cat:"Movimento",phase:3,what:"Some e reaparece atrás do jogador que mais causou dano.",warn:"Fumaça no ponto de chegada, meio segundo antes.",react:"Quem bate mais fica pronto para virar e bloquear.",params:{alcance:[15,"Alcance (m)"]},trigger:"every",tval:18},
+  aura:{rune:"ᛟ",name:"Aura",cat:"Área",phase:3,what:"Causa dano ou lentidão contínuos a quem fica perto.",warn:"Partículas em volta da criatura o tempo todo.",react:"Bater e sair, sem ficar colado.",params:{tipo:["frost","Tipo"],dps:[6,"Dano/s"],raio:[3.5,"Raio (m)"],lentidao:[20,"Lentidão %"]},trigger:"start",tval:0},
+  regen:{rune:"ᛜ",name:"Regeneração",cat:"Defesa",phase:3,what:"Se ninguém bater nela por um tempo, recupera vida aos poucos.",warn:"Brilho verde e números de cura.",react:"Manter alguém sempre causando dano.",params:{semDano:[6,"Sem dano (s)"],porSeg:[1.5,"Cura %/s"]},trigger:"start",tval:0},
+  thorns:{rune:"ᛞ",name:"Espinhos",cat:"Defesa",phase:3,what:"Por alguns segundos, devolve parte do dano corpo a corpo.",warn:"A pele brilha e faz som de metal.",react:"Parar de bater corpo a corpo ou trocar para arco e magia.",params:{reflete:[40,"Devolve %"],duracao:[6,"Duração (s)"]},trigger:"every",tval:30},
+  drain:{rune:"ᚾ",name:"Dreno de Vida",cat:"Fortalecer",phase:3,what:"Os golpes curam parte do dano causado.",warn:"Rastro vermelho saindo do jogador atingido.",react:"Bloquear em vez de levar golpe.",params:{cura:[30,"Cura % do dano"]},trigger:"start",tval:0},
+  leap:{rune:"ᛇ",name:"Salto Esmagador",cat:"Movimento",phase:3,what:"Pula em cima de um jogador e causa dano em área ao cair.",warn:"Círculo marcando o ponto de queda.",react:"Sair do círculo.",params:{dano:[70,"Dano"],raio:[4,"Raio (m)"],alcance:[20,"Alcance (m)"]},trigger:"every",tval:22},
+  roar:{rune:"ᚹ",name:"Grito Aterrorizante",cat:"Controle",phase:3,what:"Quem está perto fica lento por alguns segundos.",warn:"A criatura enche o peito antes de gritar.",react:"Se afastar antes do grito ou usar um Poder.",params:{raio:[10,"Raio (m)"],lentidao:[40,"Lentidão %"],duracao:[3,"Duração (s)"]},trigger:"every",tval:35}
+};
+const TIPS = {
+  base:"<b>Criatura base</b>De onde vêm o corpo, as animações e os ataques. Chefes não entram na lista.<span class='g'>prefab do jogo</span>",
+  nome:"<b>Nome</b>Aparece na barra de vida e no aviso de vitória.",
+  titulo:"<b>Título</b>Subtítulo embaixo do nome, na barra de chefe.",
+  barra:"<b>Barra de chefe</b>Mostra a barra grande no topo da tela. É só visual: não conta como chefe derrotado.",
+  escala:"<b>Tamanho</b>Multiplica o modelo e a colisão. Acima de 2× ela pode não passar pelos portões.",
+  cor:"<b>Tingimento (RGB 0-255)</b>Mistura uma cor na textura original. Força 0 deixa a cor original.",
+  brilho:"<b>Brilho (RGB 0-255)</b>Faz olhos, runas e rachaduras emitirem luz.",
+  vfx:"<b>Efeito no corpo</b>Partículas do próprio jogo que acompanham a criatura.",
+  nivel:"<b>Nível</b>1 = sem estrela, 2 = uma, 3 = duas. Cada nível soma a vida base de novo, igual ao jogo.",
+  vida:"<b>Multiplicador de vida</b>Por cima do nível. Vida = base × nível × multiplicador.",
+  grupo:"<b>Vida por jogador extra (%)</b>Com 60%, uma dupla enfrenta 1,6× a vida do solo e um trio, 2,2×.",
+  vel:"<b>Velocidade</b>Multiplica andar e correr. Acima de 1,5× a animação começa a deslizar.<span class='g'>m_walkSpeed / m_runSpeed</span>",
+  giro:"<b>Giro</b>Quão rápido ela se vira. Giro baixo deixa atacar pelas costas.<span class='g'>m_turnSpeed</span>",
+  atord:"<b>Atordoamento</b>Quanto dano ela aguenta antes de cambalear. Maior = cambaleia menos.<span class='g'>m_staggerDamageFactor</span>",
+  peso:"<b>Resistência a empurrão (%)</b>Reduz o empurrão de armas e poderes.",
+  visao:"<b>Percepção (m)</b>Distância em que vê e ouve os jogadores.<span class='g'>m_viewRange / m_hearRange</span>",
+  foge:"<b>Foge com pouca vida</b>Em chefe isso só irrita, então vem desligado.",
+  res:"<b>Resistência</b>Quanto desse dano ela recebe. Imune = 0%, Muito fraco = 200%.<span class='g'>m_damageModifiers</span>",
+  atkDmg:"<b>Dano por tipo</b>Os números do golpe. Pode misturar tipos, como metade corte e metade fogo.",
+  atkRange:"<b>Alcance da IA (m)</b>De quão longe ela tenta esse ataque.<span class='g'>m_aiAttackRange</span>",
+  atkInt:"<b>Intervalo (s)</b>Tempo mínimo entre dois usos.<span class='g'>m_aiAttackInterval</span>",
+  atkForce:"<b>Empurrão</b>Quanto o golpe joga o jogador para trás.<span class='g'>m_attackForce</span>",
+  atkSE:"<b>Efeito ao acertar</b>Status aplicado em quem leva o golpe.",
+  trig:"<b>Gatilho</b>Quando a habilidade é usada.",
+  save:"<b>Salvar</b>Manda ao servidor. Vale a partir da próxima criatura criada."
+};
+
+// ---------- criaturas de exemplo ----------
+const R = o=>Object.assign(Object.fromEntries(DMG.map(d=>[d[0],"Normal"])),o);
+const A = (key,over={})=>{const a=ABIL[key];const p={};for(const k in a.params)p[k]=a.params[k][0];return {key,on:true,trigger:over.trigger||a.trigger,tval:over.tval??a.tval,params:Object.assign(p,over.params||{})};};
+let beasts = [
+  {id:"troll_anciao",base:"Troll",nome:"Troll Ancião",titulo:"Guardião da Floresta Negra",barra:true,escala:1.5,cor:[95,122,74],corF:45,brilho:[0,0,0],brilhoF:0,vfx:"Nenhum",
+   nivel:3,vida:2.5,grupo:60,vel:1,giro:.8,atord:2,peso:70,visao:40,foge:false,res:R({blunt:"Resistente",pierce:"Muito resistente",fire:"Fraco",spirit:"Levemente fraco"}),
+   atks:[{nome:"Tapa",dmg:{blunt:85},alcance:3.5,intervalo:2,empurrao:120,status:"Nenhum"},{nome:"Arremesso de pedra",dmg:{blunt:70},alcance:25,intervalo:9,empurrao:60,status:"Nenhum"}],
+   abil:[A("stomp"),A("summon",{tval:60}),A("enrage",{tval:30})]},
+  {id:"senhor_draugr",base:"Draugr_Elite",nome:"Senhor Draugr em Chamas",titulo:"O Juramento que Não Apagou",barra:true,escala:1.35,cor:[58,42,36],corF:60,brilho:[255,106,26],brilhoF:70,vfx:"Chamas",
+   nivel:3,vida:6,grupo:60,vel:1.15,giro:1.2,atord:1.5,peso:40,visao:40,foge:false,res:R({fire:"Imune",frost:"Fraco",spirit:"Muito fraco",pierce:"Resistente"}),
+   atks:[{nome:"Espadada",dmg:{slash:45,fire:40},alcance:3,intervalo:1.6,empurrao:50,status:"Queimando"}],
+   abil:[A("aura",{params:{tipo:"fire",dps:5,raio:3,lentidao:0}}),A("zone"),A("blink"),A("summon",{tval:50,params:{prefab:"Draugr",qtd:2,nivel:2,maxVivos:4}})]},
+  {id:"lobo_alfa",base:"Wolf",nome:"Lobo Alfa do Gelo",titulo:"Líder da Matilha da Montanha",barra:true,escala:1.9,cor:[217,228,238],corF:55,brilho:[127,200,255],brilhoF:40,vfx:"Névoa gelada",
+   nivel:3,vida:10,grupo:60,vel:1.1,giro:1,atord:1.3,peso:30,visao:50,foge:false,res:R({frost:"Imune",fire:"Fraco",slash:"Levemente resistente"}),
+   atks:[{nome:"Mordida",dmg:{slash:40,frost:30},alcance:2.5,intervalo:1.2,empurrao:30,status:"Congelado (lento)"}],
+   abil:[A("summon",{trigger:"every",tval:40,params:{prefab:"Wolf",qtd:3,nivel:2,maxVivos:4}}),A("charge"),A("roar"),A("enrage",{tval:25,params:{velocidade:1.25,dano:1.3}})]},
+  {id:"abominacao_ancestral",base:"Abomination",nome:"Abominação Ancestral",titulo:"A Raiz que Apodrece",barra:true,escala:1.25,cor:[60,74,46],corF:50,brilho:[143,209,79],brilhoF:25,vfx:"Gotas de veneno",
+   nivel:2,vida:2,grupo:60,vel:1,giro:.7,atord:2.5,peso:90,visao:40,foge:false,res:R({poison:"Imune",fire:"Muito fraco",slash:"Levemente fraco",blunt:"Resistente"}),
+   atks:[{nome:"Golpe de raiz",dmg:{blunt:90,poison:30},alcance:4,intervalo:2.2,empurrao:140,status:"Envenenado"}],
+   abil:[A("regen"),A("zone",{params:{tipo:"poison",dps:12,raio:3.5,duracao:10,aviso:1.5}}),A("summon",{tval:50,params:{prefab:"BlobElite",qtd:3,nivel:1,maxVivos:6}})]},
+  {id:"golem_runico",base:"StoneGolem",nome:"Golem Rúnico",titulo:"Sentinela das Montanhas",barra:true,escala:1.15,cor:[108,112,120],corF:30,brilho:[79,224,208],brilhoF:85,vfx:"Runas brilhando",
+   nivel:2,vida:1.5,grupo:60,vel:.95,giro:.6,atord:4,peso:100,visao:45,foge:false,res:R({blunt:"Fraco",slash:"Muito resistente",pierce:"Imune",frost:"Resistente",lightning:"Fraco"}),
+   atks:[{nome:"Punho",dmg:{blunt:110},alcance:4,intervalo:2.5,empurrao:160,status:"Nenhum"}],
+   abil:[A("shield"),A("rain"),A("leap"),A("timerage")]}
+];
+let saved = JSON.parse(JSON.stringify(beasts));
+let cur=0, sub="visual", selAb=0, pickAb="charge", status="";
+
+// ---------- helpers ----------
+const $=s=>document.querySelector(s);
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const B=()=>beasts[cur];
+const fmt=n=>Math.round(n).toLocaleString("pt-BR");
+const hpOf=(b,p)=>BASES[b.base].hp*b.nivel*b.vida*(1+(b.grupo/100)*(p-1));
+const q=(k,html)=>`<span class="q" tabindex="0" data-tip="${esc(html||TIPS[k]||k)}">?</span>`;
+const abilTip=a=>`<b>${a.rune} ${a.name}</b>${a.what}<br><br><span class='k'>Aviso:</span> ${a.warn}<br><span class='k'>Como reagir:</span> ${a.react}<span class='g'>${a.cat} · fase ${a.phase} da entrega</span>`;
+const rgb=c=>`rgb(${c.join(",")})`;
+// Row(): rótulo Dim + controles + ?
+const row=(label,controls,tipKey,tipHtml)=>`<div class="row"><span class="lab">${label}</span>${controls}${tipKey||tipHtml?q(tipKey,tipHtml):""}</div>`;
+const fld=(path,val,w)=>`<input class="field${w==="w"?" w":""}" data-path="${path}" value="${esc(val)}" ${w&&w!=="w"?`style="width:${w}px"`:""} aria-label="${path}">`;
+const step=(path,val,shown)=>`<button class="vbtn" style="width:34px" data-step="${path}" data-d="-1" aria-label="anterior">&lt;</button><span class="val">${esc(shown??val)}</span><button class="vbtn" style="width:34px" data-step="${path}" data-d="1" aria-label="próximo">&gt;</button>`;
+const tog=(path,on)=>`<button class="vbtn${on?" on":""}" style="width:110px" data-tog="${path}">${on?"Ligado":"Desligado"}</button>`;
+
+function getP(path){return path.split(".").reduce((o,k)=>o[k],B());}
+function setP(path,v){const ks=path.split(".");const last=ks.pop();const o=ks.reduce((o,k)=>o[k],B());o[last]=v;}
+
+// listas dos < >
+function choices(path){
+  if(path==="base")return Object.keys(BASES);
+  if(path==="vfx")return VFX;
+  if(path.startsWith("res."))return MODS.map(m=>m[0]);
+  if(path.endsWith(".status"))return STATUS;
+  if(path.endsWith(".trigger"))return Object.keys(TRIG);
+  if(path.endsWith(".tipo"))return DMG.map(d=>d[0]);
+  if(path==="#pick")return Object.keys(ABIL);
+  return [];
+}
+
+// ---------- render ----------
+function renderWin(){
+  const tabs=["Mensagem","Jogadores","Buffs","Bestiário"];
+  $("#wtabs").innerHTML=tabs.map(t=>`<button class="vbtn ${t==="Bestiário"?"on":"dim"}" tabindex="-1">${t}</button>`).join("");
+  $("#side").innerHTML=beasts.map((b,i)=>`<button class="vbtn ${i===cur?"on":""}" data-beast="${i}">${esc(b.nome)}</button>`).join("")+
+    `<div class="foot"><button class="vbtn" id="newB">+ Nova</button><button class="vbtn" id="dupB">Duplicar</button><button class="vbtn" id="delB">Excluir</button></div>`;
+  const subs=[["visual","Visual"],["attr","Atributos"],["res","Resistências"],["atk","Ataques"],["abil",`Habilidades (${B().abil.length})`]];
+  $("#subtabs").innerHTML=subs.map(([k,l])=>`<button class="vbtn ${k===sub?"on":""}" data-sub="${k}" style="width:auto;padding:0 14px">${l}</button>`).join("");
+  $("#status").textContent=status;
+  renderArea();renderJson();
+}
+function hpLine(b){return `Vida: solo <span style="color:var(--yellow)">${fmt(hpOf(b,1))}</span> · dupla <span style="color:var(--yellow)">${fmt(hpOf(b,2))}</span> · trio <span style="color:var(--yellow)">${fmt(hpOf(b,3))}</span>`;}
+function phaseBar(b){
+  const hp=b.abil.filter(a=>a.on&&a.trigger==="hp");
+  return `<div class="row"><span class="lab">Fases pela vida</span><div class="pbar"><i></i>${hp.map(a=>`<b style="left:${a.tval}%" title="${ABIL[a.key].name}"></b>`).join("")}</div>
+    ${q(null,"<b>Fases</b>Cada marca amarela é uma habilidade com gatilho Vida ≤ %. No jogo a mesma marca aparece na barra de chefe.")}</div>
+    <div class="dimline" style="padding-left:178px">${hp.length?hp.sort((x,y)=>y.tval-x.tval).map(a=>`${a.tval}% ${ABIL[a.key].rune} ${ABIL[a.key].name}`).join(" → "):"nenhuma habilidade por vida"}</div>`;
+}
+function renderArea(){
+  const b=B();let h="";
+  if(sub==="visual"){
+    h+=`<div class="head">Identidade</div>`;
+    h+=row("Criatura base",step("base",b.base,`${BASES[b.base].label} (${b.base})`),"base");
+    h+=row("Nome",fld("nome",b.nome,"w"),"nome");
+    h+=row("Título",fld("titulo",b.titulo,"w"),"titulo");
+    h+=row("Barra de chefe",tog("barra",b.barra),"barra");
+    h+=`<div class="head">Aparência</div>`;
+    h+=row("Tamanho",fld("escala",b.escala)+`<span class="txt">× ${b.escala>2?'<span style="color:var(--danger)">pode prender nos portões</span>':""}</span>`,"escala");
+    h+=row("Tingimento R G B",fld("cor.0",b.cor[0],56)+fld("cor.1",b.cor[1],56)+fld("cor.2",b.cor[2],56)+`<span class="sw" style="background:${rgb(b.cor)}"></span><span class="lab" style="width:auto">Força %</span>`+fld("corF",b.corF,56),"cor");
+    h+=row("Brilho R G B",fld("brilho.0",b.brilho[0],56)+fld("brilho.1",b.brilho[1],56)+fld("brilho.2",b.brilho[2],56)+`<span class="sw" style="background:${rgb(b.brilho)};box-shadow:0 0 ${b.brilhoF/6}px ${rgb(b.brilho)}"></span><span class="lab" style="width:auto">Força %</span>`+fld("brilhoF",b.brilhoF,56),"brilho");
+    h+=row("Efeito no corpo",step("vfx",b.vfx),"vfx");
+  }
+  if(sub==="attr"){
+    h+=`<div class="head">Vida</div>`;
+    h+=row("Nível (1 a 3)",fld("nivel",b.nivel),"nivel");
+    h+=row("Vida ×",fld("vida",b.vida),"vida");
+    h+=row("Vida por jogador extra %",fld("grupo",b.grupo),"grupo");
+    h+=`<div class="dimline" style="padding-left:178px">Base de ${BASES[b.base].label}: ${fmt(BASES[b.base].hp)} (no jogo, lida do prefab). ${hpLine(b)}</div>`;
+    h+=`<div class="head">Movimento e combate</div>`;
+    h+=row("Velocidade ×",fld("vel",b.vel),"vel");
+    h+=row("Giro ×",fld("giro",b.giro),"giro");
+    h+=row("Atordoamento ×",fld("atord",b.atord),"atord");
+    h+=row("Resistência a empurrão %",fld("peso",b.peso),"peso");
+    h+=row("Percepção (m)",fld("visao",b.visao),"visao");
+    h+=row("Foge com pouca vida",tog("foge",b.foge),"foge");
+  }
+  if(sub==="res"){
+    h+=`<div class="dimline">Quanto de cada dano ela recebe. Dê a cada criatura uma fraqueza clara, para o grupo escolher a arma certa.</div>`;
+    for(const [k,l,c] of DMG){const m=b.res[k];const v=MODS.find(x=>x[0]===m)[1];const col=v<1?"var(--good)":v>1?"var(--danger)":"var(--muted)";
+      h+=row(`<span style="color:${c}">${l}</span>`,step("res."+k,m)+`<span class="pct" style="color:${col}">${Math.round(v*100)}%</span>`,"res");}
+  }
+  if(sub==="atk"){
+    b.atks.forEach((a,i)=>{
+      h+=`<div class="head">${esc(a.nome)} <span class="dimline">· ataque ${i+1} de ${BASES[b.base].label}</span></div>`;
+      h+=row("Dano por tipo",DMG.slice(0,4).map(([k,l,c])=>`<span class="lab" style="width:auto;color:${c}">${l.slice(0,5)}</span>`+fld(`atks.${i}.dmg.${k}`,a.dmg[k]||0,50)).join(""),"atkDmg");
+      h+=row("",DMG.slice(4).map(([k,l,c])=>`<span class="lab" style="width:auto;color:${c}">${l.slice(0,5)}</span>`+fld(`atks.${i}.dmg.${k}`,a.dmg[k]||0,50)).join(""));
+      h+=row("Alcance da IA (m)",fld(`atks.${i}.alcance`,a.alcance),"atkRange");
+      h+=row("Intervalo (s)",fld(`atks.${i}.intervalo`,a.intervalo),"atkInt");
+      h+=row("Empurrão",fld(`atks.${i}.empurrao`,a.empurrao),"atkForce");
+      h+=row("Efeito ao acertar",step(`atks.${i}.status`,a.status),"atkSE");
+    });
+    h+=`<div class="dimline" style="margin-top:6px">Os ataques vêm da criatura base: dá para mudar os números, mas não criar animação nova. Para um golpe a mais, use uma habilidade.</div>`;
+  }
+  if(sub==="abil"){
+    h+=phaseBar(b);
+    h+=`<div class="head">Habilidades (${b.abil.length} de 6)</div>`;
+    b.abil.forEach((a,i)=>{const d=ABIL[a.key];
+      const when=a.trigger==="hp"?`vida ≤ ${a.tval}%`:a.trigger==="every"?`a cada ${a.tval} s`:a.trigger==="time"?`após ${a.tval} s`:"início da luta";
+      h+=`<div class="abrow ${i===selAb?"sel":""}"><span class="rune">${d.rune}</span><span class="txt">${a.on?"":"<span style='color:var(--muted)'>[desligada]</span> "}<span style="color:var(--orange)">${d.name}</span> · ${when}</span>${q(null,abilTip(d))}
+        <button class="vbtn" style="width:90px" data-edit="${i}">${i===selAb?"Editando":"Editar"}</button><button class="vbtn" style="width:90px" data-rm="${i}">Remover</button></div>`;});
+    if(b.abil.length<6) h+=row("Adicionar",step("#pick",pickAb,`${ABIL[pickAb].rune} ${ABIL[pickAb].name}`)+`<button class="vbtn" style="width:100px" id="addAb">Adicionar</button>`,null,abilTip(ABIL[pickAb]));
+    const a=b.abil[selAb];
+    if(a){const d=ABIL[a.key];
+      h+=`<div class="head">Editando: ${d.rune} ${d.name}</div><div class="dimline">${d.what}</div>`;
+      h+=row("Ligada",tog(`abil.${selAb}.on`,a.on),null,abilTip(d));
+      h+=row("Gatilho",step(`abil.${selAb}.trigger`,a.trigger,TRIG[a.trigger].label),null,`<b>${TRIG[a.trigger].label}</b>${TRIG[a.trigger].tip}`);
+      if(a.trigger!=="start")h+=row(a.trigger==="hp"?"Vida %":"Segundos",fld(`abil.${selAb}.tval`,a.tval),null,`<b>${TRIG[a.trigger].label}</b>${TRIG[a.trigger].tip}`);
+      for(const [k,[,lab]] of Object.entries(d.params)){const v=a.params[k];
+        if(k==="tipo")h+=row(lab,step(`abil.${selAb}.params.tipo`,v,DMG.find(x=>x[0]===v)[1]));
+        else h+=row(lab,fld(`abil.${selAb}.params.${k}`,v,k==="prefab"?"w":undefined));}
+      h+=row("Aviso ao jogador",`<span class="txt">${d.warn}</span>`);
+      h+=row("Como reagir",`<span class="txt">${d.react}</span>`);
+    }
+  }
+  $("#area").innerHTML=h;
+}
+function renderJson(){
+  const b=B();
+  const out={id:b.id,base:b.base,nome:b.nome,titulo:b.titulo,barraChefe:b.barra,
+    visual:{escala:+b.escala,tingimento:b.cor,tingimentoForca:b.corF/100,brilho:b.brilho,brilhoForca:b.brilhoF/100,efeito:b.vfx},
+    atributos:{nivel:+b.nivel,vidaMult:+b.vida,vidaPorJogadorExtra:b.grupo/100,velocidade:+b.vel,giro:+b.giro,atordoamento:+b.atord,resistEmpurrao:b.peso/100,percepcao:+b.visao,fogeComPoucaVida:b.foge},
+    resistencias:b.res,ataques:b.atks,habilidades:b.abil.map(a=>({tipo:a.key,ligada:a.on,gatilho:a.trigger,valor:+a.tval,...a.params}))};
+  $("#json").textContent=JSON.stringify(out,null,2);
+}
+
+// ---------- eventos ----------
+const win=$("#win");
+win.addEventListener("click",e=>{
+  const t=e.target.closest("button");if(!t)return;
+  if(t.dataset.beast){cur=+t.dataset.beast;selAb=0;status="";renderWin();return;}
+  if(t.dataset.sub){sub=t.dataset.sub;renderWin();return;}
+  if(t.dataset.step){const p=t.dataset.step,list=choices(p);const curv=p==="#pick"?pickAb:getP(p);
+    const nv=list[((list.indexOf(curv)+(+t.dataset.d))%list.length+list.length)%list.length];
+    if(p==="#pick")pickAb=nv;else{setP(p,nv);if(p.endsWith(".trigger")){const a=B().abil[selAb];a.tval=nv==="hp"?50:nv==="time"?300:nv==="every"?20:0;}}
+    renderWin();return;}
+  if(t.dataset.tog){setP(t.dataset.tog,!getP(t.dataset.tog));renderWin();return;}
+  if(t.dataset.edit){selAb=+t.dataset.edit;renderArea();return;}
+  if(t.dataset.rm){B().abil.splice(+t.dataset.rm,1);selAb=Math.max(0,Math.min(selAb,B().abil.length-1));renderWin();return;}
+  if(t.id==="addAb"){B().abil.push(A(pickAb));selAb=B().abil.length-1;renderWin();return;}
+  if(t.id==="newB"){beasts.push({id:"nova_"+(beasts.length+1),base:"Troll",nome:"Nova criatura",titulo:"",barra:true,escala:1,cor:[255,255,255],corF:0,brilho:[0,0,0],brilhoF:0,vfx:"Nenhum",nivel:3,vida:2,grupo:60,vel:1,giro:1,atord:1,peso:0,visao:40,foge:false,res:R({}),atks:[{nome:"Ataque básico",dmg:{blunt:60},alcance:3,intervalo:2,empurrao:60,status:"Nenhum"}],abil:[]});
+    saved.push(null);cur=beasts.length-1;sub="visual";selAb=0;status="Nova criatura: escolha a base em Visual e clique Salvar.";renderWin();return;}
+  if(t.id==="dupB"){const c=JSON.parse(JSON.stringify(B()));c.id+="_copia";c.nome+=" (cópia)";beasts.push(c);saved.push(null);cur=beasts.length-1;status="Cópia criada, ainda não salva.";renderWin();return;}
+  if(t.id==="delB"){if(beasts.length<2)return;status=`Excluída: ${B().nome}.`;beasts.splice(cur,1);saved.splice(cur,1);cur=Math.max(0,cur-1);renderWin();return;}
+  if(t.id==="save"){saved[cur]=JSON.parse(JSON.stringify(B()));status=`Salvo: ${B().nome}. Vale a partir da próxima criatura criada.`;renderWin();return;}
+  if(t.id==="spawn"){status=`${B().nome} invocado à sua frente para teste (some em 5 min, fora de partida).`;renderWin();return;}
+  if(t.id==="undo"){if(saved[cur]){beasts[cur]=JSON.parse(JSON.stringify(saved[cur]));status="Mudanças desfeitas.";}else status="Ainda não foi salva: nada a desfazer.";renderWin();}
+});
+win.addEventListener("change",e=>{
+  const el=e.target;if(!el.dataset.path)return;const p=el.dataset.path;
+  const old=getP(p);let v=el.value;
+  if(typeof old==="number"){const n=parseFloat(v.replace(",","."));if(isNaN(n)){status=`Valor inválido em ${p}: use um número.`;renderWin();return;}v=n;
+    if(/^(cor|brilho)\.\d$/.test(p))v=Math.max(0,Math.min(255,Math.round(v)));
+    if(p==="nivel")v=Math.max(1,Math.min(3,Math.round(v)));}
+  setP(p,v);status="";renderWin();
+});
+
+// ---------- tooltip ----------
+const tt=$("#tooltip");let pinned=null;
+function showTip(el){tt.innerHTML=el.dataset.tip;tt.hidden=false;const r=el.getBoundingClientRect();const w=tt.offsetWidth,h=tt.offsetHeight;
+  let x=Math.min(window.innerWidth-w-12,Math.max(12,r.right+10));if(x<r.right&&r.left-w-10>12)x=r.left-w-10;
+  let y=Math.min(window.innerHeight-h-8,Math.max(8,r.top-8));tt.style.left=x+"px";tt.style.top=y+"px";}
+document.addEventListener("mouseover",e=>{const t=e.target.closest("[data-tip]");if(t)showTip(t);});
+document.addEventListener("mouseout",e=>{if(e.target.closest("[data-tip]")&&!pinned)tt.hidden=true;});
+document.addEventListener("focusin",e=>{const t=e.target.closest("[data-tip]");if(t)showTip(t);});
+document.addEventListener("focusout",e=>{if(e.target.closest("[data-tip]"))tt.hidden=true;});
+document.addEventListener("click",e=>{const t=e.target.closest("[data-tip]");if(t){pinned=t;showTip(t);}else{pinned=null;tt.hidden=true;}});
+window.addEventListener("scroll",()=>{if(!pinned)tt.hidden=true;},{passive:true});
+$("#area").addEventListener("scroll",()=>{if(!pinned)tt.hidden=true;},{passive:true});
+
+$("#refTable tbody").innerHTML=Object.values(ABIL).sort((a,b)=>a.phase-b.phase).map(a=>`<tr><td style="font-size:20px;color:var(--yellow)">${a.rune}</td><td><b style="color:var(--orange)">${a.name}</b><br><span style="color:var(--muted)">${a.cat}</span></td><td>${a.what}</td><td>${a.warn}</td><td>${a.react}</td><td>${a.phase}</td></tr>`).join("");
+renderWin();
+</script>

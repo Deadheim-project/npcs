@@ -33,6 +33,10 @@ namespace NpcValheim.Npc
         public const string BodyPrefab = "npcv_body_prefab";
         /// <summary>Phrases and emotes, packed by NpcDialogue. Absent = the type's defaults.</summary>
         public const string Dialogue = "npcv_dialogue";
+        /// <summary>Where the NPC faces, in degrees (0 = +Z). Absent = the ZDO's rotation.</summary>
+        public const string Yaw = "npcv_yaw";
+        /// <summary>1 (default) = turns to whoever talks to it; 0 = only the head moves.</summary>
+        public const string TurnsToTalker = "npcv_face";
     }
 
     /// <summary>
@@ -84,6 +88,11 @@ namespace NpcValheim.Npc
                 return;
 
             KeepServerOwned();
+            // NPCs placed before the stored facing existed: it starts as wherever they face now.
+            if (ZNet.instance != null && ZNet.instance.IsServer() && Nview.IsOwner() &&
+                float.IsNaN(Nview.GetZDO().GetFloat(ZdoKeys.Yaw, float.NaN)))
+                Nview.GetZDO().Set(ZdoKeys.Yaw, NpcFacing.Normalize(Nview.GetZDO().GetRotation().eulerAngles.y));
+            HoldFacing();
 
             Nview.Register("RPC_SetArmor", (Action<long, string, string>)RPC_SetArmor);
             Nview.Register("RPC_SetName", (Action<long, string>)RPC_SetName);
@@ -112,6 +121,7 @@ namespace NpcValheim.Npc
             {
                 gameObject.AddComponent<NpcNameplate>();
                 gameObject.AddComponent<NpcGreeter>();
+                gameObject.AddComponent<NpcPresence>();
             }
         }
 
@@ -253,6 +263,11 @@ namespace NpcValheim.Npc
                 _nextOwnershipCheck = Time.unscaledTime + 2f;
                 KeepServerOwned();
             }
+            if (Time.unscaledTime >= _nextFacing)
+            {
+                _nextFacing = Time.unscaledTime + 0.5f;
+                HoldFacing();
+            }
 
             if (Application.isBatchMode || Time.unscaledTime < _nextAppearanceSync) return;
             _nextAppearanceSync = Time.unscaledTime + 0.1f;
@@ -268,6 +283,41 @@ namespace NpcValheim.Npc
 
         private float _nextOwnershipCheck;
         private float _nextOwnershipComplaint;
+        private float _nextFacing;
+        private Character _character;
+
+        /// <summary>Where this NPC faces (npcv_yaw, or the ZDO's rotation before it had one).</summary>
+        internal float FacingYaw
+        {
+            get
+            {
+                if (Nview == null || !Nview.IsValid()) return transform.eulerAngles.y;
+                float yaw = Nview.GetZDO().GetFloat(ZdoKeys.Yaw, float.NaN);
+                return float.IsNaN(yaw) ? NpcFacing.Normalize(Nview.GetZDO().GetRotation().eulerAngles.y) : yaw;
+            }
+        }
+
+        /// <summary>Turns its body to whoever talks to it (else only the head follows).</summary>
+        internal bool TurnsToTalker => Nview == null || !Nview.IsValid() || Nview.GetZDO().GetInt(ZdoKeys.TurnsToTalker, 1) == 1;
+
+        /// <summary>
+        /// Keeps the NPC on its stored facing, on every peer: whichever one owns the ZDO runs
+        /// Character.UpdateMotion, which turns the body toward m_lookYaw (see NpcFacing). The
+        /// look direction is given here so that turn ends where the admin put him; the owner
+        /// also snaps back at once if anything turned him more than a degree.
+        /// </summary>
+        private void HoldFacing()
+        {
+            if (Nview == null || !Nview.IsValid()) return;
+            if (_character == null) _character = GetComponent<Character>();
+            if (_character == null) return;
+            var facing = Quaternion.Euler(0f, FacingYaw, 0f);
+            _character.SetLookDir(facing * Vector3.forward);
+            if (!Nview.IsOwner() || Mathf.Abs(NpcFacing.Delta(transform.eulerAngles.y, FacingYaw)) <= 1f) return;
+            transform.rotation = facing;
+            var body = GetComponent<Rigidbody>();
+            if (body != null) body.rotation = facing;
+        }
 
         /// <summary>
         /// Holds the NPC's ZDO on the server, for as long as it exists.
@@ -322,6 +372,14 @@ namespace NpcValheim.Npc
 
         /// <summary>Fallback when the ZDO has no name yet (and for leftover "NPC" defaults).</summary>
         protected virtual string DefaultNpcName => "NPC";
+
+        /// <summary>What this NPC does, shown after its name on the plate.</summary>
+        internal string RoleName => DefaultNpcName;
+
+        /// <summary>Emotes it plays now and then while someone is near (NpcGreeter). Empty = none.</summary>
+        internal virtual string[] IdleEmotes => DefaultIdleEmotes;
+
+        private static readonly string[] DefaultIdleEmotes = { "shrug", "thumbsup" };
 
         /// <summary>How high the floating name sits. Player-clone NPCs keep the default
         /// (about head height); a mailbox is furniture and wants it just above the box.</summary>
@@ -535,6 +593,12 @@ namespace NpcValheim.Npc
                     return true;
                 case "RPC_MoveTo" when arguments.Length == 1 && arguments[0] is Vector3 target:
                     RPC_MoveTo(sender, target);
+                    return true;
+                case "RPC_SetYaw" when arguments.Length == 1 && arguments[0] is float yaw:
+                    RPC_SetYaw(sender, yaw);
+                    return true;
+                case "RPC_SetTurnsToTalker" when arguments.Length == 1 && arguments[0] is int turns:
+                    RPC_SetTurnsToTalker(sender, turns);
                     return true;
                 case "RPC_RequestTemplateIndex" when arguments.Length == 0:
                     RPC_RequestTemplateIndex(sender);
@@ -941,6 +1005,46 @@ namespace NpcValheim.Npc
         /// <summary>How far one move may carry an NPC. Enough to bring one down from a roof
         /// or across a room; anything further is far more likely a mistyped name than intent.</summary>
         public const float MaxMoveDistance = 64f;
+
+        // ----- Facing (admin) -----
+
+        /// <summary>Turns this NPC to face <paramref name="yaw"/> degrees (0 = +Z), for good.</summary>
+        public void RequestSetYaw(float yaw)
+        {
+            if (Nview == null || !Nview.IsValid() || !CanLocalPlayerAdminister()) return;
+            InvokeAuthoritativeRpc("RPC_SetYaw", NpcFacing.Normalize(yaw));
+        }
+
+        private void RPC_SetYaw(long sender, float yaw)
+        {
+            if (!CanAdminister(sender) || float.IsNaN(yaw) || float.IsInfinity(yaw)) return;
+            yaw = NpcFacing.Normalize(yaw);
+            var zdo = Nview.GetZDO();
+            zdo.Set(ZdoKeys.Yaw, yaw);
+            var facing = Quaternion.Euler(0f, yaw, 0f);
+            zdo.SetRotation(facing);
+            transform.rotation = facing;
+            var body = GetComponent<Rigidbody>();
+            if (body != null) body.rotation = facing;
+            HoldFacing();
+            ServiceNpcAuthority.SendStatus(sender, $"{GetNpcName()} virado para {yaw:0}°.");
+            Plugin.Log.LogInfo($"NpcValheim: admin peer {sender} turned '{GetNpcName()}' to {yaw:0}");
+        }
+
+        public void RequestSetTurnsToTalker(bool turns)
+        {
+            if (Nview == null || !Nview.IsValid() || !CanLocalPlayerAdminister()) return;
+            InvokeAuthoritativeRpc("RPC_SetTurnsToTalker", turns ? 1 : 0);
+        }
+
+        private void RPC_SetTurnsToTalker(long sender, int turns)
+        {
+            if (!CanAdminister(sender)) return;
+            Nview.GetZDO().Set(ZdoKeys.TurnsToTalker, turns == 1 ? 1 : 0);
+            ServiceNpcAuthority.SendStatus(sender, turns == 1
+                ? $"{GetNpcName()} vira para quem fala com ele."
+                : $"{GetNpcName()} fica parado (só a cabeça acompanha).");
+        }
 
         /// <summary>Puts this NPC at `target`, keeping the way he faces. See NpcMoveCommand.</summary>
         public void RequestMoveTo(Vector3 target)

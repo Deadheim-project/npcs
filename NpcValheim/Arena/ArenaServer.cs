@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
+using System.Linq;
 using UnityEngine;
 using NpcValheim.Npc;
 using NpcValheim.Persistence;
@@ -26,8 +27,12 @@ namespace NpcValheim.Arena
         internal static void Register(ZRoutedRpc rpc)
         {
             ArenaClient.ResetSession();
+            // A client knows no bestiary until this server sends one; the server reads its file
+            // on the first tick of the session (ArenaBestiaryNet.EnsureLoaded).
+            ArenaBestiary.Forget();
             rpc.Register(RpcRequest, (Action<long, string, string>)OnRequest);
             rpc.Register(RpcMessage, (Action<long, string, string>)OnMessage);
+            rpc.Register(ArenaBeastFx.Rpc, (Action<long, ZPackage>)ArenaBeastFx.OnRpc);
         }
 
         /// <summary>A request that needs no NPC.</summary>
@@ -87,6 +92,7 @@ namespace NpcValheim.Arena
             {
                 _session = ZNet.instance;
                 _host = new ServerHost();
+                ArenaBestiaryNet.EnsureLoaded();
                 var path = Path.Combine(NpcStoragePaths.DatabaseDirectory, "arena.db");
                 Directory.CreateDirectory(Path.GetDirectoryName(path)!);
                 _engine = new ArenaEngine(_host, new ArenaDatabase(path));
@@ -104,8 +110,26 @@ namespace NpcValheim.Arena
         /// <summary>One request from a player, with the NPC it came through (or "").</summary>
         internal static void Handle(long sender, string where, string action, string payload)
         {
-            if (!EnsureEngine() || string.IsNullOrEmpty(action) || action.Length > 32 || (payload?.Length ?? 0) > 4096) return;
+            // A creature of the Bestiário, with its attacks and abilities, is bigger than any other request.
+            int maxPayload = action == ArenaWire.ActAdminBeastSet ? ArenaBestiary.MaxSaveLength : 4096;
+            if (!EnsureEngine() || string.IsNullOrEmpty(action) || action.Length > 32 || (payload?.Length ?? 0) > maxPayload) return;
             if (!NpcRequestGuard.AllowRate(sender, "arena", burst: 40, seconds: 3f)) return;
+
+            // The Bestiário needs no character: the hello of a fresh login can come in before the
+            // server knows the peer's character, and must not be dropped with the rest below.
+            try
+            {
+                if (action == ArenaWire.ActHello) ArenaBestiaryNet.SendHash(sender);
+                if (action == ArenaWire.ActBestiaryGet)
+                {
+                    ArenaBestiaryNet.SendTo(sender);
+                    return;
+                }
+            }
+            catch (Exception e)
+            {
+                Plugin.Log.LogError("NpcValheim Arena: bestiario nao enviado: " + e);
+            }
 
             long playerId = GameApi.GetPlayerId(sender);
             string name = GameApi.GetPlayerName(sender);
@@ -122,6 +146,17 @@ namespace NpcValheim.Arena
 
             try
             {
+                if (ArenaBestiaryNet.IsBeastAction(action))
+                {
+                    ArenaBestiaryNet.Handle(sender, name, admin, action, payload ?? "",
+                        _host.TryGetPosition(playerId, out var at) ? at : (Vector3?)null);
+                    return;
+                }
+                if (action == ArenaWire.ActAdminZoneAround)
+                {
+                    HandleZoneAround(sender, name, admin, payload ?? "");
+                    return;
+                }
                 if (action == ArenaWire.ActAdminZoneSet || action == ArenaWire.ActAdminZoneRemove)
                 {
                     HandleZone(sender, playerId, name, admin, action, payload ?? "");
@@ -204,6 +239,40 @@ namespace NpcValheim.Arena
             ArenaNet.Send(sender, ArenaWire.Notice, done);
         }
 
+        /// <summary>"Criar área em volta": the arena area made (or remade) around a saved arena,
+        /// under the arena's own name, from the starts the cfg has.</summary>
+        private static void HandleZoneAround(long sender, string name, bool admin, string payload)
+        {
+            if (!admin)
+            {
+                ArenaNet.Send(sender, ArenaWire.Notice, "Só admin.");
+                return;
+            }
+            string arena = payload.Trim();
+            var map = ArenaConfig.ConfiguredMaps(null).FirstOrDefault(m => string.Equals(m.Name, arena, StringComparison.OrdinalIgnoreCase));
+            if (map == null)
+            {
+                ArenaNet.Send(sender, ArenaWire.Notice, $"Salve a arena \"{arena}\" com os dois inícios marcados antes de criar a área.");
+                return;
+            }
+            ArenaNet.Send(sender, ArenaWire.Notice, MakeZoneAround(name, map, force: true));
+        }
+
+        /// <summary>The area around an arena, when no area holds both starts (or always, with
+        /// force): a Deadheim ArenaZone named after the arena. Returns what to tell the admin.</summary>
+        private static string MakeZoneAround(string admin, ArenaMapDef map, bool force)
+        {
+            if (!ArenaDeadheim.Installed) return "";
+            if (!force && ArenaDeadheim.CoversMap(map, out _)) return "";
+            var zone = ArenaHealth.ZoneAround(map.Name, map.Gold, map.Green);
+            string before = ArenaDeadheim.ZonesText;
+            string after = ArenaSettingsParser.SetZone(before, zone.Name, zone.X, zone.Z, zone.Radius);
+            if (!ArenaDeadheim.TryWriteZones(after, out string why)) return " Não consegui criar a área de PvP: " + why + ".";
+            ArenaConfig.Invalidate();
+            Plugin.Log.LogInfo($"NpcValheim Arena: {admin} criou a area em volta de {map.Name}: '{before}' -> '{after}'");
+            return string.Format(CultureInfo.InvariantCulture, " Área de PvP \"{0}\" com {1:0} m de raio criada em volta da arena.", zone.Name, zone.Radius);
+        }
+
         /// <summary>
         /// An arena (Maps) or an Intendente item (Items) saved or removed from an admin page.
         /// The entry is parsed exactly as the cfg is, so the page cannot save what the server
@@ -224,7 +293,11 @@ namespace NpcValheim.Arena
             {
                 case ArenaWire.ActAdminMapSet:
                 {
-                    var maps = ArenaSettingsParser.ParseMaps(payload, problems);
+                    // "entrada do Maps\nnome anterior\nligada": the last two lines are optional.
+                    var lines = payload.Split('\n');
+                    string previous = lines.Length > 1 ? lines[1].Trim() : "";
+                    bool on = lines.Length < 3 || lines[2].Trim() != "0";
+                    var maps = ArenaSettingsParser.ParseMaps(lines[0], problems);
                     if (maps.Count != 1 || problems.Count > 0)
                     {
                         ArenaNet.Send(sender, ArenaWire.Notice, problems.Count > 0 ? problems[0] : "Arena inválida.");
@@ -236,13 +309,13 @@ namespace NpcValheim.Arena
                         ArenaNet.Send(sender, ArenaWire.Notice, "Nome de arena inválido (sem ; ou |, até 32 letras).");
                         return;
                     }
-                    int slot = ArenaConfig.SaveMap(map, out string full);
+                    int slot = ArenaConfig.SaveMap(map, previous, on, out string full);
                     if (slot == 0)
                     {
                         ArenaNet.Send(sender, ArenaWire.Notice, "Não salvei: " + full + ".");
                         return;
                     }
-                    done = $"Arena \"{map.Name}\" salva em [Arena - Local {slot}] (uso: {map.UsageLabel}).";
+                    done = $"Arena \"{map.Name}\" salva" + (on ? "." : " (desligada).") + MakeZoneAround(name, map, force: false);
                     if (!ArenaDeadheim.CoversMap(map, out string why)) done += " Ainda não vale: " + why + ".";
                     break;
                 }
@@ -279,7 +352,7 @@ namespace NpcValheim.Arena
                         return;
                     }
                     ArenaConfig.VendorItems.Value = ArenaSettingsParser.SetOffer(ArenaConfig.VendorItems.Value, offer);
-                    done = $"Intendente: {offer.Amount}x {ArenaConfig.OfferName(offer.Prefab)} por {offer.Points} pontos.";
+                    done = $"Loja: {offer.Amount}x {ArenaConfig.OfferName(offer.Prefab)} por {offer.Points} pontos.";
                     break;
                 }
                 case ArenaWire.ActAdminOfferRemove:
@@ -288,11 +361,11 @@ namespace NpcValheim.Arena
                     string after = ArenaSettingsParser.RemoveOffer(ArenaConfig.VendorItems.Value, prefab, out bool removed);
                     if (!removed)
                     {
-                        ArenaNet.Send(sender, ArenaWire.Notice, $"O Intendente não vende \"{prefab}\".");
+                        ArenaNet.Send(sender, ArenaWire.Notice, $"A loja não vende \"{prefab}\".");
                         return;
                     }
                     ArenaConfig.VendorItems.Value = after;
-                    done = $"Intendente: {ArenaConfig.OfferName(prefab)} retirado.";
+                    done = $"Loja: {ArenaConfig.OfferName(prefab)} retirado.";
                     break;
                 }
                 case ArenaWire.ActAdminPointsSet:
@@ -324,7 +397,7 @@ namespace NpcValheim.Arena
                     // one [Arena - Desafio N] block, as the Battlemaster's form fills it.
                     var f = payload.Split('\n');
                     var inv = System.Globalization.CultureInfo.InvariantCulture;
-                    if (f.Length != 9 ||
+                    if ((f.Length != 9 && f.Length != 10) ||
                         !int.TryParse(f[0].Trim(), System.Globalization.NumberStyles.Integer, inv, out int slot) ||
                         slot < 1 || slot > ArenaConfig.ChallengeSlots.Count)
                     {
@@ -333,6 +406,18 @@ namespace NpcValheim.Arena
                     }
                     string creature = System.Array.Find(ArenaSettingsParser.ChallengeCreatures,
                         c => string.Equals(c, f[3].Trim(), StringComparison.OrdinalIgnoreCase));
+                    string beastId = ArenaBestiary.BeastIdOf(f[3]);
+                    if (beastId != null)
+                    {
+                        ArenaBestiaryNet.EnsureLoaded();
+                        var beast = ArenaBestiary.Find(beastId);
+                        if (beast == null)
+                        {
+                            ArenaNet.Send(sender, ArenaWire.Notice, $"\"{beastId}\" não está no bestiário.");
+                            return;
+                        }
+                        creature = ArenaBestiary.ChallengeValue(beast);
+                    }
                     if (creature == null)
                     {
                         ArenaNet.Send(sender, ArenaWire.Notice, $"\"{f[3].Trim()}\" não está na lista de criaturas do desafio.");
@@ -376,6 +461,7 @@ namespace NpcValheim.Arena
                     s.RewardItem.Value = reward;
                     s.RewardAmount.Value = amount;
                     s.ExtraRewards.Value = f[8].Trim();
+                    if (f.Length == 10) s.Map.Value = ArenaSettingsParser.CleanMapName(f[9]);
                     done = $"{label} salvo: {def.Name} ({creature}, nível {level}, vida x{health.ToString("0.##", inv)})" +
                            (s.On.Value ? ", ligado." : ", desligado.");
                     break;
@@ -391,9 +477,12 @@ namespace NpcValheim.Arena
 
         internal static void Tick()
         {
-            if (!IsServer || !EnsureEngine()) return;
+            if (!IsServer) return;
+            ArenaNpcMigration.Tick();
+            if (!EnsureEngine()) return;
             try
             {
+                ArenaBestiaryNet.Tick();
                 _host.Refresh();
                 _engine.SetTuning(ArenaConfig.Current);
                 _engine.Tick();
@@ -533,17 +622,23 @@ namespace NpcValheim.Arena
 
             private readonly Dictionary<long, ZDOID> _creatures = new Dictionary<long, ZDOID>();
 
-            public bool SpawnCreature(long matchId, ArenaChallengeDef def, Vector3 at, float yaw)
+            public bool SpawnCreature(long matchId, ArenaChallengeDef def, Vector3 at, float yaw, int players)
             {
-                var id = ArenaChallengeCreature.Spawn(matchId, def, at, yaw);
+                var id = ArenaChallengeCreature.Spawn(matchId, def, at, yaw, players);
                 if (id.IsNone()) return false;
                 _creatures[matchId] = id;
                 return true;
             }
 
-            /// <summary>The ZDO goes when the creature dies on whichever machine owns it.</summary>
-            public bool CreatureAlive(long matchId) =>
-                _creatures.TryGetValue(matchId, out var id) && ZDOMan.instance?.GetZDO(id) != null;
+            /// <summary>The ZDO goes when the creature dies on whichever machine owns it; its
+            /// lacaios go with it (ArenaBeastSweep).</summary>
+            public bool CreatureAlive(long matchId)
+            {
+                if (!_creatures.TryGetValue(matchId, out var id)) return false;
+                if (ZDOMan.instance?.GetZDO(id) != null) return true;
+                ArenaBeastSweep.Request();
+                return false;
+            }
 
             public float CreatureHealth(long matchId) =>
                 _creatures.TryGetValue(matchId, out var id) ? ArenaChallengeCreature.Health(id) : -1f;
@@ -553,10 +648,20 @@ namespace NpcValheim.Arena
                 if (!_creatures.TryGetValue(matchId, out var id)) return;
                 _creatures.Remove(matchId);
                 ArenaChallengeCreature.Despawn(id);
+                ArenaBeastSweep.Request();
             }
 
-            public void SweepCreatures(IEnumerable<string> prefabs, Func<long, bool> live) =>
-                ArenaChallengeCreature.Sweep(prefabs, live);
+            /// <summary>The challenges' creatures and the lacaios the Bestiário's may call, all
+            /// marked with their match.</summary>
+            public void SweepCreatures(IEnumerable<string> prefabs, Func<long, bool> live)
+            {
+                var all = new HashSet<string>(prefabs, StringComparer.OrdinalIgnoreCase);
+                foreach (var beast in ArenaBestiary.All)
+                    foreach (var ability in beast.Abilities)
+                        if (ability.Kind == "summon" && ability.Prefab.Length > 0) all.Add(ability.Prefab);
+                ArenaChallengeCreature.Sweep(all, live);
+                ArenaBeastSweep.Request();
+            }
 
             public void Log(string text) => Plugin.Log.LogInfo("NpcValheim " + text);
             public void Warn(string text) => Plugin.Log.LogWarning("NpcValheim " + text);

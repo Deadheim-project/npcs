@@ -88,11 +88,14 @@ class Program
         public bool SpawnFails;
         public int Sweeps;
 
-        public bool SpawnCreature(long matchId, ArenaChallengeDef def, Vector3 at, float yaw)
+        public readonly List<int> SpawnedFor = new List<int>();
+
+        public bool SpawnCreature(long matchId, ArenaChallengeDef def, Vector3 at, float yaw, int players)
         {
             if (SpawnFails) return false;
             Creatures[matchId] = 1f;
             Spawned.Add((matchId, def.Prefab, at));
+            SpawnedFor.Add(players);
             return true;
         }
 
@@ -192,6 +195,11 @@ class Program
             Charters();
             RatedMatch();
             SoloArena();
+            TimersPerArena();
+            ArenaHealthChecks();
+            OneArenaNpc();
+            ChallengeArena();
+            NpcFacingChecks();
             InviteAndDesertion();
             DrawAndOffline();
             QueueRules();
@@ -204,6 +212,9 @@ class Program
             MapUsage();
             FreeForAll();
             MatchPointsChecks();
+            Bestiary();
+            BestiaryKit();
+            BestiarySchedule();
         }
         catch (Exception ex)
         {
@@ -421,6 +432,286 @@ class Program
 
     // ------------------------------------------------------------------- solo 1v1
 
+    // ------------------------------------------------------- admin page and one arena NPC
+
+    static ArenaDraft Draft(string name, Vector3? gold, Vector3? green)
+    {
+        var d = new ArenaDraft { Name = name, Gold = gold, Green = green };
+        d.SavedName = name;
+        return d;
+    }
+
+    static bool Has(List<ArenaCheck> checks, ArenaFix fix) => checks.Any(c => !c.Ok && c.Fix == fix);
+
+    /// <summary>"O que falta para funcionar": the lines the F8 page shows, and the button each
+    /// one offers.</summary>
+    static void ArenaHealthChecks()
+    {
+        Section("arena health: what is missing, and its fix");
+        var zones = new List<ArenaZone>();
+        var blank = new ArenaDraft { Name = "Arena 1" };
+        var checks = ArenaHealth.ForArena(blank, zones, new[] { blank });
+        Check("new arena: both starts missing, each with its Marcar aqui", Has(checks, ArenaFix.MarkGold) && Has(checks, ArenaFix.MarkGreen));
+        Check("new arena: no zone line before the starts are marked", !checks.Any(c => c.Fix == ArenaFix.MakeZone));
+        Check("new arena: serves every kind of match", checks.Any(c => c.Ok && c.Text.Contains("todos os tipos")));
+
+        var gold = new Vector3(100, 30, 100);
+        var green = new Vector3(140, 30, 100);
+        var d = Draft("Coliseu", gold, green);
+        checks = ArenaHealth.ForArena(d, zones, new[] { d });
+        Check("both marked but outside every PvP area: Criar área em volta", Has(checks, ArenaFix.MakeZone) && checks.Count(c => !c.Ok) == 1,
+            string.Join(" / ", checks));
+        Check("without Deadheim there is no area to ask for", ArenaHealth.Ready(d, null, new[] { d }));
+
+        var zone = ArenaHealth.ZoneAround("Coliseu", gold, green);
+        Check("the area made around holds both starts", zone.Contains(gold) && zone.Contains(green) && zone.Name == "Coliseu");
+        Check("centred between the starts, 25 m past them", Math.Abs(zone.X - 120) < 0.01f && Math.Abs(zone.Z - 100) < 0.01f && Math.Abs(zone.Radius - 45) < 0.01f,
+            $"{zone.X},{zone.Z} r{zone.Radius}");
+        Check("never under 30 m", Math.Abs(ArenaHealth.ZoneAround("x", gold, gold + new Vector3(2, 0, 0)).Radius - 30) < 0.01f);
+        Check("never over the 300 m the zones allow", ArenaHealth.ZoneAround("x", gold, gold + new Vector3(900, 0, 0)).Radius <= ArenaSettingsParser.MaxZoneRadius);
+        zones.Add(zone);
+        Check("inside the area: the arena is ready", ArenaHealth.Ready(d, zones, new[] { d }), string.Join(" / ", ArenaHealth.ForArena(d, zones, new[] { d })));
+
+        var far = Draft("Longe", gold, gold + new Vector3(350, 0, 0));
+        Check("starts over 300 m apart: remark the Green", Has(ArenaHealth.ForArena(far, null, new[] { far }), ArenaFix.MarkGreen));
+        var stacked = Draft("Junto", gold, gold + new Vector3(1, 0, 0));
+        Check("starts on the same spot (Green marked without walking): remark the Green",
+            Has(ArenaHealth.ForArena(stacked, null, new[] { stacked }), ArenaFix.MarkGreen));
+        var none = Draft("Nada", gold, green);
+        for (int i = 0; i < none.Types.Length; i++) none.Types[i] = false;
+        Check("no box marked: Marcar tudo", Has(ArenaHealth.ForArena(none, zones, new[] { none }), ArenaFix.AllTypes));
+        var off = Draft("Desligada", gold, green);
+        off.On = false;
+        Check("switched off: Ligar", Has(ArenaHealth.ForArena(off, zones, new[] { off }), ArenaFix.TurnOn));
+        var twin = Draft("coliseu", gold, green);
+        Check("two arenas of the same name: change it", Has(ArenaHealth.ForArena(twin, zones, new[] { d, twin }), ArenaFix.Name));
+        var nameless = Draft(" ", gold, green);
+        Check("no name: Dar nome", Has(ArenaHealth.ForArena(nameless, zones, new[] { nameless }), ArenaFix.Name));
+
+        // A draft as the cfg block reads, and back to the arena the server is sent.
+        var fromCfg = ArenaDraft.FromSlot(2, true, " Fosso ", "400,30,100,90", "440,30,100,270", "", new[] { false, true, false, false, true });
+        Check("a Local block reads into a draft", fromCfg.Name == "Fosso" && fromCfg.Gold == new Vector3(400, 30, 100) && fromCfg.GreenYaw == 270 &&
+                                                fromCfg.Spectator == null && fromCfg.Serves(1) && fromCfg.ServesChallenge && !fromCfg.Serves(0));
+        var map = fromCfg.ToMap();
+        Check("two boxes: the arena takes 2v2 and challenges only",
+            map.ServesPvp(2) && !map.ServesPvp(1) && !map.ServesPvp(ArenaRules.FfaSize) && map.ServesPve);
+        var parsed = ArenaSettingsParser.ParseMaps(ArenaSettingsParser.FormatMap(map), null);
+        Check("and survives the wire", parsed.Count == 1 && parsed[0].ServesPvp(2) && !parsed[0].ServesPvp(3) && parsed[0].ServesPve);
+        Check("every box: no restriction at all", !d.ToMap().Restricted);
+        Check("a start missing: nothing to send", blank.ToMap() == null);
+        Check("a broken point in the cfg reads as not marked", ArenaDraft.FromSlot(0, true, "X", "abc", "1,2,3", "", null).Gold == null);
+
+        Section("challenge health");
+        var pveOnly = Draft("Fosso", new Vector3(400, 30, 100), new Vector3(440, 30, 100));
+        for (int i = 0; i < 4; i++) pveOnly.Types[i] = false;
+        var pvpOnly = Draft("Anel", gold, green);
+        pvpOnly.Types[ArenaHealth.PveType] = false;
+        var all = new List<ArenaDraft> { pvpOnly, pveOnly };
+        var ready = new List<ArenaDraft>(all);
+        Func<string, string> known = c => c == "bestiario:sumido" ? "\"sumido\" não está no Bestiário" : null;
+        Func<string, bool> item = p => p != "Inventado";
+
+        var ch = new ChallengeDraft { On = true, Name = "Troll", Creature = "Troll", Reward = "Coins", Amount = 300 };
+        var chChecks = ArenaHealth.ForChallenge(ch, all, ready, known, item);
+        Check("any arena: fine while one ready arena takes challenges", chChecks.All(c => c.Ok) && chChecks.Any(c => c.Text.Contains("Fosso")),
+            string.Join(" / ", chChecks));
+        ch.Map = "Anel";
+        chChecks = ArenaHealth.ForChallenge(ch, all, ready, known, item);
+        var serve = chChecks.FirstOrDefault(c => !c.Ok);
+        Check("its arena does not take challenges: mark it there",
+            serve != null && serve.Fix == ArenaFix.ServeType && serve.Target == "Anel" && serve.Type == ArenaHealth.PveType);
+        ch.Map = "Sumida";
+        Check("its arena is gone: pick another", Has(ArenaHealth.ForChallenge(ch, all, ready, known, item), ArenaFix.PickArena));
+        ch.Map = "Fosso";
+        Check("its arena exists but does not work yet: open it",
+            Has(ArenaHealth.ForChallenge(ch, all, new List<ArenaDraft> { pvpOnly }, known, item), ArenaFix.OpenArena));
+        ch.Map = "";
+        Check("no arena takes challenges: mark the first ready one",
+            ArenaHealth.ForChallenge(ch, new List<ArenaDraft> { pvpOnly }, new List<ArenaDraft> { pvpOnly }, known, item)
+                .Any(c => !c.Ok && c.Fix == ArenaFix.ServeType && c.Target == "Anel"));
+        Check("no arena at all: Criar arena",
+            Has(ArenaHealth.ForChallenge(ch, new List<ArenaDraft>(), new List<ArenaDraft>(), known, item), ArenaFix.NewArena));
+        ch.Creature = "bestiario:sumido";
+        Check("a creature the Bestiário lost: pick another", Has(ArenaHealth.ForChallenge(ch, all, ready, known, item), ArenaFix.PickCreature));
+        ch.Creature = "bestiario:troll_anciao";
+        Check("a creature of the Bestiário it has: fine", !Has(ArenaHealth.ForChallenge(ch, all, ready, known, item), ArenaFix.PickCreature));
+        ch.Creature = " ";
+        Check("no creature: pick one", Has(ArenaHealth.ForChallenge(ch, all, ready, known, item), ArenaFix.PickCreature));
+        ch.Creature = "Troll";
+        ch.Reward = "Inventado";
+        Check("a reward the game does not have: change it", Has(ArenaHealth.ForChallenge(ch, all, ready, known, item), ArenaFix.PickReward));
+        ch.Reward = "Coins";
+        ch.Extras = "TrophyTroll:abc";
+        Check("a badly written extra: fix it", Has(ArenaHealth.ForChallenge(ch, all, ready, known, item), ArenaFix.PickReward));
+        ch.Extras = "TrophyTroll:1, Inventado";
+        Check("an extra the game does not have: fix it", Has(ArenaHealth.ForChallenge(ch, all, ready, known, item), ArenaFix.PickReward));
+        ch.Extras = "TrophyTroll:1";
+        ch.On = false;
+        Check("switched off: Ligar", Has(ArenaHealth.ForChallenge(ch, all, ready, known, item), ArenaFix.TurnOn));
+
+        Section("the server as a whole");
+        Check("no arena: every queue refuses, Criar arena",
+            Has(ArenaHealth.Overall(new List<ArenaDraft>(), new List<ArenaDraft>(), new[] { 1, 2 }, true, true), ArenaFix.NewArena));
+        Check("arenas but none ready: open one",
+            Has(ArenaHealth.Overall(all, new List<ArenaDraft>(), new[] { 1, 2 }, true, true), ArenaFix.OpenArena));
+        var only1v1 = Draft("Duelo", gold, green);
+        for (int i = 1; i < only1v1.Types.Length; i++) only1v1.Types[i] = false;
+        var one = new List<ArenaDraft> { only1v1 };
+        var overall = ArenaHealth.Overall(one, one, new[] { 1, 2 }, true, true);
+        Check("a 1v1-only arena leaves 2v2, FFA and challenges without one",
+            overall.Count(c => !c.Ok && c.Fix == ArenaFix.ServeType && c.Target == "Duelo") == 3 && overall.Any(c => c.Ok && c.Text.StartsWith("1v1")),
+            string.Join(" / ", overall));
+        Check("FFA and challenges off: not asked for", ArenaHealth.Overall(one, one, new[] { 1 }, false, false).All(c => c.Ok));
+        Check("5v5 has no box: not asked for", ArenaHealth.Overall(one, one, new[] { 1, 5 }, false, false).All(c => c.Ok));
+    }
+
+    /// <summary>One arena NPC: the Organizer and the Intendente placed before 0.1.89 open the
+    /// Mestre da Arena's tabs, and the server takes everything through any of the three.</summary>
+    static void OneArenaNpc()
+    {
+        Section("one arena NPC; the old ones keep working");
+        var tabs = NpcValheim.Npc.ArenaDesk.TabsOf(ArenaEngine.AtBattlemaster);
+        Check("the Mestre da Arena has every tab", string.Join(",", tabs) == "Arena,Times,Criar time,Ranking,Loja");
+        Check("the old Organizer opens the same tabs", NpcValheim.Npc.ArenaDesk.TabsOf(ArenaEngine.AtOrganizer).SequenceEqual(tabs));
+        Check("the old Intendente opens the same tabs", NpcValheim.Npc.ArenaDesk.TabsOf(ArenaEngine.AtVendor).SequenceEqual(tabs));
+        Check("no NPC (the H panel): no NPC tabs", NpcValheim.Npc.ArenaDesk.TabsOf("").Length == 0);
+        Check("the Hammer only places the Mestre da Arena",
+            NpcValheim.Npc.ArenaDesk.OnHammer(NpcValheim.Npc.ArenaDesk.Prefab) &&
+            NpcValheim.Npc.ArenaDesk.LegacyPrefabs.All(p => !NpcValheim.Npc.ArenaDesk.OnHammer(p)));
+
+        var (e, h, _) = NewEngine();
+        Do(e, A, ArenaEngine.AtVendor, ArenaWire.ActQueueJoin, "1\n0\n");
+        Check("the queue through the old Intendente", e.QueueOf(A) != null);
+        Do(e, B, ArenaEngine.AtOrganizer, ArenaWire.ActFfaJoin);
+        Check("the FFA through the old Organizer", e.QueueOf(B) != null || e.MatchOf(B) != null);
+        Do(e, C, ArenaEngine.AtBattlemaster, ArenaWire.ActCharterBuy, "2\nLeoes\n80");
+        Check("a charter at the Mestre da Arena", e.Charter(C, 2) != null);
+        Do(e, D, "", ArenaWire.ActCharterBuy, "2\nUrsos\n80");
+        Check("still not from the H panel", e.Charter(D, 2) == null);
+        e.PlayerRecord(A).Points = 500;
+        Do(e, A, ArenaEngine.AtBattlemaster, ArenaWire.ActVendorBuy, "ArmorKit1\n100");
+        Check("the shop at the Mestre da Arena", h.Items.Any(i => i.To == A && i.Prefab == "ArmorKit1"));
+    }
+
+    /// <summary>A challenge that names its arena only goes there; the admin's Testar agora
+    /// calls it from anywhere.</summary>
+    static void ChallengeArena()
+    {
+        Section("a challenge in its own arena");
+        var t = ChallengeTuning();
+        t.Maps.Add(new ArenaMapDef { Name = "Fosso", Gold = new Vector3(400, 30, 100), Green = new Vector3(440, 30, 100) });
+        t.Challenges[0].Map = "Fosso";
+        var (e, h, _) = NewEngine(t);
+        Do(e, A, ArenaEngine.AtBattlemaster, ArenaWire.ActChallengeJoin, "Troll Furioso\n");
+        Check("it goes to its arena", e.MatchOf(A)?.Map.Name == "Fosso");
+        Do(e, B, ArenaEngine.AtBattlemaster, ArenaWire.ActChallengeJoin, "Troll Furioso\n");
+        Check("its arena taken: busy, even with another arena free", e.MatchOf(B) == null && h.Got(B, ArenaWire.Alert, "ocupadas"));
+
+        t = ChallengeTuning();
+        t.Challenges[0].Map = "Sumida";
+        (e, h, _) = NewEngine(t);
+        Do(e, A, ArenaEngine.AtBattlemaster, ArenaWire.ActChallengeJoin, "Troll Furioso\n");
+        Check("its arena does not exist: refused, naming it", e.MatchOf(A) == null && h.Got(A, ArenaWire.Alert, "Sumida"));
+
+        (e, h, _) = NewEngine(ChallengeTuning());
+        Do(e, A, "", ArenaWire.ActAdminChallengeTest, "Troll Furioso\n");
+        Check("Testar agora: refused to a player", e.MatchOf(A) == null);
+        Do(e, A, "", ArenaWire.ActAdminChallengeTest, "Troll Furioso\n", admin: true);
+        Check("Testar agora: an admin, from the F8 page", e.MatchOf(A)?.IsChallenge == true);
+    }
+
+    /// <summary>Where an NPC faces, the head turn, the plate and the idle clock (NpcFacing),
+    /// and the one-time removal of the old arena NPCs (ArenaNpcMigration.Plan).</summary>
+    static void NpcFacingChecks()
+    {
+        Section("NPC facing and presence");
+        Check("normalize: negative and past 360", Math.Abs(NpcValheim.Npc.NpcFacing.Normalize(-15) - 345) < 0.01f &&
+                                                  Math.Abs(NpcValheim.Npc.NpcFacing.Normalize(375) - 15) < 0.01f &&
+                                                  NpcValheim.Npc.NpcFacing.Normalize(360) == 0f && NpcValheim.Npc.NpcFacing.Normalize(float.NaN) == 0f);
+        var npc = new Vector3(10, 0, 10);
+        Check("toward: north is 0", Math.Abs(NpcValheim.Npc.NpcFacing.Toward(npc, new Vector3(10, 0, 20), 77)) < 0.01f);
+        Check("toward: east is 90", Math.Abs(NpcValheim.Npc.NpcFacing.Toward(npc, new Vector3(20, 0, 10), 0) - 90) < 0.01f);
+        Check("toward: west is 270", Math.Abs(NpcValheim.Npc.NpcFacing.Toward(npc, new Vector3(0, 5, 10), 0) - 270) < 0.01f);
+        Check("toward: on the same spot keeps the facing", Math.Abs(NpcValheim.Npc.NpcFacing.Toward(npc, npc + new Vector3(0, 2, 0), 123) - 123) < 0.01f);
+        Check("away: the opposite", Math.Abs(NpcValheim.Npc.NpcFacing.Away(npc, new Vector3(10, 0, 20), 0) - 180) < 0.01f);
+        Check("delta: the short way round", Math.Abs(NpcValheim.Npc.NpcFacing.Delta(350, 10) - 20) < 0.01f &&
+                                             Math.Abs(NpcValheim.Npc.NpcFacing.Delta(10, 350) + 20) < 0.01f);
+        Check("steps of 15 from 350 wrap to 5", Math.Abs(NpcValheim.Npc.NpcFacing.Normalize(350 + 15) - 5) < 0.01f);
+
+        var head = new Vector3(0, 1.7f, 0);
+        var (yaw, pitch) = NpcValheim.Npc.NpcFacing.HeadTurn(head, 0, new Vector3(1, 1.7f, 1));
+        Check("head: 45 degrees to the right, level", Math.Abs(yaw - 45) < 0.1f && Math.Abs(pitch) < 0.1f, $"{yaw} {pitch}");
+        (yaw, _) = NpcValheim.Npc.NpcFacing.HeadTurn(head, 0, new Vector3(5, 1.7f, 0.5f));
+        Check("head: no further than 65 degrees", Math.Abs(yaw - 65) < 0.1f, yaw.ToString());
+        (yaw, pitch) = NpcValheim.Npc.NpcFacing.HeadTurn(head, 0, new Vector3(0, 1.7f, -3));
+        Check("head: someone behind is not looked at", yaw == 0 && pitch == 0);
+        (_, pitch) = NpcValheim.Npc.NpcFacing.HeadTurn(head, 0, new Vector3(0, 6, 1));
+        Check("head: looks up, at most 25 degrees", Math.Abs(pitch - 25) < 0.1f, pitch.ToString());
+
+        Check("idle: within 40 to 90 s", Math.Abs(NpcValheim.Npc.NpcFacing.NextIdle(100, 0) - 140) < 0.01f &&
+                                         Math.Abs(NpcValheim.Npc.NpcFacing.NextIdle(100, 1) - 190) < 0.01f);
+        Check("idle: due with someone near", NpcValheim.Npc.NpcFacing.IdleDue(200, 190, 12, false));
+        Check("idle: not before its time", !NpcValheim.Npc.NpcFacing.IdleDue(180, 190, 12, false));
+        Check("idle: not with nobody to see it", !NpcValheim.Npc.NpcFacing.IdleDue(200, 190, 25, false));
+        Check("idle: not over its open window", !NpcValheim.Npc.NpcFacing.IdleDue(200, 190, 3, true));
+
+        Check("plate: a named NPC shows what it does", NpcValheim.Npc.NpcFacing.Titled("Bjorn", "Mestre da Arena").StartsWith("Bjorn ") &&
+                                                        NpcValheim.Npc.NpcFacing.Titled("Bjorn", "Mestre da Arena").Contains("Mestre da Arena"));
+        Check("plate: still called by its role, no repeat", NpcValheim.Npc.NpcFacing.Titled("Mestre da Arena", "Mestre da Arena") == "Mestre da Arena");
+        Check("plate: an unnamed NPC shows its role", NpcValheim.Npc.NpcFacing.Titled("NPC", "Barbeiro") == "Barbeiro");
+
+        Section("the old arena NPCs leave the world");
+        var M = NpcValheim.Npc.ArenaDesk.Prefab;
+        string O = NpcValheim.Npc.ArenaDesk.LegacyPrefabs[0], V = NpcValheim.Npc.ArenaDesk.LegacyPrefabs[1];
+        NpcValheim.Npc.ArenaNpcMigration.Spot S(string prefab, float x) => new NpcValheim.Npc.ArenaNpcMigration.Spot { Prefab = prefab, Position = new Vector3(x, 30, 0) };
+        var steps = NpcValheim.Npc.ArenaNpcMigration.Plan(new[] { S(O, 0), S(M, 4), S(V, 8) });
+        Check("the three side by side: the two old ones are spares",
+            steps.SequenceEqual(new[] { NpcValheim.Npc.ArenaNpcMigration.Step.Delete, NpcValheim.Npc.ArenaNpcMigration.Step.Keep, NpcValheim.Npc.ArenaNpcMigration.Step.Delete }),
+            string.Join(",", steps));
+        steps = NpcValheim.Npc.ArenaNpcMigration.Plan(new[] { S(O, 0), S(V, 5) });
+        Check("no Mestre: the first becomes one, the one beside it goes",
+            steps.SequenceEqual(new[] { NpcValheim.Npc.ArenaNpcMigration.Step.Convert, NpcValheim.Npc.ArenaNpcMigration.Step.Delete }),
+            string.Join(",", steps));
+        steps = NpcValheim.Npc.ArenaNpcMigration.Plan(new[] { S(M, 0), S(V, 200) });
+        Check("an Intendente alone across town becomes a Mestre (nobody loses the shop)",
+            steps.SequenceEqual(new[] { NpcValheim.Npc.ArenaNpcMigration.Step.Keep, NpcValheim.Npc.ArenaNpcMigration.Step.Convert }));
+        Check("nothing old: nothing to do", NpcValheim.Npc.ArenaNpcMigration.Plan(new[] { S(M, 0), S(M, 3) })
+            .All(x => x == NpcValheim.Npc.ArenaNpcMigration.Step.Keep));
+        Check("15 m is the edge", NpcValheim.Npc.ArenaNpcMigration.Plan(new[] { S(M, 0), S(O, 15) })[1] == NpcValheim.Npc.ArenaNpcMigration.Step.Delete &&
+                                  NpcValheim.Npc.ArenaNpcMigration.Plan(new[] { S(M, 0), S(O, 15.5f) })[1] == NpcValheim.Npc.ArenaNpcMigration.Step.Convert);
+    }
+
+    /// <summary>Two arenas, two matches made 20 s apart: each counts its own preparation from
+    /// its own first entry, so the second opens 20 s after the first, not with it.</summary>
+    static void TimersPerArena()
+    {
+        Section("each match keeps its own clock");
+        var tuning = Tuning();
+        tuning.Maps.Add(new ArenaMapDef
+        {
+            Name = "Fosso", Gold = new Vector3(400, 30, 100), GoldYaw = 90, Green = new Vector3(440, 30, 100), GreenYaw = 270,
+        });
+        var (e, h, _) = NewEngine(tuning);
+        Do(e, A, ArenaEngine.AtBattlemaster, ArenaWire.ActQueueJoin, "1\n0\n");
+        Do(e, B, ArenaEngine.AtBattlemaster, ArenaWire.ActQueueJoin, "1\n0\n");
+        var first = e.MatchOf(A);
+        EnterAll(e, first);
+        Advance(e, h, 20);
+        Do(e, C, ArenaEngine.AtBattlemaster, ArenaWire.ActQueueJoin, "1\n0\n");
+        Do(e, D, ArenaEngine.AtBattlemaster, ArenaWire.ActQueueJoin, "1\n0\n");
+        var second = e.MatchOf(C);
+        Check("two matches in two arenas", first != null && second != null && first != second && first.Map.Name != second.Map.Name);
+        if (first == null || second == null) return;
+        EnterAll(e, second);
+        Advance(e, h, 41);
+        Check("the first opens after its own preparation", first.Status == MatchStatus.InProgress);
+        Check("the second is still preparing", second.Status == MatchStatus.WaitJoin, second.Status.ToString());
+        Advance(e, h, 20);
+        Check("the second opens 20 s later", second.Status == MatchStatus.InProgress);
+        double gap = second.StartedAt - first.StartedAt;
+        Check("start times 20 s apart", Math.Abs(gap - 20) <= 1.0, "gap " + gap);
+    }
+
     static void SoloArena()
     {
         Section("1v1 alone, with no team to make");
@@ -502,6 +793,9 @@ class Program
         Check("once called, the queue cannot be left", match.Seat(A).State == SeatState.Invited);
 
         h.Positions[A] = new Vector3(-500, 20, 800);
+        Do(e, A, "", ArenaWire.ActEnter);
+        Advance(e, h, 20);
+        Check("one accepted, three still deciding: the countdown has not started", match.PrepEndsAt <= 0);
         EnterAll(e, match);
         Check("entering sends each player to their side's start", h.Got(A, ArenaWire.Enter) && h.Positions[A] == match.Map.SpawnOf(SideOf(match, A)));
         Check("where they came from is kept", e.PlayerRecord(A).HasReturn && Math.Abs(e.PlayerRecord(A).ReturnX + 500) < 0.01f);
@@ -595,6 +889,8 @@ class Program
         Check("B never entered: the invitation lapsed", match.Seat(B).State == SeatState.Expired);
         Check("in a rated match that is a loss for B (0 stays 0, MMR -12)",
             e.TeamOf(B, 2).Member(B).WeekGames == 1 && e.PlayerRecord(B).MmrOf(2, 1500) == 1488);
+        Check("the countdown waited for B's answer: it starts only now", match.Status == MatchStatus.WaitJoin && match.PrepEndsAt > 0);
+        Advance(e, h, 61);
         Check("the match still starts, 1 against 2", match.Status == MatchStatus.InProgress);
 
         int aSide = SideOf(match, A);
@@ -1163,6 +1459,7 @@ class Program
         Check("gates open: live", match.Status == MatchStatus.InProgress);
         Check("the creature comes in at the Green start", h.Spawned.Count == 1 && h.Spawned[0].Prefab == "Troll" &&
                                                           h.Spawned[0].At == new Vector3(140, 30, 100));
+        Check("the spawn is told how many came in (health per extra player)", h.SpawnedFor.Count == 1 && h.SpawnedFor[0] == 3);
         Check("the old creatures were swept once", h.Sweeps == 1);
 
         h.Creatures[match.Id] = 0.5f;
@@ -1227,6 +1524,323 @@ class Program
         e.SetTuning(off);
         Do(e, E, ArenaEngine.AtBattlemaster, ArenaWire.ActChallengeJoin, "Troll Furioso\n");
         Check("disabled: refused", e.MatchOf(E) == null && h.Got(E, ArenaWire.Alert, "desligados"));
+    }
+
+    // ----------------------------------------------------------------------- bestiary
+
+    static void Bestiary()
+    {
+        Section("bestiary: the file");
+        var problems = new List<string>();
+        var seeds = ArenaBestiary.Parse(ArenaBestiary.SeedJson, problems);
+        Check("the five examples parse with no problem", seeds != null && seeds.Count == 5 && problems.Count == 0, string.Join(" / ", problems));
+        Check("their ids", seeds != null && string.Join(",", seeds.Select(b => b.Id)) ==
+                           "troll_anciao,senhor_draugr,lobo_alfa,abominacao_ancestral,golem_runico");
+        var troll = seeds?.FirstOrDefault(b => b.Id == "troll_anciao");
+        Check("Troll Ancião: base, name, title, bar", troll != null && troll.Base == "Troll" && troll.Name == "Troll Ancião" &&
+                                                      troll.Title == "Guardião da Floresta Negra" && troll.BossBar);
+        Check("Troll Ancião: visual", troll != null && Math.Abs(troll.Scale - 1.5f) < 1e-6f && troll.Tint.SequenceEqual(new[] { 95, 122, 74 }) &&
+                                      Math.Abs(troll.TintStrength - 0.45f) < 1e-6f && troll.Effect == "Nenhum");
+        Check("Troll Ancião: attributes", troll != null && troll.Level == 3 && Math.Abs(troll.HealthMultiplier - 2.5f) < 1e-6f &&
+                                          Math.Abs(troll.HealthPerExtraPlayer - 0.6f) < 1e-6f && Math.Abs(troll.Turn - 0.8f) < 1e-6f &&
+                                          Math.Abs(troll.PushResist - 0.7f) < 1e-6f && !troll.FleeLowHealth);
+        Check("Troll Ancião: every damage type has a resistance", troll != null && troll.Resistances.Count == 8 &&
+                                                                 troll.Resistances["pierce"] == "Muito resistente" && troll.Resistances["frost"] == "Normal");
+        Check("attacks and abilities are read", troll != null && troll.Attacks.Count == 2 && troll.Abilities.Count == 3 &&
+                                                troll.Abilities[0].Kind == "stomp");
+        var golem = seeds?.FirstOrDefault(b => b.Id == "golem_runico");
+        Check("Golem Rúnico is immune to pierce (0%) and weak to blunt (150%)", golem != null &&
+              ArenaBestiary.ModifierFactor(golem.Resistances["pierce"]) == 0f && ArenaBestiary.ModifierFactor(golem.Resistances["blunt"]) == 1.5f);
+
+        string json = ArenaBestiary.ToJson(seeds);
+        var again = ArenaBestiary.Parse(json, problems);
+        Check("written and read back, nothing changes", again != null && problems.Count == 0 && ArenaBestiary.ToJson(again) == json);
+        Check("one line on the wire (no tab, no line break)", json.IndexOf('\n') < 0 && json.IndexOf('\t') < 0);
+        Check("numbers are written short (1.35, not 1.35000002)", json.Contains("1.35") && !json.Contains("1.3500"));
+        Check("a bare list is read too", ArenaBestiary.Parse("[" + ArenaBestiary.ToJson(troll) + "]", null)?.Count == 1);
+
+        Section("bestiary: what is refused");
+        ArenaBeastDef One(string edit, out List<string> why)
+        {
+            why = new List<string>();
+            var doc = ArenaBestiary.ToBson(troll);
+            var patch = LiteDB.JsonSerializer.Deserialize(edit).AsDocument;
+            foreach (var key in patch.Keys)
+            {
+                if (patch[key].IsDocument && doc[key].IsDocument)
+                    foreach (var inner in patch[key].AsDocument.Keys) doc[key].AsDocument[inner] = patch[key].AsDocument[inner];
+                else doc[key] = patch[key];
+            }
+            return ArenaBestiary.ParseOne(LiteDB.JsonSerializer.Serialize(doc), why);
+        }
+        bool Refused(string what, string edit, string expect)
+        {
+            var b = One(edit, out var why);
+            bool ok = b == null && why.Any(w => w.Contains(expect));
+            Check("refused: " + what, ok, string.Join(" / ", why));
+            return ok;
+        }
+        Check("the unchanged creature passes", One("{}", out var none) != null && none.Count == 0, string.Join(" / ", none));
+        Refused("id with capitals", "{\"id\":\"Troll Velho\"}", "id precisa");
+        Refused("a boss as base", "{\"base\":\"Eikthyr\"}", "não está na lista");
+        Refused("size 5x", "{\"visual\":{\"escala\":5}}", "tamanho");
+        Refused("colour above 255", "{\"visual\":{\"tingimento\":[300,0,0]}}", "tingimento");
+        Refused("an effect that does not exist", "{\"visual\":{\"efeito\":\"Arco-íris\"}}", "efeito");
+        Refused("level 4", "{\"atributos\":{\"nivel\":4}}", "nível");
+        Refused("level 2.5", "{\"atributos\":{\"nivel\":2.5}}", "inteiro");
+        Refused("health x0", "{\"atributos\":{\"vidaMult\":0}}", "multiplicador de vida");
+        Refused("speed as text", "{\"atributos\":{\"velocidade\":\"rápido\"}}", "precisa ser um número");
+        Refused("a resistance that does not exist", "{\"resistencias\":{\"fire\":\"Super\"}}", "fire");
+        Refused("a damage type that does not exist", "{\"resistencias\":{\"chop\":\"Imune\"}}", "chop");
+        Refused("no name", "{\"nome\":\"\"}", "nome");
+        Check("the base is matched without case and written as the game names it", One("{\"base\":\"troll\"}", out _)?.Base == "Troll");
+        Check("tabs and line breaks leave the name", One("{\"nome\":\"Troll\\tAnci\\u00e3o\\n\"}", out _)?.Name == "Troll Ancião");
+        Check("not JSON at all: nothing, and why", ArenaBestiary.Parse("{ isto não é json", problems = new List<string>()) == null && problems.Count == 1);
+        var mixed = ArenaBestiary.Parse("{\"criaturas\":[" + ArenaBestiary.ToJson(troll) + ",{\"id\":\"x\",\"base\":\"Dragon\",\"nome\":\"X\"}," +
+                                        ArenaBestiary.ToJson(troll) + "]}", problems = new List<string>());
+        Check("a bad creature is left out, the good ones still load", mixed?.Count == 1 && problems.Count == 2, string.Join(" / ", problems));
+        Check("ids out of names", ArenaBestiary.IdFrom("Troll Ancião!") == "troll_anciao" && ArenaBestiary.IdFrom("  Golem   Rúnico ") == "golem_runico");
+
+        Section("bestiary: health");
+        // Troll: 600 base. Nível 3 x vida 2.5 = 4500 solo; +60% per extra player.
+        Check("solo: base x level x multiplier", Math.Abs(ArenaBestiary.MaxHealth(600f, troll, 1) - 4500f) < 0.01f);
+        Check("pair: 1.6x the solo", Math.Abs(ArenaBestiary.MaxHealth(600f, troll, 2) - 7200f) < 0.01f);
+        Check("trio: 2.2x the solo", Math.Abs(ArenaBestiary.MaxHealth(600f, troll, 3) - 9900f) < 0.01f);
+        Check("no players counts as one", Math.Abs(ArenaBestiary.MaxHealth(600f, troll, 0) - 4500f) < 0.01f);
+        Check("the factor on the ZDO leaves level out (the game multiplies it)", Math.Abs(ArenaBestiary.HealthFactor(troll, 3) - 2.5f * 2.2f) < 1e-4f);
+        var lone = troll.Clone();
+        lone.HealthPerExtraPlayer = 0f;
+        Check("0% per extra player: the group faces the solo health", Math.Abs(ArenaBestiary.MaxHealth(600f, lone, 3) - 4500f) < 0.01f);
+        Check("a clone is a copy, not the same lists", !ReferenceEquals(lone.Attacks, troll.Attacks) && Math.Abs(troll.HealthPerExtraPlayer - 0.6f) < 1e-6f);
+
+        Section("bestiary: in a challenge");
+        ArenaBestiary.Replace(seeds);
+        problems = new List<string>();
+        var def = ArenaSettingsParser.MakeChallenge("Desafio 1", "", "bestiario:troll_anciao", 1, 1f, "Coins", 100, "", problems);
+        Check("bestiario:id spawns the base, with the mark", def != null && def.Prefab == "Troll" && def.BeastId == "troll_anciao", string.Join(" / ", problems));
+        Check("no name: the creature's", def?.Name == "Troll Ancião");
+        Check("the prefix ignores case", ArenaSettingsParser.MakeChallenge("Desafio 1", "X", "Bestiario:Lobo_Alfa", 1, 1f, "", 0, "", problems)?.Prefab == "Wolf");
+        Check("a creature of the game has no mark", ArenaSettingsParser.MakeChallenge("Desafio 1", "X", "Troll", 1, 1f, "", 0, "", problems)?.BeastId == null);
+        Check("an id the bestiary lacks refuses the challenge",
+            ArenaSettingsParser.MakeChallenge("Desafio 2", "X", "bestiario:hidra", 1, 1f, "", 0, "", problems) == null &&
+            problems.Count == 1 && problems[0].Contains("hidra"));
+        Check("the challenge value", ArenaBestiary.ChallengeValue(troll) == "bestiario:troll_anciao" &&
+                                     ArenaBestiary.BeastIdOf(" bestiario:troll_anciao ") == "troll_anciao" && ArenaBestiary.BeastIdOf("Troll") == null);
+        Check("every base is a challenge creature (no boss)", seeds.All(b => ArenaSettingsParser.ChallengeCreatures.Contains(b.Base)));
+        ArenaBestiary.Replace(new List<ArenaBeastDef>());
+    }
+
+    static ArenaBeastDef SeedBeast(string id) => ArenaBestiary.Parse(ArenaBestiary.SeedJson, null).First(b => b.Id == id);
+
+    /// <summary>The troll of the seed with "ataques" or "habilidades" replaced by <paramref name="json"/>.</summary>
+    static ArenaBeastDef WithList(string key, string json, out List<string> problems, out List<string> warnings)
+    {
+        problems = new List<string>();
+        warnings = new List<string>();
+        var doc = ArenaBestiary.ToBson(SeedBeast("troll_anciao"));
+        doc[key] = LiteDB.JsonSerializer.Deserialize(json);
+        return ArenaBestiary.ParseOne(doc, problems, null, warnings);
+    }
+
+    static void BestiaryKit()
+    {
+        Section("bestiary: attacks");
+        var troll = SeedBeast("troll_anciao");
+        Check("the seed's attacks name the base's items", string.Join(",", troll.Attacks.Select(a => a.Item)) == "troll_punch,troll_throw");
+        var punch = troll.Attacks[0];
+        Check("an attack's numbers", punch.Damage[0] == 85f && punch.Damage.Skip(1).All(d => d == 0f) && Math.Abs(punch.Range - 3.5f) < 1e-6f &&
+                                     punch.Interval == 2f && punch.Force == 120f && punch.HitEffect == "Nenhum");
+        var draugr = SeedBeast("senhor_draugr");
+        Check("mixed damage and a hit effect", draugr.Attacks[0].Damage[1] == 45f && draugr.Attacks[0].Damage[3] == 40f &&
+                                               draugr.Attacks[0].HitEffect == "Queimando");
+        Check("hit effects map to the game's status effects", ArenaBeastKit.StatusEffectOf("Queimando") == "Burning" &&
+              ArenaBeastKit.StatusEffectOf("Congelado (lento)") == "Frost" && ArenaBeastKit.StatusEffectOf("Nenhum") == "");
+        Check("there is no bleeding in the game", ArenaBeastKit.CanonicalHitEffect("Sangrando") == null);
+
+        var old = WithList("ataques", "[{\"nome\":\"Tapa\",\"dmg\":{\"blunt\":85},\"alcance\":3.5,\"status\":\"Nenhum\"}," +
+                                      "{\"item\":\"troll_punch\",\"dano\":{\"blunt\":50}}]", out var problems, out var warnings);
+        Check("an attack of the first format (no item) is dropped with a warning", old != null && old.Attacks.Count == 1 &&
+              old.Attacks[0].Item == "troll_punch" && warnings.Count == 1 && warnings[0].Contains("Tapa"), string.Join(" / ", problems.Concat(warnings)));
+        var bleed = WithList("ataques", "[{\"item\":\"troll_punch\",\"efeito\":\"Sangrando\"}]", out problems, out warnings);
+        Check("an effect the game lacks becomes Nenhum, with a warning", bleed != null && bleed.Attacks[0].HitEffect == "Nenhum" &&
+              warnings.Count == 1 && warnings[0].Contains("Sangrando"), string.Join(" / ", problems.Concat(warnings)));
+        void RefusedAttack(string what, string json, string expect)
+        {
+            var b = WithList("ataques", json, out var why, out _);
+            Check("refused attack: " + what, b == null && why.Any(w => w.Contains(expect)), string.Join(" / ", why));
+        }
+        RefusedAttack("damage 2001", "[{\"item\":\"troll_punch\",\"dano\":{\"blunt\":2001}}]", "dano de blunt");
+        RefusedAttack("a damage type that does not exist", "[{\"item\":\"troll_punch\",\"dano\":{\"chop\":10}}]", "chop");
+        RefusedAttack("range 0", "[{\"item\":\"troll_punch\",\"alcance\":0}]", "alcance");
+        RefusedAttack("interval 61 s", "[{\"item\":\"troll_punch\",\"intervalo\":61}]", "intervalo");
+        RefusedAttack("push 1001", "[{\"item\":\"troll_punch\",\"empurrao\":1001}]", "empurrão");
+        RefusedAttack("the same item twice", "[{\"item\":\"troll_punch\"},{\"item\":\"Troll_Punch\"}]", "repetido");
+        RefusedAttack("an item that is no prefab name", "[{\"item\":\"troll punch!\"}]", "prefab");
+        var round = ArenaBestiary.ToJson(draugr);
+        Check("attacks written and read back", ArenaBestiary.ToJson(ArenaBestiary.ParseOne(round, null)) == round);
+
+        Section("bestiary: abilities");
+        Check("the seed's abilities", string.Join(",", troll.Abilities.Select(a => a.Kind)) == "stomp,summon,enrage");
+        var stomp = troll.Abilities[0];
+        Check("stomp: trigger and numbers", stomp.On && stomp.Trigger == "every" && stomp.Value == 14f && stomp.N("dano") == 60f &&
+                                            stomp.N("raio") == 6f && stomp.N("empurrao") == 80f && Math.Abs(stomp.N("preparo") - 1.2f) < 1e-6f);
+        var summon = troll.Abilities[1];
+        Check("summon: prefab and counts", summon.Prefab == "Greydwarf_Elite" && summon.N("qtd") == 2f && summon.N("maxVivos") == 4f);
+        var zone = SeedBeast("senhor_draugr").Abilities.First(a => a.Kind == "zone");
+        Check("zone: the damage type", zone.DamageType == "fire" && zone.N("dps") == 15f);
+        var golem = SeedBeast("golem_runico");
+        Check("phase 3 kinds load but do not act", golem.Abilities.Count == 4 && golem.Abilities.Where(a => a.Kind != "timerage").All(a => !a.Acts) &&
+                                                   golem.Abilities.Single(a => a.Kind == "timerage").Acts);
+        var off = WithList("habilidades", "[{\"tipo\":\"stomp\",\"ligada\":false}]", out problems, out _);
+        Check("switched off: kept, does not act", off != null && off.Abilities.Count == 1 && !off.Abilities[0].Acts);
+        var bare = WithList("habilidades", "[{\"tipo\":\"zone\"}]", out problems, out _);
+        Check("missing numbers take the prototype's", bare != null && bare.Abilities[0].Trigger == "every" && bare.Abilities[0].Value == 12f &&
+                                                      bare.Abilities[0].DamageType == "fire" && bare.Abilities[0].N("aviso") == 1.5f, string.Join(" / ", problems));
+        var extra = WithList("habilidades", "[{\"tipo\":\"enrage\",\"cor\":\"vermelha\"}]", out problems, out warnings);
+        Check("an unknown parameter is only a warning", extra != null && warnings.Count == 1 && warnings[0].Contains("cor"));
+        void RefusedAbility(string what, string json, string expect)
+        {
+            var b = WithList("habilidades", json, out var why, out _);
+            Check("refused ability: " + what, b == null && why.Any(w => w.Contains(expect)), string.Join(" / ", why));
+        }
+        RefusedAbility("a kind that does not exist", "[{\"tipo\":\"meteoro\"}]", "meteoro");
+        RefusedAbility("radius 25 m", "[{\"tipo\":\"stomp\",\"raio\":25}]", "raio");
+        RefusedAbility("radius 0.5 m", "[{\"tipo\":\"stomp\",\"raio\":0.5}]", "raio");
+        RefusedAbility("damage 2500", "[{\"tipo\":\"stomp\",\"dano\":2500}]", "dano");
+        RefusedAbility("9 lacaios", "[{\"tipo\":\"summon\",\"qtd\":9,\"maxVivos\":8}]", "quantidade");
+        RefusedAbility("2.5 lacaios", "[{\"tipo\":\"summon\",\"qtd\":2.5}]", "inteiro");
+        RefusedAbility("more at once than may live", "[{\"tipo\":\"summon\",\"qtd\":5,\"maxVivos\":4}]", "máximo de vivos");
+        RefusedAbility("health trigger 0%", "[{\"tipo\":\"enrage\",\"gatilho\":\"hp\",\"valor\":0}]", "vida do gatilho");
+        RefusedAbility("health trigger 100%", "[{\"tipo\":\"enrage\",\"gatilho\":\"hp\",\"valor\":100}]", "vida do gatilho");
+        RefusedAbility("cooldown 2 s", "[{\"tipo\":\"stomp\",\"gatilho\":\"every\",\"valor\":2}]", "segundos");
+        RefusedAbility("cooldown 601 s", "[{\"tipo\":\"stomp\",\"gatilho\":\"every\",\"valor\":601}]", "segundos");
+        RefusedAbility("a trigger that does not exist", "[{\"tipo\":\"stomp\",\"gatilho\":\"sempre\"}]", "gatilho");
+        RefusedAbility("a damage type that does not exist", "[{\"tipo\":\"zone\",\"tipoDano\":\"acid\"}]", "acid");
+        RefusedAbility("a summon of no prefab", "[{\"tipo\":\"summon\",\"prefab\":\"\"}]", "prefab");
+        RefusedAbility("seven abilities", "[" + string.Join(",", Enumerable.Repeat("{\"tipo\":\"stomp\"}", 7)) + "]", "no máximo 6");
+        var start = WithList("habilidades", "[{\"tipo\":\"stomp\",\"gatilho\":\"start\",\"valor\":999}]", out problems, out _);
+        Check("start takes no value", start != null && start.Abilities[0].Value == 0f, string.Join(" / ", problems));
+        round = ArenaBestiary.ToJson(SeedBeast("lobo_alfa"));
+        Check("abilities written and read back", ArenaBestiary.ToJson(ArenaBestiary.ParseOne(round, null)) == round);
+        Check("every new ability is valid as it comes", ArenaBeastKit.Abilities.All(s =>
+        {
+            var b = SeedBeast("troll_anciao");
+            b.Abilities = new List<ArenaBeastAbility> { ArenaBeastKit.NewAbility(s.Key) };
+            return ArenaBestiary.ParseOne(ArenaBestiary.ToJson(b), null) != null;
+        }));
+        Check("the phase line", ArenaBeastKit.PhaseLine(troll.Abilities) == "60% ᛗ Invocar Lacaios → 30% ᛏ Fúria", ArenaBeastKit.PhaseLine(troll.Abilities));
+        Check("when", ArenaBeastKit.When(stomp) == "a cada 14 s" && ArenaBeastKit.When(summon) == "vida ≤ 60%");
+
+        Section("bestiary: sync and the client's first look");
+        var seeds = ArenaBestiary.Parse(ArenaBestiary.SeedJson, null);
+        string json = ArenaBestiary.ToJson(seeds);
+        Check("the hash is stable and follows the text", ArenaBestiary.HashOf(json) == ArenaBestiary.HashOf(json) &&
+              ArenaBestiary.HashOf(json) != ArenaBestiary.HashOf(json + " ") && ArenaBestiary.HashOf(json).Length == 16);
+        ArenaBestiary.Replace(seeds);
+        Check("the server's hash is the hash of what it sends", ArenaBestiary.Hash == ArenaBestiary.HashOf(ArenaBestiary.ToJson(ArenaBestiary.All)));
+        ArenaBestiary.Forget();
+        problems = new List<string>();
+        Check("before the bestiary arrives, bestiario:id is quietly left out",
+              ArenaSettingsParser.MakeChallenge("Desafio 1", "", "bestiario:troll_anciao", 1, 1f, "", 0, "", problems) == null && problems.Count == 0 &&
+              !ArenaBestiary.Loaded && ArenaBestiary.Hash == "");
+        ArenaBestiary.Replace(new List<ArenaBeastDef>());
+        Check("once it is there, a missing one is named",
+              ArenaSettingsParser.MakeChallenge("Desafio 1", "", "bestiario:troll_anciao", 1, 1f, "", 0, "", problems) == null && problems.Count == 1);
+    }
+
+    static void BestiarySchedule()
+    {
+        Section("bestiary: triggers");
+        ArenaBeastAbility A(string kind, string trigger, float value, bool on = true)
+        {
+            var a = ArenaBeastKit.NewAbility(kind);
+            a.Trigger = trigger;
+            a.Value = value;
+            a.On = on;
+            return a;
+        }
+        double half() => 0.5;
+        const long T0 = 1_000_000L;
+
+        var hpOnce = new List<ArenaBeastAbility> { A("summon", "hp", 60) };
+        var s = new ArenaBeastScheduleState();
+        Check("hp: nothing above the value", ArenaBeastSchedule.Decide(hpOnce, s, T0, 100f, half) == -1 && s.StartMs == T0);
+        Check("hp: goes off at the value", ArenaBeastSchedule.Decide(hpOnce, s, T0 + 1000, 60f, half) == 0);
+        Check("hp: only once", ArenaBeastSchedule.Decide(hpOnce, s, T0 + 9000, 40f, half) == -1 && s.Used(0));
+
+        var every = new List<ArenaBeastAbility> { A("stomp", "every", 10) };
+        s = new ArenaBeastScheduleState();
+        Check("every: not at the start", ArenaBeastSchedule.Decide(every, s, T0, 100f, half) == -1);
+        Check("every: not before its cooldown", ArenaBeastSchedule.Decide(every, s, T0 + 9999, 100f, half) == -1);
+        Check("every: after one cooldown", ArenaBeastSchedule.Decide(every, s, T0 + 10000, 100f, half) == 0);
+        Check("every: the next one a cooldown later", s.NextMs[0] == T0 + 20000 &&
+              ArenaBeastSchedule.Decide(every, s, T0 + 15000, 100f, half) == -1 && ArenaBeastSchedule.Decide(every, s, T0 + 20000, 100f, half) == 0);
+        var low = new ArenaBeastScheduleState();
+        ArenaBeastSchedule.Decide(every, low, T0, 100f, () => 0.0);
+        var high = new ArenaBeastScheduleState();
+        ArenaBeastSchedule.Decide(every, high, T0, 100f, () => 0.999999);
+        Check("every: ±20% of variation", low.NextMs[0] == T0 + 8000 && Math.Abs(high.NextMs[0] - (T0 + 12000)) <= 1, $"{low.NextMs[0] - T0} / {high.NextMs[0] - T0}");
+
+        var time = new List<ArenaBeastAbility> { A("timerage", "time", 300) };
+        s = new ArenaBeastScheduleState { StartMs = T0 };
+        Check("time: counts from the start", ArenaBeastSchedule.Decide(time, s, T0 + 299_999, 100f, half) == -1 &&
+                                             ArenaBeastSchedule.Decide(time, s, T0 + 300_000, 100f, half) == 0 &&
+                                             ArenaBeastSchedule.Decide(time, s, T0 + 400_000, 100f, half) == -1);
+
+        var startOne = new List<ArenaBeastAbility> { A("stomp", "start", 0) };
+        s = new ArenaBeastScheduleState();
+        Check("start: at once, then never", ArenaBeastSchedule.Decide(startOne, s, T0, 100f, half) == 0 &&
+                                           ArenaBeastSchedule.Decide(startOne, s, T0 + 60000, 100f, half) == -1);
+
+        var both = new List<ArenaBeastAbility> { A("stomp", "every", 10), A("enrage", "hp", 30) };
+        s = new ArenaBeastScheduleState();
+        ArenaBeastSchedule.Decide(both, s, T0, 100f, half);
+        Check("a phase of health goes before a cooldown due at the same time", ArenaBeastSchedule.Decide(both, s, T0 + 10000, 20f, half) == 1);
+        ArenaBeastSchedule.Busy(s, T0 + 10000, 1.5f);
+        Check("while one is under way, the next waits", ArenaBeastSchedule.Decide(both, s, T0 + 11000, 20f, half) == -1);
+        Check("and goes when it ends", ArenaBeastSchedule.Decide(both, s, T0 + 11500, 20f, half) == 0);
+
+        var quiet = new List<ArenaBeastAbility> { A("stomp", "start", 0, on: false), A("shield", "start", 0) };
+        s = new ArenaBeastScheduleState();
+        Check("switched off and phase 3: nothing goes off", ArenaBeastSchedule.Decide(quiet, s, T0, 10f, half) == -1 &&
+                                                            ArenaBeastSchedule.Decide(quiet, s, T0 + 600_000, 1f, half) == -1);
+
+        // The owner changes in the middle: the new one reads what the old one wrote on the ZDO.
+        var fight = new List<ArenaBeastAbility> { A("summon", "hp", 60), A("stomp", "every", 14), A("timerage", "time", 120) };
+        var first = new ArenaBeastScheduleState();
+        var zdo = new Dictionary<string, long>();
+        var fired = new List<(long, int)>();
+        for (long t = 0; t <= 60_000; t += 250)
+        {
+            int i = ArenaBeastSchedule.Decide(fight, first, T0 + t, 50f, half);
+            if (i >= 0) { fired.Add((t, i)); ArenaBeastSchedule.Busy(first, T0 + t, 1f); }
+        }
+        first.Write((k, v) => zdo[k] = v);
+        var second = ArenaBeastScheduleState.Read(k => zdo.TryGetValue(k, out var v) ? v : 0L);
+        var after = new List<(long, int)>();
+        for (long t = 60_250; t <= 130_000; t += 250)
+        {
+            int i = ArenaBeastSchedule.Decide(fight, second, T0 + t, 40f, half);
+            if (i >= 0) { after.Add((t, i)); ArenaBeastSchedule.Busy(second, T0 + t, 1f); }
+        }
+        Check("owner change: the start is kept", second.StartMs == T0);
+        Check("owner change: a phase already used does not come back", fired.Count(f => f.Item2 == 0) == 1 && after.All(f => f.Item2 != 0),
+              string.Join(" ", fired.Concat(after)));
+        Check("owner change: the cooldown goes on where it was", after.Where(f => f.Item2 == 1).Select(f => f.Item1).FirstOrDefault() ==
+              fired.Where(f => f.Item2 == 1).Max(f => f.Item1) + 14_000, string.Join(" ", fired.Concat(after)));
+        Check("owner change: the fight's time goes on (time 120 s)", after.Count(f => f.Item2 == 2) == 1 &&
+              after.First(f => f.Item2 == 2).Item1 >= 120_000, string.Join(" ", after));
+
+        Section("bestiary: Fúria do Tempo");
+        Check("nothing before it starts", ArenaBeastSchedule.TimeRageBonus(10f, 0L, T0) == 0f && ArenaBeastSchedule.TimeRageBonus(10f, T0, T0 - 1) == 0f);
+        Check("+10% at once", ArenaBeastSchedule.TimeRageBonus(10f, T0, T0) == 10f && ArenaBeastSchedule.TimeRageBonus(10f, T0, T0 + 9999) == 10f);
+        Check("+10% more every 10 s", ArenaBeastSchedule.TimeRageBonus(10f, T0, T0 + 10_000) == 20f &&
+                                      ArenaBeastSchedule.TimeRageBonus(10f, T0, T0 + 45_000) == 50f);
+        Check("stops at +200%", ArenaBeastSchedule.TimeRageBonus(10f, T0, T0 + 190_000) == 200f &&
+                                ArenaBeastSchedule.TimeRageBonus(10f, T0, T0 + 3_600_000) == 200f &&
+                                ArenaBeastSchedule.TimeRageBonus(30f, T0, T0 + 60_000) == 200f);
+        Check("the hit's multiplier: Fúria × Fúria do Tempo", Math.Abs(ArenaBeastSchedule.DamageMultiplier(1.25f, 20f) - 1.5f) < 1e-5f &&
+              ArenaBeastSchedule.DamageMultiplier(0f, 0f) == 1f && Math.Abs(ArenaBeastSchedule.DamageMultiplier(0f, 200f) - 3f) < 1e-5f);
     }
 
     static void Persistence()

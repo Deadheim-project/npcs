@@ -31,7 +31,7 @@ namespace NpcValheim.Arena
         /// account cannot be found or written, and then nothing changed.</summary>
         bool CreditDeadcoins(long playerId, int amount, string reason, out int balance, out string error);
         /// <summary>Challenge: puts the match's creature in the world; false when it could not.</summary>
-        bool SpawnCreature(long matchId, ArenaChallengeDef def, Vector3 at, float yaw);
+        bool SpawnCreature(long matchId, ArenaChallengeDef def, Vector3 at, float yaw, int players);
         /// <summary>Whether the match's creature still exists -- false once it died.</summary>
         bool CreatureAlive(long matchId);
         /// <summary>The creature's health from 0 to 1, or -1 when it is not known here.</summary>
@@ -171,6 +171,11 @@ namespace NpcValheim.Arena
         internal const string AtBattlemaster = "battlemaster";
         internal const string AtVendor = "vendor";
 
+        /// <summary>Any arena NPC. Since 0.1.89 the Mestre da Arena does everything, and the
+        /// Organizer and Intendente already standing in a world open the same tabs, so the
+        /// server takes a charter, a queue or a purchase through any of the three.</summary>
+        internal static bool IsDesk(string where) => where == AtOrganizer || where == AtBattlemaster || where == AtVendor;
+
         private const float InviteLifetime = 300f;
         private const float PresenceGrace = 25f;
 
@@ -274,13 +279,13 @@ namespace NpcValheim.Arena
             switch (action)
             {
                 case ActCharterBuy:
-                    if (where != AtOrganizer) return;
+                    if (!IsDesk(where)) return;
                     BuyCharter(me, Int(f, 0), Str(f, 1), Int(f, 2));
                     return;
                 case ActCharterOffer: OfferCharter(me, Int(f, 0), Str(f, 1)); return;
                 case ActCharterSign: SignCharter(me, Long(f, 0), Int(f, 1), Int(f, 2) == 1); return;
                 case ActCharterTurnIn:
-                    if (where != AtOrganizer) return;
+                    if (!IsDesk(where)) return;
                     TurnInCharter(me, Int(f, 0));
                     return;
                 case ActCharterAbandon: AbandonCharter(me, Int(f, 0)); return;
@@ -291,15 +296,20 @@ namespace NpcValheim.Arena
                 case ActTeamCaptain: PromoteCaptain(me, Int(f, 0), Long(f, 1)); return;
                 case ActTeamDisband: Disband(me, Int(f, 0)); return;
                 case ActQueueJoin:
-                    if (where != AtBattlemaster) return;
+                    if (!IsDesk(where)) return;
                     JoinQueue(me, Int(f, 0), Int(f, 1) == 1, Str(f, 2));
                     return;
                 case ActChallengeJoin:
-                    if (where != AtBattlemaster) return;
+                    if (!IsDesk(where)) return;
+                    JoinChallenge(me, Str(f, 0), Str(f, 1));
+                    return;
+                // The admin page's "Testar agora": the same challenge, from anywhere, for an admin.
+                case ActAdminChallengeTest:
+                    if (!isAdmin) { Say(playerId, "Só admin."); return; }
                     JoinChallenge(me, Str(f, 0), Str(f, 1));
                     return;
                 case ActFfaJoin:
-                    if (where != AtBattlemaster) return;
+                    if (!IsDesk(where)) return;
                     JoinFfa(me);
                     return;
                 case ActQueueLeave: LeaveQueue(playerId); return;
@@ -310,7 +320,7 @@ namespace NpcValheim.Arena
                 case ActKo: KnockedOut(playerId, Long(f, 0)); return;
                 case ActReturned: Returned(playerId); return;
                 case ActVendorBuy:
-                    if (where != AtVendor) return;
+                    if (!IsDesk(where)) return;
                     VendorBuy(me, Str(f, 0), Int(f, 1));
                     return;
                 default:
@@ -1002,7 +1012,10 @@ namespace NpcValheim.Arena
             if (!_t.ChallengeEnabled) refusal = "Os desafios estão desligados neste servidor.";
             else if (def == null) refusal = "Esse desafio não existe aqui.";
             else if (_t.Maps.Count == 0) refusal = "Nenhuma arena foi configurada ainda. Fale com um admin.";
-            else if (!_t.Maps.Any(_t.MapServesChallenge)) refusal = "Nenhuma arena aceita desafios (uso pve) neste servidor. Fale com um admin.";
+            else if (!_t.Maps.Any(m => _t.MapServesChallenge(m, def)))
+                refusal = def.Map != null
+                    ? $"A arena \"{def.Map}\" deste desafio não está pronta. Fale com um admin."
+                    : "Nenhuma arena aceita desafios (uso pve) neste servidor. Fale com um admin.";
             if (refusal != null) { Say(id, refusal, alert: true); return; }
 
             var members = GroupOf(id, peerList);
@@ -1012,7 +1025,7 @@ namespace NpcValheim.Arena
                 Say(id, $"O seu grupo tem {members.Count} jogadores; o desafio aceita até {_t.ChallengeMaxPlayers}.", alert: true);
                 return;
             }
-            if (FreeChallengeMap() == null)
+            if (FreeChallengeMap(def) == null)
             {
                 Say(id, BusyText, alert: true);
                 return;
@@ -1045,7 +1058,7 @@ namespace NpcValheim.Arena
 
         private void CreateChallenge(long leader, List<long> members, ArenaChallengeDef def)
         {
-            var map = FreeChallengeMap();
+            var map = FreeChallengeMap(def);
             if (map == null)
             {
                 foreach (var m in members)
@@ -1265,8 +1278,9 @@ namespace NpcValheim.Arena
         /// <summary>A free arena whose usage takes a PvP match of this size.</summary>
         private ArenaMapDef FreeMap(int size) => FreeMap(m => _t.MapServes(m, size));
 
-        /// <summary>A free arena a challenge may use (usage pve, and Desafio.Maps when set).</summary>
-        private ArenaMapDef FreeChallengeMap() => FreeMap(_t.MapServesChallenge);
+        /// <summary>A free arena this challenge may use (usage pve, its own arena when it names
+        /// one, and Desafio.Maps when set).</summary>
+        private ArenaMapDef FreeChallengeMap(ArenaChallengeDef def) => FreeMap(m => _t.MapServesChallenge(m, def));
 
         private ArenaMapDef FreeMap(Func<ArenaMapDef, bool> serves)
         {
@@ -1377,16 +1391,14 @@ namespace NpcValheim.Arena
             _host.Send(id, Enter, Record(L(match.Id), F(spawn.x), F(spawn.y), F(spawn.z), F(map.YawOf(seat.Side)),
                 I(seat.Side), map.Name, F(_t.GateRadius)));
 
-            if (match.PrepEndsAt <= 0)
+            if (match.PrepEndsAt > 0)
             {
-                // _ProcessJoin: the countdown starts with the first player through the door.
-                match.PrepEndsAt = _host.Now + _t.PreparationSeconds;
-                match.Announced = 1;
-                Announce(match, PrepMessage(_t.PreparationSeconds));
+                if (match.Status == MatchStatus.WaitJoin)
+                    Say(id, PrepMessage(match.PrepEndsAt - _host.Now), alert: true);
             }
-            else if (match.Status == MatchStatus.WaitJoin)
+            else if (!TryStartPreparation(match))
             {
-                Say(id, PrepMessage(match.PrepEndsAt - _host.Now), alert: true);
+                Say(id, "Aguardando os outros jogadores aceitarem...");
             }
 
             if (match.Status == MatchStatus.InProgress)
@@ -1394,6 +1406,20 @@ namespace NpcValheim.Arena
 
             _host.Log($"Arena: {me.Name} entrou na partida #{match.Id} ({ArenaSide.Name(seat.Side)})");
             SendMatchState(match);
+        }
+
+        /// <summary>The preparation countdown starts only when everyone invited has answered
+        /// (entered, or let the invitation lapse): whoever accepts early does not burn the time
+        /// of whoever is still deciding.</summary>
+        private bool TryStartPreparation(ArenaMatch match)
+        {
+            if (match.PrepEndsAt > 0 || match.Status != MatchStatus.WaitJoin) return false;
+            if (match.Seats.Any(s => s.State == SeatState.Invited)) return false;
+            if (!match.Seats.Any(s => s.State == SeatState.Entered)) return false;
+            match.PrepEndsAt = _host.Now + _t.PreparationSeconds;
+            match.Announced = 1;
+            Announce(match, PrepMessage(_t.PreparationSeconds));
+            return true;
         }
 
         private static string PrepMessage(double secondsLeft)
@@ -1575,7 +1601,9 @@ namespace NpcValheim.Arena
                 // The creature comes in with the gates opening, at the Green start, so nothing
                 // can hurt the group during the preparation.
                 var map = match.Map;
-                match.CreatureSpawned = _host.SpawnCreature(match.Id, match.Challenge, map.SpawnOf(ArenaSide.Green), map.YawOf(ArenaSide.Green));
+                // The players who came in: a creature of the Bestiário has more health for each.
+                match.CreatureSpawned = _host.SpawnCreature(match.Id, match.Challenge, map.SpawnOf(ArenaSide.Green), map.YawOf(ArenaSide.Green),
+                    match.Seats.Count(s => s.Present));
                 if (!match.CreatureSpawned)
                 {
                     _host.Warn($"Arena: desafio #{match.Id}: não foi possível criar '{match.Challenge.Prefab}'");
@@ -1681,7 +1709,7 @@ namespace NpcValheim.Arena
                     if (due <= 0) continue;
                     Say(seat.PlayerId, capped
                         ? $"Você já ganhou o máximo de {_t.MatchPointsDailyCap} Pontos de Arena por partida hoje."
-                        : $"Seu saldo está no teto de {_t.MaxPoints} Pontos de Arena: gaste no Intendente para voltar a ganhar.");
+                        : $"Seu saldo está no teto de {_t.MaxPoints} Pontos de Arena: gaste na Loja do Mestre da Arena para voltar a ganhar.");
                     continue;
                 }
                 p.Points += amount;
@@ -1994,6 +2022,7 @@ namespace NpcValheim.Arena
                             CloseMatch(match, "ninguém entrou");
                             return;
                         }
+                        TryStartPreparation(match);
                         if (match.PrepEndsAt > 0)
                         {
                             double left = match.PrepEndsAt - now;

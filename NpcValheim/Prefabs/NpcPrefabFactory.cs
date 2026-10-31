@@ -71,9 +71,11 @@ namespace NpcValheim.Prefabs
             RegisterNpcType(scene, source, "NpcValheim_QuestGiver", typeof(QuestGiverNpc), "Missões", "quests.png");
             RegisterNpcType(scene, source, "NpcValheim_DeadcoinShop", typeof(DeadcoinShopNpc), "Loja Deadcoins", "deadcoins.png");
             RegisterNpcType(scene, source, "NpcValheim_BossPass", typeof(BossPassNpc), BossPassNpc.DisplayName, "bosspass.png");
-            RegisterNpcType(scene, source, "NpcValheim_ArenaOrganizer", typeof(ArenaOrganizerNpc), "Organizador de Arena", "arena-organizer.png");
-            RegisterNpcType(scene, source, "NpcValheim_ArenaBattlemaster", typeof(ArenaBattlemasterNpc), "Mestre da Arena", "arena-battlemaster.png");
-            RegisterNpcType(scene, source, "NpcValheim_ArenaVendor", typeof(ArenaVendorNpc), "Intendente da Arena", "arena-vendor.png");
+            // The Mestre da Arena does what the three did; the Organizer and the Intendente stay
+            // registered so the ones already in a world load, but the Hammer no longer offers them.
+            RegisterRealNpc(scene, source, "NpcValheim_ArenaOrganizer", typeof(ArenaOrganizerNpc));
+            RegisterNpcType(scene, source, ArenaDesk.Prefab, typeof(ArenaBattlemasterNpc), "Mestre da Arena", "arena-battlemaster.png");
+            RegisterRealNpc(scene, source, "NpcValheim_ArenaVendor", typeof(ArenaVendorNpc));
             RegisterNpcType(scene, source, "NpcValheim_GuildRegistrar", typeof(GuildRegistrarNpc), "Registrador de Guildas", "guild-registrar.png");
             RegisterNpcType(scene, source, "NpcValheim_MountTrainer", typeof(MountTrainerNpc), "Mestre das Montarias", "mounts.png");
             RegisterNpcType(scene, source, "NpcValheim_BountyHunter", typeof(BountyHunterNpc), BountyHunterNpc.DisplayName, "bounty.png");

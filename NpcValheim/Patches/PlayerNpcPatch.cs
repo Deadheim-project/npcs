@@ -102,7 +102,8 @@ namespace NpcValheim.Patches
         {
             var npc = Npc(__instance);
             if (npc == null) return true;
-            __result = npc.GetHoverName();
+            // The plate over the NPC: its name and, when the admin named it, what it does.
+            __result = NpcFacing.Titled(npc.GetHoverName(), npc.RoleName);
             return false;
         }
 

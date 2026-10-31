@@ -1,0 +1,267 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Arena: admin simples</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Averia+Serif+Libre:wght@400;700&family=JetBrains+Mono:wght@400&display=swap">
+<style>
+/* Mesmo visual do docs/bestiario-arena.html: janela dos NPCs (940x640), cores do ValheimUi.cs. */
+:root{
+  --page:#14110d; --wood1:#5b4330; --wood2:#3e2d20; --woodEdge:#20160e;
+  --orange:#ffa13c; --beige:#d9b988; --yellow:#ffe300; --muted:#9e9480; --danger:#ed6b57; --good:#73db6b;
+  --btn1:#4e3a29; --btn2:#2f2219; --btnEdge:#8b6b48;
+  --f-ui:"Averia Serif Libre",Georgia,serif; --f-mono:"JetBrains Mono",Consolas,monospace;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+body{background:var(--page);color:var(--beige);font:15px/1.45 var(--f-ui);margin:0;padding:24px 16px 64px}
+.wrap{max-width:1000px;margin:0 auto;display:flex;flex-direction:column;gap:22px}
+h1,h2,h3{font-weight:700;margin:0;color:var(--orange)}
+h1{font-size:1.8rem} h2{font-size:1.3rem} h3{font-size:1.05rem}
+p{margin:0;max-width:72ch}
+.lead{color:var(--muted)}
+.win{width:100%;max-width:940px;height:640px;margin:0 auto;position:relative;border-radius:10px;
+  background:repeating-linear-gradient(92deg,rgba(0,0,0,.06) 0 3px,transparent 3px 11px),linear-gradient(180deg,var(--wood1),var(--wood2));
+  border:3px solid var(--woodEdge);box-shadow:inset 0 0 0 2px #7a5b3e,inset 0 0 40px rgba(0,0,0,.55),0 20px 50px rgba(0,0,0,.6);
+  display:flex;flex-direction:column;padding:0 24px}
+.win.short{height:auto;padding-bottom:12px}
+.wtitle{height:58px;display:grid;place-items:center;font-size:30px;color:var(--orange);text-shadow:0 2px 3px #000}
+.wtabs{display:flex;gap:8px;height:44px}
+.wtabs .vbtn{flex:1 1 0;min-width:0;height:40px}
+.wcontent{flex:1;min-height:0;margin-top:6px;display:flex;gap:10px}
+.wstatus{height:46px;display:flex;align-items:center;color:var(--yellow);font-size:15px}
+.vbtn{all:unset;box-sizing:border-box;cursor:pointer;display:inline-grid;place-items:center;padding:0 10px;height:34px;
+  font:15px var(--f-ui);color:var(--orange);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  background:linear-gradient(180deg,var(--btn1),var(--btn2));border:1px solid var(--btnEdge);border-radius:4px;box-shadow:inset 0 1px 0 rgba(255,255,255,.12)}
+.vbtn:hover{filter:brightness(1.18)}
+.vbtn:focus-visible{outline:2px solid var(--yellow);outline-offset:1px}
+.vbtn.on{color:var(--yellow);border-color:var(--yellow)}
+.vbtn.big{height:40px;font-size:16px}
+.vbtn.fix{height:28px;font-size:13px;color:var(--yellow)}
+.side{width:200px;flex:none;display:flex;flex-direction:column;gap:4px;padding:4px;overflow:auto;background:rgba(0,0,0,.35);border-radius:4px}
+.side .vbtn{height:40px;width:100%;justify-content:start;display:flex;gap:6px}
+.side .foot{margin-top:auto;padding-top:6px;border-top:1px solid rgba(255,255,255,.08)}
+.right{flex:1;min-width:0;display:flex;flex-direction:column;background:rgba(0,0,0,.35);border-radius:4px}
+.subtabs{display:flex;gap:6px;padding:6px 8px}
+.subtabs .vbtn{height:34px;font-size:14px}
+.area{flex:1;min-height:0;overflow:auto;padding:6px 10px;display:flex;flex-direction:column;gap:6px}
+.step{display:flex;gap:10px;align-items:flex-start;padding:6px;border-radius:4px;background:rgba(255,255,255,.03)}
+.step .n{width:28px;height:28px;flex:none;border-radius:50%;display:grid;place-items:center;font-weight:700;border:1px solid var(--btnEdge);color:var(--yellow)}
+.step.done .n{color:#111;background:var(--good);border-color:var(--good)}
+.step .b{flex:1;min-width:0;display:flex;flex-direction:column;gap:4px}
+.step .t{color:var(--orange);font-size:16px}
+.dim{color:var(--muted);font-size:13px}
+.row{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.field{font:14px var(--f-ui);color:var(--beige);background:rgba(0,0,0,.55);border:1px solid #5a4632;border-radius:3px;height:30px;padding:0 8px;width:70px}
+.field.w{flex:1;min-width:120px}
+.ok{color:var(--good)} .no{color:var(--danger)}
+.check{display:flex;align-items:center;gap:8px;min-height:30px;font-size:14px}
+.check span.i{width:18px;text-align:center}
+.check .grow{flex:1}
+.head{color:var(--orange);font-size:17px;margin-top:4px}
+.q{all:unset;cursor:help;width:18px;height:18px;display:inline-grid;place-items:center;border-radius:50%;border:1px solid var(--muted);color:var(--muted);font:700 11px var(--f-ui)}
+.spec{display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:16px}
+.spec section{background:#1c1712;border:1px solid #3c2f22;border-radius:6px;padding:14px 16px;display:flex;flex-direction:column;gap:8px;min-width:0}
+.spec ul,.spec ol{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:6px}
+code{font:12.5px var(--f-mono);color:var(--beige);background:#0f0c09;padding:1px 5px;border-radius:3px}
+[hidden]{display:none!important}
+@media (max-width:820px){
+  .win{height:auto;padding:0 10px 10px}
+  .wcontent{flex-direction:column}
+  .side{width:100%;flex-direction:row;overflow-x:auto}
+  .side .vbtn{width:auto;min-width:150px}
+  .side .foot{margin:0;border:none;padding:0}
+  .wtabs{overflow-x:auto}
+  .wtabs .vbtn{flex:none;min-width:110px}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <h1>Arena: configuração simples para o admin</h1>
+  <p class="lead">Proposta. Nada disto está no jogo ainda. A cfg continua igual (blocos <code>[Arena - Local N]</code> e <code>[Arena - Desafio N]</code>); só muda a tela e quantos NPCs há.</p>
+</header>
+
+<div class="spec">
+<section>
+  <h2>Onde o admin se perde hoje</h2>
+  <ol>
+    <li><b>Três NPCs e três telas de admin.</b> Arena (admin) no Mestre, Recompensas no Intendente, Arenas e Intendente no F8. Não é óbvio que são a mesma coisa.</li>
+    <li><b>A zona do Deadheim é um passo escondido.</b> Sem uma "Área" em volta dos dois inícios, a arena é <i>recusada</i> e some da lista. O aviso só aparece no rodapé, em vermelho.</li>
+    <li><b>Ordem invertida na tela:</b> pontos e desafios vêm antes de "Montar arena", e a Área vem depois. Quem lê de cima para baixo faz na ordem errada.</li>
+    <li><b>Termos técnicos:</b> "giro", "ArenaZones", "uso pve", "Tipo1v1", "Só PvP", "[Arena - Local N]", "prefab", coordenadas <code>x,y,z,giro</code> na tela.</li>
+    <li><b>O "uso" confunde:</b> nada marcado = todos; clicar 1v1 em "Todos" vira "todos menos 1v1". O admin não vê caixas marcadas, só um texto.</li>
+    <li><b>Desafio sem arena:</b> o desafio não diz em que arena acontece; precisa existir <i>alguma</i> arena com PvE, e o erro só aparece quando um jogador tenta entrar.</li>
+    <li><b>Sem "o que falta".</b> Os problemas saem numa lista de frases soltas, sem botão para resolver.</li>
+    <li><b>Recompensa por prefab digitado</b> (<code>Coins</code>, <code>TrophyTroll:1</code>).</li>
+  </ol>
+</section>
+<section>
+  <h2>Menos NPCs: um só Mestre da Arena</h2>
+  <p>O <b>Mestre da Arena</b> passa a ter tudo: <b>Arena</b> (fila e desafios), <b>Times</b> (carta e times), <b>Ranking</b> e <b>Loja</b>. O martelo só oferece ele.</p>
+  <p><b>NPCs antigos:</b> o Organizador e o Intendente já colocados <b>continuam no mundo e passam a abrir as mesmas abas</b> do Mestre (e o servidor aceita fila, carta e compra vindas de qualquer um dos três).</p>
+  <p><b>Por que não migrar</b> (trocar o objeto no mundo): trocar o prefab de um NPC salvo perde nome, aparência e falas que o admin personalizou, e mexe em dados do mundo de produção sem volta. Abrir as mesmas abas não toca em nada salvo, e o admin remove os extras quando quiser.</p>
+  <p class="dim">Antes: Organizador (Carta, Times) · Mestre (Arena, Ranking) · Intendente (Loja). Depois, nos três: Arena · Times · Ranking · Loja.</p>
+</section>
+</div>
+
+<h2>Painel F8, aba Arena</h2>
+<p class="lead">Uma aba só no F8 (no lugar de "Arenas" e "Intendente"), com três sub-abas. Clique nelas e nas arenas da esquerda.</p>
+
+<div class="win" id="f8">
+  <div class="wtitle">Painel do admin</div>
+  <div class="wtabs">
+    <button class="vbtn">Mensagem</button><button class="vbtn">Jogadores</button><button class="vbtn">Buffs</button>
+    <button class="vbtn">Bestiário</button><button class="vbtn on">Arena</button>
+  </div>
+  <div class="wcontent">
+    <div class="side" id="side"></div>
+    <div class="right">
+      <div class="subtabs" id="subtabs">
+        <button class="vbtn on" data-tab="arenas">Arenas</button>
+        <button class="vbtn" data-tab="desafios">Desafios</button>
+        <button class="vbtn" data-tab="pontos">Pontos e recompensas</button>
+      </div>
+      <div class="area" id="pane-arenas"></div>
+      <div class="area" id="pane-desafios" hidden></div>
+      <div class="area" id="pane-pontos" hidden></div>
+    </div>
+  </div>
+  <div class="wstatus" id="status">Fique onde o time Ouro começa e clique Marcar aqui.</div>
+</div>
+
+<div class="spec">
+<section>
+  <h3>Fluxo guiado (Arenas)</h3>
+  <ol>
+    <li>"+ Nova arena": o nome já vem preenchido (Arena 1, Arena 2...), dá para trocar.</li>
+    <li>Fique onde o time <b>Ouro</b> começa, olhando para o centro, e clique <b>Marcar aqui</b>. Mostra "marcado ✔" e a distância até o outro início.</li>
+    <li>O mesmo para o <b>Verde</b> (no desafio, é onde a criatura aparece).</li>
+    <li><b>Para que serve:</b> caixas 1v1, 2v2, 3v3, Todos contra todos, Desafio contra criatura. Começa com tudo marcado.</li>
+    <li><b>Área de PvP</b>: ao salvar, se nenhuma área contém os dois inícios, o servidor cria uma em volta da arena (centro entre os inícios, raio = metade da distância + 25 m, mínimo 30 m). Botão "Ajustar área" para refazer.</li>
+  </ol>
+  <p class="dim">Salvar grava o bloco <code>[Arena - Local N]</code> como hoje. Sem coordenadas na tela: só "marcado ✔" e a distância.</p>
+</section>
+<section>
+  <h3>Saúde (✔/✖ com o botão que resolve)</h3>
+  <ul>
+    <li>✖ Falta o início do time Ouro / Verde → <b>Ir para o passo</b></li>
+    <li>✖ Os inícios estão a mais de 300 m → <b>Remarcar Verde</b></li>
+    <li>✖ Fora de uma área de PvP → <b>Criar área</b></li>
+    <li>✖ Não serve para nada (nenhuma caixa) → <b>Marcar tudo</b></li>
+    <li>✖ Arena desligada → <b>Ligar</b></li>
+    <li>✖ Nenhuma arena aceita 2v2 (a fila recusa todos) → <b>Marcar 2v2 na arena X</b></li>
+    <li>✖ Desafio: criatura não existe / Bestiário sem essa criatura → <b>Escolher criatura</b></li>
+    <li>✖ Desafio: a arena dele não aceita desafios → <b>Marcar "desafio" na arena</b></li>
+    <li>✖ Desafio: recompensa não é um item do jogo → <b>Escolher recompensa</b></li>
+  </ul>
+  <p class="dim">A lógica é pura (testada em tools/checks/arena); a tela só desenha.</p>
+</section>
+<section>
+  <h3>Desafios</h3>
+  <ul>
+    <li>Lista à esquerda com os 5 desafios e ✔/✖.</li>
+    <li>Detalhe: nome, <b>Arena</b> (escolher entre as que aceitam desafio, ou "qualquer uma"), criatura com o seletor <b>Do jogo / Bestiário</b> que já existe, força (estrelas e vida), recompensa.</li>
+    <li>Botão <b>Testar agora</b>: entra no desafio com você e seu grupo, sem esperar cooldown.</li>
+    <li>Novo na cfg: chave opcional <code>Arena</code> no <code>[Arena - Desafio N]</code>; vazia = qualquer arena com desafio (como hoje).</li>
+  </ul>
+</section>
+<section>
+  <h3>Compatibilidade</h3>
+  <ul>
+    <li>Cfg: os blocos atuais continuam a fonte da verdade; a única chave nova é opcional.</li>
+    <li>Servidor confere admin em toda ação, como hoje.</li>
+    <li>NPCs antigos: continuam funcionando, sem tocar no mundo.</li>
+    <li>As abas "Arena (admin)" e "Recompensas" nos NPCs viram um botão "Abrir painel da arena (F8)".</li>
+  </ul>
+</section>
+</div>
+
+<h2>Janela do Mestre da Arena (jogador)</h2>
+<div class="win short">
+  <div class="wtitle">Mestre da Arena</div>
+  <div class="wtabs">
+    <button class="vbtn on">Arena</button><button class="vbtn">Times</button><button class="vbtn">Ranking</button><button class="vbtn">Loja</button>
+  </div>
+  <p class="dim" style="padding:10px 2px 0">Times junta as antigas abas Carta e Times do Organizador; Loja é a antiga do Intendente. O Organizador e o Intendente antigos abrem exatamente estas quatro.</p>
+</div>
+</div>
+
+<script>
+const arenas=[
+  {name:"Coliseu",gold:true,green:true,dist:38,types:[1,1,1,1,1],zone:true,on:true},
+  {name:"Arena 2",gold:true,green:false,dist:0,types:[1,1,1,1,1],zone:false,on:true},
+];
+const desafios=[
+  {name:"Troll Furioso",ok:true,creature:"Troll (do jogo)",arena:"qualquer uma"},
+  {name:"Fenring Alfa",ok:false,creature:"Fenring (do jogo)",arena:"Arena 2",why:"a arena Arena 2 ainda não funciona"},
+  {name:"Troll Ancião",ok:true,creature:"Troll Ancião (Bestiário)",arena:"Coliseu"},
+];
+let tab="arenas", sel=1;
+const types=["1v1","2v2","3v3","Todos contra todos","Desafio contra criatura"];
+const $=id=>document.getElementById(id);
+function health(a){
+  const r=[];
+  r.push([a.gold,"Início do time Ouro marcado","Falta o início do time Ouro","Ir para o passo"]);
+  r.push([a.green,"Início do time Verde marcado","Falta o início do time Verde","Ir para o passo"]);
+  r.push([a.gold&&a.green&&a.zone,"Dentro de uma área de PvP","Fora de uma área de PvP","Criar área"]);
+  r.push([a.types.some(x=>x),"Serve para "+types.filter((t,i)=>a.types[i]).join(", "),"Não serve para nenhum tipo de partida","Marcar tudo"]);
+  return r;
+}
+const ok=a=>health(a).every(h=>h[0]);
+function side(){
+  const s=$("side");
+  if(tab==="pontos"){s.innerHTML='<button class="vbtn on">Pontos por partida</button><button class="vbtn">Loja (Intendente)</button><button class="vbtn">Dar pontos</button>';return}
+  const list=tab==="arenas"?arenas:desafios;
+  s.innerHTML=list.map((a,i)=>`<button class="vbtn ${i===sel?'on':''}" data-i="${i}"><span class="${(tab==='arenas'?ok(a):a.ok)?'ok':'no'}">${(tab==='arenas'?ok(a):a.ok)?'✔':'✖'}</span>${a.name}</button>`).join("")+
+    `<div class="foot"><button class="vbtn">+ ${tab==="arenas"?"Nova arena":"Novo desafio"}</button></div>`;
+  s.querySelectorAll("[data-i]").forEach(b=>b.onclick=()=>{sel=+b.dataset.i;draw()});
+}
+function arenasPane(){
+  const a=arenas[Math.min(sel,arenas.length-1)];
+  const st=(d,n,t,body)=>`<div class="step ${d?'done':''}"><div class="n">${d?'✔':n}</div><div class="b"><div class="t">${t}</div>${body}</div></div>`;
+  return `<div class="row"><span class="dim">Nome</span><input class="field w" value="${a.name}"><button class="vbtn">${a.on?'Ligada':'Desligada'}</button></div>`+
+  st(a.gold,1,"Início do time Ouro",`<div class="dim">Fique onde o time Ouro começa, olhando para o centro da arena.</div><div class="row"><button class="vbtn">Marcar aqui</button>${a.gold?'<span class="ok">marcado</span>':''}</div>`)+
+  st(a.green,2,"Início do time Verde",`<div class="dim">Do outro lado. No desafio, a criatura aparece aqui.</div><div class="row"><button class="vbtn">Marcar aqui</button>${a.green?`<span class="ok">marcado · ${a.dist} m do Ouro</span>`:''}</div>`)+
+  st(a.types.some(x=>x),3,"Para que serve",`<div class="row">${types.map((t,i)=>`<button class="vbtn ${a.types[i]?'on':''}">${a.types[i]?'☑':'☐'} ${t}</button>`).join("")}</div>`)+
+  st(a.zone,4,"Área de PvP",`<div class="dim">Dentro dela o PvP vale sempre e ninguém perde skill; quem sai durante a partida perde. Criada sozinha ao salvar.</div><div class="row"><button class="vbtn">${a.zone?'Ajustar área':'Criar área em volta desta arena'}</button></div>`)+
+  `<div class="head">O que falta para funcionar</div>`+
+  health(a).map(h=>`<div class="check"><span class="i ${h[0]?'ok':'no'}">${h[0]?'✔':'✖'}</span><span class="grow">${h[0]?h[1]:h[2]}</span>${h[0]?'':`<button class="vbtn fix">${h[3]}</button>`}</div>`).join("")+
+  `<div class="row" style="margin-top:6px"><button class="vbtn big">Salvar</button><button class="vbtn">Ir até a arena</button><button class="vbtn">Remover</button></div>`;
+}
+function desafiosPane(){
+  const d=desafios[Math.min(sel,desafios.length-1)];
+  return `<div class="row"><span class="dim" style="width:90px">Nome</span><input class="field w" value="${d.name}"><button class="vbtn on">Ligado</button></div>
+  <div class="row"><span class="dim" style="width:90px">Arena</span><button class="vbtn">&lt;</button><span style="color:var(--yellow);min-width:150px;text-align:center">${d.arena}</span><button class="vbtn">&gt;</button><span class="q" title="Só aparecem arenas marcadas para Desafio contra criatura.">?</span></div>
+  <div class="row"><span class="dim" style="width:90px">Criatura</span><button class="vbtn">${d.creature.includes("Bestiário")?"Bestiário":"Do jogo"}</button><button class="vbtn">&lt;</button><span style="color:var(--yellow);min-width:150px;text-align:center">${d.creature.replace(/ \(.*\)/,"")}</span><button class="vbtn">&gt;</button></div>
+  <div class="row"><span class="dim" style="width:90px">Força</span><button class="vbtn">★★ (nível 3)</button><span class="dim">Vida x</span><input class="field" value="2"></div>
+  <div class="row"><span class="dim" style="width:90px">Recompensa</span><button class="vbtn">300x Moedas</button><span class="dim">+ extras</span><input class="field w" value="TrophyTroll:1"></div>
+  <div class="head">O que falta para funcionar</div>
+  <div class="check"><span class="i ok">✔</span><span class="grow">A criatura existe</span></div>
+  <div class="check"><span class="i ${d.ok?'ok':'no'}">${d.ok?'✔':'✖'}</span><span class="grow">${d.ok?'Há arena pronta para este desafio':'Não há arena pronta: '+d.why}</span>${d.ok?'':'<button class="vbtn fix">Abrir a arena</button>'}</div>
+  <div class="check"><span class="i ok">✔</span><span class="grow">A recompensa é um item do jogo</span></div>
+  <div class="row" style="margin-top:6px"><button class="vbtn big">Salvar</button><button class="vbtn">Testar agora</button></div>`;
+}
+function pontosPane(){
+  const m=[["1v1",15,5],["2v2",20,8],["3v3",25,10],["Todos contra todos",40,10],["Desafio",10,0]];
+  return `<div class="dim">Quanto cada partida dá a quem termina dentro da arena. Empate paga a derrota.</div>`+
+  m.map(r=>`<div class="row"><span style="width:170px">${r[0]}</span><span class="dim">vitória</span><input class="field" value="${r[1]}"><span class="dim">derrota</span><input class="field" value="${r[2]}"></div>`).join("")+
+  `<div class="row"><span style="width:170px">Máximo por dia</span><input class="field" value="300"><span class="dim">0 = sem máximo</span></div><div class="row"><button class="vbtn big">Salvar</button></div>`;
+}
+function draw(){
+  side();
+  $("pane-arenas").hidden=tab!=="arenas";$("pane-desafios").hidden=tab!=="desafios";$("pane-pontos").hidden=tab!=="pontos";
+  if(tab==="arenas")$("pane-arenas").innerHTML=arenasPane();
+  if(tab==="desafios")$("pane-desafios").innerHTML=desafiosPane();
+  if(tab==="pontos")$("pane-pontos").innerHTML=pontosPane();
+  $("status").textContent=tab==="arenas"?(ok(arenas[Math.min(sel,arenas.length-1)])?"Arena pronta.":"Fique onde o time Verde começa e clique Marcar aqui."):tab==="desafios"?"Escolha a arena e a criatura e clique Salvar.":"Edite e clique Salvar.";
+  document.querySelectorAll("#subtabs .vbtn").forEach(b=>b.classList.toggle("on",b.dataset.tab===tab));
+}
+document.querySelectorAll("#subtabs .vbtn").forEach(b=>b.onclick=()=>{tab=b.dataset.tab;sel=0;draw()});
+draw();
+</script>
+</body>
+</html>
