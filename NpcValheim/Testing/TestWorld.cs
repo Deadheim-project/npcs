@@ -365,8 +365,9 @@ namespace NpcValheim.Testing
                          $"{F(arena.x + ArenaHalf - 5f)},{F(startY)},{F(arena.z)},270;" +
                          $"{F(hub.x)},{F(hub.y + 0.5f)},{F(hub.z + 4f)}";
             foreach (var def in Arena.ArenaSettingsParser.ParseMaps(map, null))
-                if (Arena.ArenaConfig.SaveMap(def, out string full) == 0)
+                if (!Arena.ArenaConfig.SaveMap(def, out string full))
                     Plugin.Log.LogWarning($"NpcValheim Teste: arena de teste nao salva: {full}");
+            Arena.ArenaLayoutNet.Commit(0L);
 
             SetOtherModEntry("Detalhes.Deadheim", "PvP - Zonas", "ArenaZones", ArenaName,
                 $"{ArenaName},{F(arena.x)},{F(arena.z)},{F(ArenaHalf * 1.5f)}");

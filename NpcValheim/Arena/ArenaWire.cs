@@ -29,10 +29,15 @@ namespace NpcValheim.Arena
         internal const string Bestiary = "bestiary";
         /// <summary>The Bestiário's hash, on the hello: the client asks for the JSON only when its own differs.</summary>
         internal const string BestiaryHash = "bestiaryHash";
+        /// <summary>Every arena and challenge as JSON (ArenaLayout): when a client asks, and to everyone after every change.</summary>
+        internal const string Layout = "layout";
+        /// <summary>The layout's hash, on the hello: the client asks for the JSON only when its own differs.</summary>
+        internal const string LayoutHash = "layoutHash";
 
         // client -> server actions
         internal const string ActData = "data";
         internal const string ActBestiaryGet = "bestiary.get";
+        internal const string ActLayoutGet = "layout.get";
         internal const string ActHello = "hello";
         internal const string ActCharterBuy = "charter.buy";
         internal const string ActCharterOffer = "charter.offer";
@@ -55,6 +60,8 @@ namespace NpcValheim.Arena
         internal const string ActLeave = "match.leave";
         internal const string ActKo = "match.ko";
         internal const string ActReturned = "match.returned";
+        /// <summary>A knocked-out player who would rather go home now than watch the rest.</summary>
+        internal const string ActLeaveSpectate = "match.leavewatch";
         internal const string ActLadder = "ladder";
         internal const string ActVendorBuy = "vendor.buy";
         internal const string ActAdminGrant = "admin.grant";
@@ -66,6 +73,7 @@ namespace NpcValheim.Arena
         internal const string ActAdminOfferRemove = "admin.offer.del";
         internal const string ActAdminPointsSet = "admin.points.set";
         internal const string ActAdminChallengeSet = "admin.challenge.set";
+        internal const string ActAdminChallengeRemove = "admin.challenge.del";
         internal const string ActAdminChallengeTest = "admin.challenge.test";
         internal const string ActAdminZoneAround = "admin.zone.around";
         internal const string ActAdminBeastSet = "admin.beast.set";

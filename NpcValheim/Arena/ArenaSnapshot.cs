@@ -94,6 +94,10 @@ namespace NpcValheim.Arena
     {
         public long PlayerId;
         public int Points;
+        /// <summary>The challenges' rating, apart from the PvP ones.</summary>
+        public int PveRating;
+        public int PveGames;
+        public int PveWins;
         public readonly List<ArenaTeamView> Teams = new List<ArenaTeamView>();
         public readonly List<ArenaCharterView> Charters = new List<ArenaCharterView>();
         public readonly List<ArenaSignView> SignRequests = new List<ArenaSignView>();
@@ -114,6 +118,9 @@ namespace NpcValheim.Arena
                     case "P":
                         s.Points = Int(f, 1);
                         s.PlayerId = Long(f, 2);
+                        s.PveRating = Int(f, 3);
+                        s.PveGames = Int(f, 4);
+                        s.PveWins = Int(f, 5);
                         break;
                     case "T":
                         s.Teams.Add(new ArenaTeamView
@@ -200,6 +207,8 @@ namespace NpcValheim.Arena
         public int Duration;
         public string Challenge = "";
         public bool IsChallenge => !string.IsNullOrEmpty(Challenge);
+        /// <summary>A challenge won faster than anyone before.</summary>
+        public bool Record;
         public readonly List<ArenaResultSide> Sides = new List<ArenaResultSide>();
         public readonly List<ArenaResultPlayer> Players = new List<ArenaResultPlayer>();
 
@@ -218,6 +227,7 @@ namespace NpcValheim.Arena
                         r.Map = Str(f, 5);
                         r.Duration = Int(f, 6);
                         r.Challenge = Str(f, 7);
+                        r.Record = Str(f, 8) == "1";
                         break;
                     case "S":
                         r.Sides.Add(new ArenaResultSide
@@ -237,6 +247,15 @@ namespace NpcValheim.Arena
             }
             return r;
         }
+    }
+
+    /// <summary>One of a challenge's best times.</summary>
+    internal sealed class ArenaBestRow
+    {
+        public string Challenge;
+        public int Place;
+        public float Seconds;
+        public string Names;
     }
 
     internal sealed class ArenaLadderRow

@@ -42,6 +42,9 @@ namespace NpcValheim.Persistence
         /// the server's settings: config/NpcValheim/arena-bestiario.json.</summary>
         public static string BestiaryFile => Path.Combine(Paths.ConfigPath, "NpcValheim", "arena-bestiario.json");
 
+        /// <summary>Every arena and challenge of the server (ArenaLayout).</summary>
+        public static string ArenaLayoutFile => Path.Combine(Paths.ConfigPath, "NpcValheim", "arena-locais.json");
+
         public static string DatabaseDirectory
         {
             get

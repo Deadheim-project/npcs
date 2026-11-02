@@ -19,6 +19,8 @@ namespace NpcValheim.UI
         private static ArenaHud _instance;
         private GameObject _canvas;
         private TextMeshProUGUI _line;
+        private GameObject _spectatePanel;
+        private TextMeshProUGUI _spectate;
         private float _nextRefresh;
 
         internal static void EnsureCreated()
@@ -55,8 +57,11 @@ namespace NpcValheim.UI
                 return;
             }
 
-            if (ArenaConfig.PanelKey != null && Input.GetKeyDown(ArenaConfig.PanelKey.Value) && !UiInputBlocker.IsTyping)
+            if (ArenaConfig.PanelKey != null && ArenaConfig.PanelKey.Value != KeyCode.None &&
+                Input.GetKeyDown(ArenaConfig.PanelKey.Value) && !UiInputBlocker.IsTyping)
                 TogglePanel();
+
+            ArenaSpectate.Update();
 
             if (_canvas == null) Build();
             if (_canvas == null) return;
@@ -67,7 +72,10 @@ namespace NpcValheim.UI
                 _nextRefresh = Time.unscaledTime + 0.25f;
                 string text = Text();
                 _line.text = text ?? "";
-                hud &= !string.IsNullOrEmpty(text);
+                string watching = SpectateText();
+                _spectate.text = watching ?? "";
+                if (_spectatePanel.activeSelf != (watching != null)) _spectatePanel.SetActive(watching != null);
+                hud &= !string.IsNullOrEmpty(text) || watching != null;
                 if (_canvas.activeSelf != hud) _canvas.SetActive(hud);
             }
             else if (!hud && _canvas.activeSelf)
@@ -79,19 +87,19 @@ namespace NpcValheim.UI
         private static string Text()
         {
             var s = ArenaClient.Snapshot;
-            var key = ArenaConfig.PanelKey?.Value.ToString() ?? "H";
+            var key = ArenaConfig.PanelHint;
             var match = s.Match;
             if (match != null)
             {
                 int left = ArenaClient.SecondsLeft();
-                string clock = $"{left / 60}:{left % 60:00}";
+                string clock = left < 0 ? "sem limite de tempo" : $"{left / 60}:{left % 60:00}";
                 string score = match.Size == ArenaRules.FfaSize && !match.IsChallenge
                     ? $"FFA  {match.GoldAlive}/{match.GoldTotal} de pé"
                     : $"<color=#ffd140>{match.GoldName} {match.GoldAlive}</color>  ×  <color=#73db6b>{match.GreenAlive} {match.GreenName}</color>";
                 switch (match.Phase)
                 {
                     case "invited":
-                        return $"<color=#ffe300>{(match.IsChallenge ? "O desafio está pronto!" : "A arena está pronta!")}</color>  [{key}] Entrar  ·  {left}s";
+                        return $"<color=#ffe300>{(match.IsChallenge ? "O desafio está pronto!" : "A arena está pronta!")}</color>  {key} Entrar  ·  {left}s";
                     case "prep":
                         return $"Preparação  ·  os portões abrem em {clock}";
                     case "live":
@@ -99,7 +107,7 @@ namespace NpcValheim.UI
                     default:
                         string outcome = match.Winner == ArenaSide.None ? match.IsChallenge ? "Desafio falhou" : "Empate"
                             : match.Winner == match.Side ? "<color=#73db6b>Vitória!</color>" : "<color=#ee6b57>Derrota</color>";
-                        return $"{outcome}  ·  placar em [{key}]  ·  volta em {clock}";
+                        return $"{outcome}  ·  placar em {key}  ·  volta em {clock}";
                 }
             }
 
@@ -113,8 +121,24 @@ namespace NpcValheim.UI
             }
 
             if (s.SignRequests.Count > 0 || s.Invite != null)
-                return $"Arena: pedido aguardando resposta  [{key}]";
+                return $"Arena: pedido aguardando resposta  {key}";
             return null;
+        }
+
+        /// <summary>The panel of someone knocked out and watching (ArenaSpectate), or null.</summary>
+        private static string SpectateText()
+        {
+            if (!ArenaSpectate.Active) return null;
+            var match = ArenaClient.Snapshot.Match;
+            string by = ArenaSpectate.By.Length > 0 ? $" por {ArenaSpectate.By}" : "";
+            string standing = match == null ? ""
+                : match.IsChallenge ? $"\nDe pé: {match.GoldAlive} de {match.GoldTotal} do seu grupo contra {match.GreenName}"
+                : match.Size == ArenaRules.FfaSize ? $"\nDe pé: {match.GoldAlive} de {match.GoldTotal}"
+                : $"\nDe pé: <color=#ffd140>{match.GoldName} {match.GoldAlive}</color>  ×  <color=#73db6b>{match.GreenAlive} {match.GreenName}</color>";
+            string leave = ArenaSpectate.LeaveAsked ? "Voltando..." : $"[{ArenaSpectate.LeaveKey}] Sair agora";
+            return $"<size=26><color=#ee6b57>VOCÊ FOI DERROTADO</color></size>{by}\n" +
+                   "Assistindo à partida com a câmera livre: WASD e mouse, Espaço sobe, Ctrl desce\n" +
+                   $"Quando a partida acabar, você volta para onde estava.{standing}\n{leave}";
         }
 
         private void Build()
@@ -136,6 +160,19 @@ namespace NpcValheim.UI
             _line = ValheimUi.CreateLabel(root, "", 19, ValheimUi.Beige, TextAlignmentOptions.Center, display: true);
             ValheimUi.Stretch((RectTransform)_line.transform, 10f, 2f);
             _line.textWrappingMode = TextWrappingModes.NoWrap;
+
+            var panel = ValheimUi.CreateRect("Spectate", _canvas.transform);
+            panel.anchorMin = panel.anchorMax = new Vector2(0.5f, 0.5f);
+            panel.pivot = new Vector2(0.5f, 0.5f);
+            panel.anchoredPosition = new Vector2(0f, 220f);
+            panel.sizeDelta = new Vector2(760f, 150f);
+            var panelBack = panel.gameObject.AddComponent<Image>();
+            panelBack.color = new Color(0f, 0f, 0f, 0.55f);
+            panelBack.raycastTarget = false;
+            _spectate = ValheimUi.CreateLabel(panel, "", 18, ValheimUi.Beige, TextAlignmentOptions.Center, display: true);
+            ValheimUi.Stretch((RectTransform)_spectate.transform, 12f, 8f);
+            _spectatePanel = panel.gameObject;
+            _spectatePanel.SetActive(false);
             _canvas.SetActive(false);
         }
 
@@ -144,6 +181,8 @@ namespace NpcValheim.UI
             if (_canvas != null) Destroy(_canvas);
             _canvas = null;
             _line = null;
+            _spectatePanel = null;
+            _spectate = null;
         }
     }
 }

@@ -63,6 +63,20 @@ namespace NpcValheim.Arena
             return (int)Math.Ceiling(mod);
         }
 
+        /// <summary>
+        /// The PvE rating's change after a challenge: plain Elo (650 divisor, as above) against
+        /// the challenge's difficulty, as if the creature were a player of that rating. Beating a
+        /// challenge above your rating pays more; losing to one far below costs more.
+        /// </summary>
+        internal static int PveRatingMod(int ownRating, int difficulty, bool won, float k)
+        {
+            float chance = ChanceAgainst(ownRating, difficulty);
+            return (int)Math.Ceiling(((won ? 1.0f : 0.0f) - chance) * k);
+        }
+
+        /// <summary>The ladder "size" of the PvE rating (no team size is negative).</summary>
+        internal const int PveLadder = -1;
+
         /// <summary>Ratings stop at zero (ArenaTeam::FinishGame, ModifyPersonalRating).</summary>
         internal static int Apply(int rating, int change) => rating + change < 0 ? 0 : rating + change;
 
@@ -92,6 +106,6 @@ namespace NpcValheim.Arena
         /// no team has a size there, everyone is on their own.</summary>
         internal const int FfaSize = 0;
 
-        internal static string BracketName(int size) => size == FfaSize ? "FFA" : $"{size}v{size}";
+        internal static string BracketName(int size) => size == FfaSize ? "FFA" : size == PveLadder ? "PvE" : $"{size}v{size}";
     }
 }

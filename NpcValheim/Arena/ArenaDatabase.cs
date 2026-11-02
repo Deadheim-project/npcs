@@ -62,6 +62,14 @@ namespace NpcValheim.Arena
         public float ReturnZ { get; set; }
         public float ReturnYaw { get; set; }
 
+        /// <summary>The PvE rating: the challenges', apart from every PvP rating. Meaningful
+        /// once <see cref="PveGames"/> is above 0; before that the start rating counts.</summary>
+        public int PveRating { get; set; }
+        public int PveGames { get; set; }
+        public int PveWins { get; set; }
+
+        public int PveRatingOf(int start) => PveGames > 0 ? PveRating : start;
+
         public int MmrOf(int size, int start) => Mmr != null && Mmr.TryGetValue(size.ToString(), out int v) ? v : start;
 
         public void SetMmr(int size, int value)
@@ -117,6 +125,23 @@ namespace NpcValheim.Arena
         public long EndedUtcTicks { get; set; }
         public int Winner { get; set; }
         public string Summary { get; set; }
+    }
+
+    /// <summary>One win against a challenge, for its best-times list.</summary>
+    public class ArenaBestTime
+    {
+        public double Seconds { get; set; }
+        public List<long> Players { get; set; } = new List<long>();
+        public string Names { get; set; }
+        public long EndedUtcTicks { get; set; }
+    }
+
+    /// <summary>The fastest wins of one challenge (by its layout id), best first.</summary>
+    public class ArenaChallengeBestRecord
+    {
+        [BsonId]
+        public string ChallengeId { get; set; }
+        public List<ArenaBestTime> Top { get; set; } = new List<ArenaBestTime>();
     }
 
     /// <summary>
@@ -203,6 +228,12 @@ namespace NpcValheim.Arena
 
         internal void SaveMatch(ArenaMatchRecord match) =>
             _file.Write(db => db.GetCollection<ArenaMatchRecord>("matches").Upsert(match));
+
+        internal List<ArenaChallengeBestRecord> LoadBestTimes() =>
+            _file.Read(db => db.GetCollection<ArenaChallengeBestRecord>("challengeBest").FindAll().ToList());
+
+        internal void SaveBestTimes(ArenaChallengeBestRecord record) =>
+            _file.Write(db => db.GetCollection<ArenaChallengeBestRecord>("challengeBest").Upsert(record));
 
         /// <summary>
         /// Teams, players and weekly state written in one transaction. The weekly payout

@@ -130,7 +130,11 @@ namespace NpcValheim.Arena
     /// </summary>
     internal sealed class ArenaChallengeDef
     {
+        /// <summary>The layout's id: what the best times are kept under. Empty in the checks' hand-made ones.</summary>
+        public string Id = "";
         public string Name;
+        /// <summary>The challenge's rating, against which the group's PvE rating moves.</summary>
+        public int Difficulty = ArenaLayout.DefaultDifficulty;
         /// <summary>What spawns: the creature of the game, or the base of the Bestiário's one.</summary>
         public string Prefab;
         /// <summary>"bestiario:id" in the cfg: the creature of the Bestiário, whose own level and
@@ -140,8 +144,7 @@ namespace NpcValheim.Arena
         public int Level = 1;
         /// <summary>On top of what the level already gives.</summary>
         public float HealthMultiplier = 1f;
-        /// <summary>The arena it is fought in ([Arena - Desafio N] Arena); null = any arena
-        /// that takes challenges.</summary>
+        /// <summary>The arena it is fought in; null = any arena that takes challenges.</summary>
         public string Map;
         public readonly List<KeyValuePair<string, int>> Rewards = new List<KeyValuePair<string, int>>();
     }
@@ -156,6 +159,11 @@ namespace NpcValheim.Arena
         /// least <see cref="Bracket"/> players; 0 = no requirement.</summary>
         public int Rating;
         public int Bracket;
+        /// <summary>Item level (quality) of the weapon or armour handed over; 1 = base. The
+        /// delivery caps it at what the item allows.</summary>
+        public int Quality = 1;
+        /// <summary>PvE rating (the challenges') the buyer must hold; 0 = no requirement.</summary>
+        public int PveRating;
 
         /// <summary>prefab=Deadcoins: the points buy donation currency, credited to the
         /// buyer's Deadcoins balance, not an item sent by mail.</summary>
@@ -208,9 +216,10 @@ namespace NpcValheim.Arena
         /// <summary>How long the queue waits for every member of a group to confirm it.</summary>
         public float GroupConfirmSeconds = 10f;
 
-        // Arena match -- BG_START_DELAY_1M, "47 minutes", TIME_AUTOCLOSE_BATTLEGROUND
+        // Arena match -- BG_START_DELAY_1M, TIME_AUTOCLOSE_BATTLEGROUND. WoW drew at 47 minutes;
+        // here there is no limit unless the cfg sets one (0 = none).
         public float PreparationSeconds = 60f;
-        public float TimeLimitSeconds = 47f * 60f;
+        public float TimeLimitSeconds = 0f;
         public float LeaveSeconds = 120f;
         public float GateRadius = 6f;
         public List<ArenaMapDef> Maps = new List<ArenaMapDef>();
@@ -245,9 +254,13 @@ namespace NpcValheim.Arena
         // Challenge: a group against one creature, no rating.
         public bool ChallengeEnabled = true;
         public int ChallengeMaxPlayers = 3;
-        public float ChallengeTimeLimitSeconds = 10f * 60f;
+        /// <summary>0 = no limit: the challenge ends when the creature or the whole group falls.</summary>
+        public float ChallengeTimeLimitSeconds = 0f;
         /// <summary>After a win, how long before the same player is paid by that challenge again.</summary>
         public float ChallengeCooldownSeconds = 60f * 60f;
+        /// <summary>PvE rating a player starts with, and the Elo factor of a challenge against it.</summary>
+        public int ChallengeStartRating = 1000;
+        public float ChallengeRatingK = 32f;
         /// <summary>Arenas a challenge may use; empty = any free one.</summary>
         public List<string> ChallengeMaps = new List<string>();
         public List<ArenaChallengeDef> Challenges = new List<ArenaChallengeDef>();
@@ -255,7 +268,8 @@ namespace NpcValheim.Arena
         public ArenaChallengeDef ChallengeNamed(string name) =>
             Challenges.FirstOrDefault(c => string.Equals(c.Name, (name ?? "").Trim(), StringComparison.OrdinalIgnoreCase));
 
-        public float TimeLimitOf(bool challenge) => challenge ? ChallengeTimeLimitSeconds : TimeLimitSeconds;
+        /// <summary>Seconds a match may last, counted from its creation; 0 = no limit.</summary>
+        public float TimeLimitOf(bool challenge) => Mathf.Max(0f, challenge ? ChallengeTimeLimitSeconds : TimeLimitSeconds);
 
         /// <summary>Whether the arena may host a PvP match of this size (its usage).</summary>
         public bool MapServes(ArenaMapDef map, int size) => map.ServesPvp(size);
@@ -639,7 +653,9 @@ namespace NpcValheim.Arena
         /// <summary>One Intendente item as an Items entry, the way <see cref="ParseOffers"/> reads it back.</summary>
         internal static string FormatOffer(ArenaOffer o) =>
             string.Format(CultureInfo.InvariantCulture, "prefab={0};amount={1};points={2};rating={3}", o.Prefab, o.Amount, o.Points, o.Rating) +
-            (o.Bracket > 0 ? ";bracket=" + o.Bracket.ToString(CultureInfo.InvariantCulture) : "");
+            (o.Bracket > 0 ? ";bracket=" + o.Bracket.ToString(CultureInfo.InvariantCulture) : "") +
+            (o.Quality > 1 ? ";quality=" + o.Quality.ToString(CultureInfo.InvariantCulture) : "") +
+            (o.PveRating > 0 ? ";pve=" + o.PveRating.ToString(CultureInfo.InvariantCulture) : "");
 
         private static string OfferKey(string entry) => CfgList.Field(entry, "prefab");
 
@@ -723,7 +739,7 @@ namespace NpcValheim.Arena
                 if (text.Length == 0) continue;
 
                 string prefab = null;
-                int amount = 1, points = -1, rating = 0, bracket = 0;
+                int amount = 1, points = -1, rating = 0, bracket = 0, quality = 1, pve = 0;
                 bool bad = false;
                 foreach (var field in text.Split(';'))
                 {
@@ -740,6 +756,8 @@ namespace NpcValheim.Arena
                         case "points": if (numeric) points = number; else bad = true; break;
                         case "rating": if (numeric) rating = number; else bad = true; break;
                         case "bracket": if (numeric) bracket = number; else bad = true; break;
+                        case "quality": if (numeric) quality = number; else bad = true; break;
+                        case "pve": if (numeric) pve = number; else bad = true; break;
                     }
                 }
 
@@ -748,7 +766,12 @@ namespace NpcValheim.Arena
                     problems?.Add($"Items: entrada malformada \"{text}\"");
                     continue;
                 }
-                if (amount <= 0 || points <= 0 || rating < 0 || bracket < 0)
+                if (quality < 1 || quality > 10)
+                {
+                    problems?.Add($"Items: {prefab}: nível de 1 a 10");
+                    continue;
+                }
+                if (amount <= 0 || points <= 0 || rating < 0 || bracket < 0 || pve < 0)
                 {
                     problems?.Add($"Items: {prefab}: quantidade e pontos precisam ser positivos");
                     continue;
@@ -759,7 +782,7 @@ namespace NpcValheim.Arena
                     problems?.Add($"Items: {prefab} aparece mais de uma vez; vale a primeira");
                     continue;
                 }
-                offers.Add(new ArenaOffer { Prefab = prefab, Amount = amount, Points = points, Rating = rating, Bracket = bracket });
+                offers.Add(new ArenaOffer { Prefab = prefab, Amount = amount, Points = points, Rating = rating, Bracket = bracket, Quality = quality, PveRating = pve });
             }
             return offers;
         }

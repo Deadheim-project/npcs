@@ -29,6 +29,8 @@ namespace NpcValheim.UI
     {
         private const float SideWidth = 200f;
         private const float LabelWidth = 150f;
+        /// <summary>Metres the area's radius moves per click of the &lt; &gt; buttons.</summary>
+        private const float ZoneStep = 10f;
         private static readonly CultureInfo Inv = CultureInfo.InvariantCulture;
 
         private enum Sub { Arenas, Challenges, Points, Shop }
@@ -42,19 +44,20 @@ namespace NpcValheim.UI
         {
             ["gold"] = ("Início do time Ouro", "Fique onde o time Ouro começa, olhando para o centro da arena, e clique Marcar aqui. Os jogadores nascem aí olhando para o mesmo lado."),
             ["green"] = ("Início do time Verde", "O outro lado da arena. No desafio, a criatura aparece aqui quando os portões abrem. No Todos contra todos, metade nasce no Ouro e metade aqui."),
-            ["spectator"] = ("Espectador", "Opcional: para onde vai quem foi derrotado, para assistir ao resto. Sem ele, o derrotado fica no próprio início."),
+            ["spectator"] = ("Espectador", "Opcional, quase nunca usado: quem é derrotado vai para a borda da área de PvP e assiste com a câmera livre. Este ponto só vale numa arena sem área."),
             ["types"] = ("Para que serve", "Cada fila só usa arenas marcadas para ela. Desafio contra criatura = os desafios PvE do Mestre da Arena."),
             ["zone"] = ("Área de PvP", "Dentro dela o PvP vale sempre e ninguém perde skill; quem sai durante a partida perde por fuga. Ao salvar, o servidor cria a área sozinho se a arena estiver fora de uma."),
-            ["save"] = ("Salvar", "Grava no servidor (cfg [Arena - Local N] ou [Arena - Desafio N]) e manda para todos."),
+            ["save"] = ("Salvar", "Grava no servidor (config/NpcValheim/arena-locais.json) e manda para todos."),
             ["goto"] = ("Ir até a arena", "Teleporta você para o início Ouro desta arena."),
-            ["remove"] = ("Remover", "Apaga o bloco da cfg. Uma partida em andamento nessa arena termina normalmente."),
+            ["remove"] = ("Remover", "Apaga do servidor. Uma partida em andamento termina normalmente."),
+            ["difficulty"] = ("Dificuldade", "O rating do desafio para o rating PvE: vencer um desafio de dificuldade acima do seu rating dá mais pontos, perder para um bem abaixo tira mais. 1500 = médio."),
             ["challengeArena"] = ("Arena do desafio", "Qualquer uma = a primeira arena livre marcada para Desafio contra criatura. Escolha uma para o desafio acontecer sempre nela."),
             ["creature"] = ("Criatura", "Do jogo: uma criatura comum, com nível e vida daqui. Bestiário: uma criatura montada na aba Bestiário do Painel de Admin, com nível, vida, ataques e habilidades de lá."),
             ["level"] = ("Força", "Nível do jogo: 1 = sem estrela, 2 = uma, 3 = duas; acima disso a vida e o dano sobem mais."),
             ["health"] = ("Vida x", "Multiplica a vida por cima do nível (2 = o dobro)."),
             ["reward"] = ("Recompensa", "Item que cada jogador recebe pela Caixa Postal quando a criatura cai: o nome do item no jogo (Coins = moedas) e a quantidade."),
             ["extras"] = ("Extras", "Mais itens, opcional: item:quantidade separados por vírgula, como TrophyTroll:1,MeadHealthMajor:5."),
-            ["test"] = ("Testar agora", "Chama este desafio para você (e o seu grupo, se for o líder), de qualquer lugar. Salve e ligue antes. Depois abra a Arena [H] e clique Entrar."),
+            ["test"] = ("Testar agora", "Chama este desafio para você (e o seu grupo, se for o líder), de qualquer lugar. Salve e ligue antes. Depois abra a Arena (Tab > Arena) e clique Entrar."),
             ["points"] = ("Pontos por partida", "Quanto cada tipo de partida dá a quem termina dentro da arena. Empate paga a derrota."),
             ["cap"] = ("Máximo por dia", "O máximo de pontos que uma pessoa ganha em partidas por dia. 0 = sem máximo."),
             ["grant"] = ("Dar pontos", "Dá (ou tira, com número negativo) pontos de arena a um jogador pelo nome."),
@@ -71,8 +74,9 @@ namespace NpcValheim.UI
         private static int _selArena = -1;
         private static string _seenMaps;
 
+        // Challenges by id: as many as the admin makes, new ones kept here until saved.
         private static readonly List<ChallengeDraft> _challenges = new List<ChallengeDraft>();
-        private static readonly HashSet<int> _dirtyChallenges = new HashSet<int>();
+        private static readonly HashSet<string> _dirtyChallenges = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         private static int _selChallenge;
         private static string _seenChallenges;
 
@@ -86,7 +90,7 @@ namespace NpcValheim.UI
         private readonly List<GameObject> _sideRows = new List<GameObject>();
         private readonly List<(Sub Sub, Button Button)> _subButtons = new List<(Sub, Button)>();
         private readonly List<(Sub Sub, GameObject Go)> _barButtons = new List<(Sub, GameObject)>();
-        private GameObject _newArena;
+        private GameObject _newArena, _newChallenge;
         private OfferForm _offerForm;
 
         protected override void OnBuild()
@@ -102,6 +106,7 @@ namespace NpcValheim.UI
             footLayout.childControlWidth = true;
             footLayout.childControlHeight = true;
             _newArena = Btn(foot, "+ Nova arena", 0f, NewArena, 14).gameObject;
+            _newChallenge = Btn(foot, "+ Novo desafio", 0f, NewChallenge, 14).gameObject;
 
             CreateList(new Vector2(SideWidth + 10f, 0f), Vector2.zero);
             _area = (RectTransform)List.parent.parent;
@@ -126,7 +131,7 @@ namespace NpcValheim.UI
             _shop = ValheimUi.CreateRect("ShopForm", _pane);
             ValheimUi.Anchor(_shop, new Vector2(0f, 1f), Vector2.one, new Vector2(8f, -126f), new Vector2(-8f, -50f));
             _offerForm = OfferForm.Build(_shop,
-                new[] { ("Qtd", "1", 70f), ("Pontos", "100", 80f), ("Rating", "0", 80f), ("Time", "0", 56f) }, SaveOffer);
+                new[] { ("Qtd", "1", 70f), ("Pontos", "100", 80f), ("Rating", "0", 70f), ("Time", "0", 50f), ("Nível", "1", 50f), ("PvE", "0", 70f) }, SaveOffer);
 
             var bar = ValheimUi.CreateRect("Actions", _pane);
             ValheimUi.Anchor(bar, Vector2.zero, new Vector2(1f, 0f), new Vector2(8f, 6f), new Vector2(-8f, 46f));
@@ -140,6 +145,7 @@ namespace NpcValheim.UI
             Bar(bar, Sub.Arenas, "Remover", 110f, RemoveArena, "remove");
             Bar(bar, Sub.Challenges, "Salvar", 110f, SaveChallenge, "save");
             Bar(bar, Sub.Challenges, "Testar agora", 150f, TestChallenge, "test");
+            Bar(bar, Sub.Challenges, "Remover", 110f, RemoveChallenge, "remove");
             Bar(bar, Sub.Points, "Salvar", 110f, SavePoints, "save");
             Layout();
         }
@@ -167,6 +173,7 @@ namespace NpcValheim.UI
             bool side = _sub == Sub.Arenas || _sub == Sub.Challenges;
             _side.gameObject.SetActive(side);
             _newArena.SetActive(_sub == Sub.Arenas);
+            _newChallenge.SetActive(_sub == Sub.Challenges);
             ValheimUi.Anchor(_pane, Vector2.zero, Vector2.one, new Vector2(side ? SideWidth + 10f : 0f, 0f), Vector2.zero);
             _shop.gameObject.SetActive(_sub == Sub.Shop);
             bool bar = _sub != Sub.Shop;
@@ -180,18 +187,18 @@ namespace NpcValheim.UI
             }
         }
 
-        protected override void Poll() => ArenaBestiaryNet.AskIfMissing();
+        protected override void Poll()
+        {
+            ArenaBestiaryNet.AskIfMissing();
+            ArenaLayoutNet.AskIfMissing();
+        }
 
         // The cfg and the local choices only: the arena state changes every few seconds during a
         // match, and a redraw on it would throw away what is being typed.
         protected override string Signature() =>
-            $"{_sub}:{_selArena}:{_selChallenge}:{_arenas.Count}:" + ArenaConfig.MapsText() + ":" + ArenaDeadheim.ZonesText + ":" +
-            ChallengesText() + ":" + ArenaConfig.MatchPoints?.Value + ":" + ArenaConfig.MatchPointsDailyCap?.Value + ":" +
+            $"{_sub}:{_selArena}:{_selChallenge}:{_arenas.Count}:{_challenges.Count}:" + ArenaConfig.MapsText() + ":" + ArenaDeadheim.ZonesText + ":" +
+            ArenaConfig.MatchPoints?.Value + ":" + ArenaConfig.MatchPointsDailyCap?.Value + ":" +
             ArenaConfig.VendorItems?.Value + ":" + ArenaBestiary.Revision;
-
-        private static string ChallengesText() =>
-            string.Join("|", ArenaConfig.ChallengeSlots.Select(s => string.Join(";", s.On.Value, s.Name.Value, s.Creature.Value,
-                s.Level.Value, s.Health.Value.ToString(Inv), s.RewardItem.Value, s.RewardAmount.Value, s.ExtraRewards.Value, s.Map.Value)));
 
         // ------------------------------------------------------------------ the copies
 
@@ -239,18 +246,35 @@ namespace NpcValheim.UI
                 _selArena = Mathf.Clamp(_selArena, -1, _arenas.Count - 1);
             }
 
-            string challenges = ChallengesText();
+            // The server's list, in its order, with what is being edited here on top: a
+            // challenge changed here stays as it is until the server has it the same way, and a
+            // new one not saved yet stays at the end.
+            string challenges = ArenaConfig.MapsText();
             if (challenges != _seenChallenges)
             {
                 _seenChallenges = challenges;
-                for (int i = 0; i < ArenaConfig.ChallengeSlots.Count; i++)
+                string selectedId = CurrentChallenge?.Id;
+                var merged = new List<ChallengeDraft>();
+                foreach (var s in ArenaLayout.Challenges)
                 {
-                    var server = ArenaConfig.ChallengeDraft(i);
-                    if (i >= _challenges.Count) { _challenges.Add(server); continue; }
-                    if (_dirtyChallenges.Contains(i) && !SameChallenge(_challenges[i], server)) continue;
-                    _challenges[i] = server;
-                    _dirtyChallenges.Remove(i);
+                    var server = ArenaConfig.ChallengeDraft(s);
+                    var mine = _challenges.FirstOrDefault(c => Eq(c.Id, server.Id));
+                    if (mine != null && _dirtyChallenges.Contains(mine.Id) && !SameChallenge(mine, server))
+                    {
+                        mine.Saved = true;
+                        merged.Add(mine);
+                        continue;
+                    }
+                    _dirtyChallenges.Remove(server.Id);
+                    merged.Add(server);
                 }
+                foreach (var mine in _challenges.Where(c => !c.Saved && _dirtyChallenges.Contains(c.Id)))
+                    if (!merged.Any(m => Eq(m.Id, mine.Id))) merged.Add(mine);
+                _dirtyChallenges.IntersectWith(merged.Select(m => m.Id));
+                _challenges.Clear();
+                _challenges.AddRange(merged);
+                int at = selectedId != null ? _challenges.FindIndex(c => Eq(c.Id, selectedId)) : -1;
+                _selChallenge = Mathf.Clamp(at >= 0 ? at : _selChallenge, 0, Math.Max(0, _challenges.Count - 1));
             }
 
             string points = ArenaConfig.MatchPoints?.Value + ":" + ArenaConfig.MatchPointsDailyCap?.Value;
@@ -272,7 +296,7 @@ namespace NpcValheim.UI
         private static bool SameChallenge(ChallengeDraft a, ChallengeDraft b) =>
             a.On == b.On && Eq(a.Name.Trim(), b.Name.Trim()) && Eq(a.Creature, b.Creature) && a.Level == b.Level &&
             Mathf.Approximately(a.Health, b.Health) && Eq(a.Reward.Trim(), b.Reward.Trim()) && a.Amount == b.Amount &&
-            Eq(a.Extras.Trim(), b.Extras.Trim()) && Eq(a.Map.Trim(), b.Map.Trim());
+            Eq(a.Extras.Trim(), b.Extras.Trim()) && Eq(a.Map.Trim(), b.Map.Trim()) && a.Difficulty == b.Difficulty;
 
         private ArenaDraft CurrentArena => _selArena >= 0 && _selArena < _arenas.Count ? _arenas[_selArena] : null;
         private ChallengeDraft CurrentChallenge => _selChallenge >= 0 && _selChallenge < _challenges.Count ? _challenges[_selChallenge] : null;
@@ -450,7 +474,45 @@ namespace NpcValheim.UI
 
         private void TouchChallenge()
         {
-            _dirtyChallenges.Add(_selChallenge);
+            var c = CurrentChallenge;
+            if (c != null) _dirtyChallenges.Add(c.Id);
+        }
+
+        /// <summary>A new challenge, here until it is saved. The id is made here and the server
+        /// keeps it, so the best times and the PvE ladder follow the challenge through renames.</summary>
+        private void NewChallenge()
+        {
+            var taken = _challenges.Select(c => c.Id).Concat(ArenaLayout.Challenges.Select(c => c.Id)).ToList();
+            int n = 1;
+            while (_challenges.Any(c => Eq(c.Name, "Novo desafio " + n))) n++;
+            string name = "Novo desafio " + n;
+            var c = new ChallengeDraft
+            {
+                Id = ArenaLayout.NewId(name, taken), Saved = false, On = true, Name = name,
+                Creature = ArenaSettingsParser.ChallengeCreatures.Length > 0 ? ArenaSettingsParser.ChallengeCreatures[0] : "",
+                Level = 1, Health = 1f, Reward = "Coins", Amount = 10, Difficulty = ArenaLayout.DefaultDifficulty,
+            };
+            _challenges.Add(c);
+            _dirtyChallenges.Add(c.Id);
+            _selChallenge = _challenges.Count - 1;
+            Say("Desafio novo: escolha a criatura e a recompensa e clique Salvar.");
+            Invalidate();
+        }
+
+        private void RemoveChallenge()
+        {
+            var c = CurrentChallenge;
+            if (c == null) return;
+            if (!c.Saved)
+            {
+                _challenges.Remove(c);
+                _dirtyChallenges.Remove(c.Id);
+                _selChallenge = Mathf.Clamp(_selChallenge, 0, Math.Max(0, _challenges.Count - 1));
+                Invalidate();
+                return;
+            }
+            Ask(ArenaWire.ActAdminChallengeRemove, c.Id);
+            Say($"Removendo o desafio \"{c.Name.Trim()}\"...");
         }
 
         private bool FromBestiary(ChallengeDraft c) => ArenaBestiary.BeastIdOf(c.Creature) != null;
@@ -496,9 +558,9 @@ namespace NpcValheim.UI
         {
             var c = CurrentChallenge;
             if (c == null) return;
-            Ask(ArenaWire.ActAdminChallengeSet, string.Join("\n", (c.Slot + 1).ToString(Inv), c.On ? "1" : "0", c.Name.Trim(), c.Creature,
+            Ask(ArenaWire.ActAdminChallengeSet, string.Join("\n", c.Id, c.On ? "1" : "0", c.Name.Trim(), c.Creature,
                 c.Level.ToString(Inv), c.Health.ToString("0.##", Inv), c.Reward.Trim(), c.Amount.ToString(Inv),
-                (c.Extras ?? "").Replace("\n", " ").Trim(), c.Map.Trim()));
+                (c.Extras ?? "").Replace("\n", " ").Trim(), c.Map.Trim(), c.Difficulty.ToString(Inv)));
             Say($"Salvando o desafio \"{c.Name.Trim()}\"...");
         }
 
@@ -506,7 +568,7 @@ namespace NpcValheim.UI
         {
             var c = CurrentChallenge;
             if (c == null) return;
-            if (_dirtyChallenges.Contains(c.Slot) || !c.On)
+            if (_dirtyChallenges.Contains(c.Id) || !c.On)
             {
                 Say("Salve o desafio ligado antes de testar.");
                 return;
@@ -526,7 +588,7 @@ namespace NpcValheim.UI
             long me = ZDOMan.GetSessionID();
             string peers = string.Join(",", group.Where(m => m.Peer != me).Select(m => m.Peer.ToString(Inv)));
             Ask(ArenaWire.ActAdminChallengeTest, $"{def.Name}\n{peers}");
-            Say("Chamando o desafio... quando chegar o convite, abra a Arena [H] e clique Entrar.");
+            Say("Chamando o desafio... quando chegar o convite, abra a Arena (Tab > Arena) e clique Entrar.");
         }
 
         /// <summary>Why a challenge's creature cannot be used, or null.</summary>
@@ -594,7 +656,9 @@ namespace NpcValheim.UI
                 ? ArenaSettingsParser.DeadcoinsPrefab
                 : OfferForm.Resolve(_offerForm.Item.text);
             if (prefab == null) { Say("Escolha um item que o jogo conhece (ou escreva Deadcoins)."); return; }
-            int? amount = _offerForm.Number(0), points = _offerForm.Number(1), rating = _offerForm.Number(2), bracket = _offerForm.Number(3);
+            int? amount = _offerForm.Number(0), points = _offerForm.Number(1), rating = _offerForm.Number(2), bracket = _offerForm.Number(3),
+                quality = _offerForm.Number(4), pve = _offerForm.Number(5);
+            if (quality == 0) quality = 1; // empty = a plain item
             if (amount == null || amount <= 0 || points == null || points <= 0)
             {
                 Say("Quantidade e pontos precisam ser números maiores que zero.");
@@ -605,7 +669,21 @@ namespace NpcValheim.UI
                 Say("Rating a partir de 0; Time de 0 a 10.");
                 return;
             }
-            var offer = new ArenaOffer { Prefab = prefab, Amount = amount.Value, Points = points.Value, Rating = rating.Value, Bracket = bracket.Value };
+            if (quality == null || quality < 1 || quality > 10)
+            {
+                Say("Nível de 1 a 10 (1 = item comum).");
+                return;
+            }
+            if (pve == null || pve < 0 || pve > ArenaLayout.MaxDifficulty)
+            {
+                Say($"Rating PvE de 0 a {ArenaLayout.MaxDifficulty} (0 = sem requisito).");
+                return;
+            }
+            var offer = new ArenaOffer
+            {
+                Prefab = prefab, Amount = amount.Value, Points = points.Value, Rating = rating.Value, Bracket = bracket.Value,
+                Quality = quality.Value, PveRating = pve.Value,
+            };
             Ask(ArenaWire.ActAdminOfferSet, ArenaSettingsParser.FormatOffer(offer));
             Say($"Salvando {offer.Amount}x {ArenaConfig.OfferName(prefab)}...");
         }
@@ -636,7 +714,7 @@ namespace NpcValheim.UI
             {
                 var (saved, ready) = SavedArenas();
                 bool overall = ArenaHealth.Overall(saved, ready, ArenaConfig.Current.ActiveBrackets, ArenaConfig.Current.FfaEnabled,
-                    ArenaConfig.Current.ChallengeEnabled && ArenaConfig.ChallengeSlots.Any(s => s.On.Value)).All(c => c.Ok);
+                    ArenaConfig.Current.ChallengeEnabled && ArenaLayout.Challenges.Any(s => s.On)).All(c => c.Ok);
                 SideButton(Mark(overall) + " Visão geral", _selArena < 0, () => { _selArena = -1; Invalidate(); });
                 var zones = Zones();
                 for (int i = 0; i < _arenas.Count; i++)
@@ -658,7 +736,7 @@ namespace NpcValheim.UI
                     bool ok = ArenaHealth.ForChallenge(c, saved, ready, CreatureProblem, ItemKnown).All(x => x.Ok);
                     string name = c.Name.Trim().Length > 0 ? c.Name.Trim() : "Desafio " + (i + 1);
                     SideButton((c.On ? Mark(ok) : "<color=#9a9188>-</color>") + " " + name +
-                               (_dirtyChallenges.Contains(i) ? " <color=#ffe300>*</color>" : ""),
+                               (_dirtyChallenges.Contains(c.Id) ? " <color=#ffe300>*</color>" : ""),
                         i == _selChallenge, () => { _selChallenge = index; Invalidate(); });
                 }
             }
@@ -743,7 +821,7 @@ namespace NpcValheim.UI
             Heading("O que falta para funcionar");
             var (saved, ready) = SavedArenas();
             Checks(ArenaHealth.Overall(saved, ready, ArenaConfig.Current.ActiveBrackets, ArenaConfig.Current.FfaEnabled,
-                ArenaConfig.Current.ChallengeEnabled && ArenaConfig.ChallengeSlots.Any(s => s.On.Value)), null, null);
+                ArenaConfig.Current.ChallengeEnabled && ArenaLayout.Challenges.Any(s => s.On)), null, null);
             if (!ArenaConfig.Current.Enabled)
                 Line("A arena está desligada neste servidor ([Arena] Enabled na cfg).", 14, ValheimUi.Danger, 26f);
             foreach (var problem in ArenaConfig.Problems().Where(p => !p.StartsWith("Arenas:", StringComparison.Ordinal)))
@@ -786,14 +864,33 @@ namespace NpcValheim.UI
                 var zone = d.Gold != null && d.Green != null ? ArenaSettingsParser.ZoneHolding(zones, d.Gold.Value, d.Green.Value) : null;
                 Line(Mark(zone != null) + "  4. Área de PvP", 16, ValheimUi.Orange, 28f);
                 var zr = ButtonRow();
-                Cell(zr, zone != null ? $"<color=#73db6b>dentro de \"{zone.Name}\"</color> ({zone.Radius:0} m de raio)"
-                    : "Criada sozinha em volta da arena quando você salvar.", 13, ValheimUi.Muted);
-                if (d.SavedName.Length > 0 && d.Gold != null && d.Green != null)
-                    Tip(Btn(zr, zone != null ? "Ajustar área" : "Criar área em volta", 170f, () =>
+                bool saved = d.SavedName.Length > 0 && !_dirtyArenas.Contains(d) && d.Gold != null && d.Green != null;
+                if (zone != null && saved)
+                {
+                    Cell(zr, $"<color=#73db6b>dentro de \"{zone.Name}\"</color>   Raio", 14, ValheimUi.Beige, 230f);
+                    string name = d.SavedName;
+                    Step(zr, $"{zone.Radius:0} m", 90f, dir =>
                     {
-                        Ask(ArenaWire.ActAdminZoneAround, d.SavedName);
-                        Say("Criando a área de PvP em volta da arena...");
+                        float radius = Mathf.Clamp(zone.Radius + dir * ZoneStep, ArenaSettingsParser.MinZoneRadius, ArenaSettingsParser.MaxZoneRadius);
+                        Ask(ArenaWire.ActAdminZoneAround, name + "\n" + radius.ToString(Inv));
+                    });
+                    Tip(Btn(zr, "Ajustar ao tamanho", 170f, () =>
+                    {
+                        Ask(ArenaWire.ActAdminZoneAround, name);
+                        Say("Ajustando a área de PvP ao tamanho da arena...");
                     }, 13), "zone");
+                }
+                else
+                {
+                    Cell(zr, zone != null ? $"<color=#73db6b>dentro de \"{zone.Name}\"</color> ({zone.Radius:0} m de raio) · salve para mudar o raio"
+                        : "Criada sozinha em volta da arena quando você salvar.", 13, ValheimUi.Muted);
+                    if (d.SavedName.Length > 0 && d.Gold != null && d.Green != null && zone == null)
+                        Tip(Btn(zr, "Criar área em volta", 170f, () =>
+                        {
+                            Ask(ArenaWire.ActAdminZoneAround, d.SavedName);
+                            Say("Criando a área de PvP em volta da arena...");
+                        }, 13), "zone");
+                }
             }
 
             var spec = Field("Espectador", "spectator");
@@ -821,7 +918,8 @@ namespace NpcValheim.UI
             var c = CurrentChallenge;
             if (c == null)
             {
-                Line("Os desafios ainda não chegaram do servidor.", 15, ValheimUi.Muted, 30f);
+                Line(ArenaLayout.Loaded ? "Nenhum desafio ainda: clique + Novo desafio." : "Os desafios ainda não chegaram do servidor.",
+                    15, ValheimUi.Muted, 30f);
                 return;
             }
             var (saved, ready) = SavedArenas();
@@ -873,10 +971,20 @@ namespace NpcValheim.UI
             var extras = Field("Extras", "extras");
             Text(extras, c.Extras, 0f, v => { c.Extras = v; TouchChallenge(); });
 
+            var difficulty = Field("Dificuldade", "difficulty");
+            Step(difficulty, c.Difficulty.ToString(Inv), 90f, d =>
+            {
+                c.Difficulty = Mathf.Clamp(c.Difficulty + d * 100, ArenaLayout.MinDifficulty, ArenaLayout.MaxDifficulty);
+                TouchChallenge();
+                Invalidate();
+            });
+            Cell(difficulty, "rating PvE do desafio (1500 = médio)", 13, ValheimUi.Muted);
+
             Gap();
             Heading("O que falta para funcionar");
             Checks(ArenaHealth.ForChallenge(c, saved, ready, CreatureProblem, ItemKnown), null, c);
-            if (_dirtyChallenges.Contains(c.Slot)) Line("Mudanças ainda não salvas: clique Salvar.", 13, ValheimUi.Yellow, 22f);
+            if (_dirtyChallenges.Contains(c.Id))
+                Line(c.Saved ? "Mudanças ainda não salvas: clique Salvar." : "Desafio novo, ainda não salvo: clique Salvar.", 13, ValheimUi.Yellow, 22f);
         }
 
         private void DrawPoints()
@@ -912,8 +1020,9 @@ namespace NpcValheim.UI
 
         private void DrawShop()
         {
-            Line("O que a Loja do Mestre da Arena vende por pontos de arena. Rating = mínimo para comprar (0 = sem requisito); " +
-                 "Time = tamanho mínimo do time em que esse rating vale. Os itens vão pela Caixa Postal.", 13, ValheimUi.Muted, 40f);
+            Line("O que a Loja do Mestre da Arena vende por pontos de arena. Rating = mínimo de PvP para comprar (0 = sem requisito); " +
+                 "Time = tamanho mínimo do time em que esse rating vale. Nível = nível da arma/armadura entregue (vazio ou 1 = comum; limitado ao máximo do item). " +
+                 "PvE = rating PvE mínimo (dos desafios). Os itens vão pela Caixa Postal.", 13, ValheimUi.Muted, 54f);
             var problems = new List<string>();
             var offers = ArenaSettingsParser.ParseOffers(ArenaConfig.VendorItems?.Value, problems);
             Heading($"Itens à venda ({offers.Count})");
@@ -926,13 +1035,13 @@ namespace NpcValheim.UI
                 int max = ArenaConfig.MaxOfferAmount(o.Prefab);
                 string fault = max <= 0 ? "   <color=#ee6b57>não é item do jogo: fora da venda</color>"
                     : o.Amount > max ? $"   <color=#ee6b57>mais que uma entrega ({max}): fora da venda</color>" : "";
-                string requirement = o.Rating > 0
+                string requirement = (o.Rating > 0
                     ? $" · rating {o.Rating}{(o.Bracket > 1 ? $" ({ArenaRules.BracketName(o.Bracket)}+)" : "")}"
-                    : "";
-                Cell(row, $"{o.Amount}x {ArenaConfig.OfferName(o.Prefab)}  <size=12><color=#9a9188>" +
+                    : "") + (o.PveRating > 0 ? $" · rating PvE {o.PveRating}" : "");
+                Cell(row, $"{o.Amount}x {ArenaConfig.OfferName(o.Prefab)}{(o.Quality > 1 ? $" (nível {o.Quality})" : "")}  <size=12><color=#9a9188>" +
                           (o.IsDeadcoins ? "vai para o saldo de Deadcoins" : o.Prefab) + "</color></size>\n" +
                           $"<size=13><color=#9a9188>{o.Points} pontos{requirement}</color>{fault}</size>", 15);
-                Btn(row, "Editar", 90f, () => _offerForm.Load(o.Prefab, o.Amount, o.Points, o.Rating, o.Bracket));
+                Btn(row, "Editar", 90f, () => _offerForm.Load(o.Prefab, o.Amount, o.Points, o.Rating, o.Bracket, o.Quality, o.PveRating));
                 Btn(row, "Remover", 100f, () => Ask(ArenaWire.ActAdminOfferRemove, o.Prefab));
             }
             foreach (var problem in problems) Line(problem, 13, ValheimUi.Danger, 22f);

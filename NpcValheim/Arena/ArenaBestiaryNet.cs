@@ -168,12 +168,14 @@ namespace NpcValheim.Arena
             // A challenge pointing at a creature that is gone would just stop being offered;
             // better to say so now than to find it missing at the Battlemaster.
             string value = ArenaBestiary.ChallengeValue(beast);
-            for (int i = 0; i < ArenaConfig.ChallengeSlots.Count; i++)
-                if (string.Equals(ArenaConfig.ChallengeSlots[i].Creature.Value.Trim(), value, StringComparison.OrdinalIgnoreCase))
-                {
-                    ArenaNet.Send(sender, ArenaWire.Notice, $"{beast.DisplayName} está no Desafio {i + 1}: troque a criatura de lá antes de excluir.");
-                    return;
-                }
+            ArenaLayoutNet.EnsureLoaded();
+            var user = ArenaLayout.Challenges.FirstOrDefault(c =>
+                string.Equals((c.Creature ?? "").Trim(), value, StringComparison.OrdinalIgnoreCase));
+            if (user != null)
+            {
+                ArenaNet.Send(sender, ArenaWire.Notice, $"{beast.DisplayName} está no desafio \"{user.Name}\": troque a criatura de lá antes de excluir.");
+                return;
+            }
 
             var list = ArenaBestiary.All.Where(b => !ReferenceEquals(b, beast)).ToList();
             if (!Write(sender, list)) return;

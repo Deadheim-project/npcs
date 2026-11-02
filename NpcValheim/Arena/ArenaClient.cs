@@ -1,5 +1,7 @@
 using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
+using HarmonyLib;
 using UnityEngine;
 using NpcValheim.Npc;
 using static NpcValheim.Arena.ArenaWire;
@@ -40,6 +42,8 @@ namespace NpcValheim.Arena
         internal static int ResultRevision { get; private set; }
 
         internal static readonly Dictionary<int, List<ArenaLadderRow>> Ladders = new Dictionary<int, List<ArenaLadderRow>>();
+        /// <summary>Each challenge's best times, from the PvE ladder.</summary>
+        internal static readonly List<ArenaBestRow> BestTimes = new List<ArenaBestRow>();
         internal static int LadderRevision { get; private set; }
 
         // The match as this machine plays it.
@@ -89,6 +93,7 @@ namespace NpcValheim.Arena
             FeedLines.Clear();
             LastResult = null;
             Ladders.Clear();
+            BestTimes.Clear();
             ClearMatch();
             _pendingTeleport = false;
         }
@@ -125,6 +130,16 @@ namespace NpcValheim.Arena
             if (kind == BestiaryHash)
             {
                 ArenaBestiaryNet.OnHash(payload);
+                return;
+            }
+            if (kind == Layout)
+            {
+                ArenaLayoutNet.Receive(payload);
+                return;
+            }
+            if (kind == LayoutHash)
+            {
+                ArenaLayoutNet.OnHash(payload);
                 return;
             }
             var player = Player.m_localPlayer;
@@ -180,15 +195,34 @@ namespace NpcValheim.Arena
                     if (MatchId == 0L) break;
                     SetPhase(PhaseOut);
                     Refill(player);
-                    QueueTeleport(new Vector3(Float(f, 0), Float(f, 1), Float(f, 2)), Float(f, 3), isReturn: false);
+                    var spot = new Vector3(Float(f, 0), Float(f, 1), Float(f, 2));
+                    // Knocked out: to the edge, watching with the free camera until the end. A few
+                    // metres inside an arena already loaded: placed there at once. The teleport
+                    // would show its tunnel for at least 8 s (Player.UpdateTeleport, distant).
+                    if (Str(f, 4) == "1")
+                    {
+                        ArenaSpectate.Begin(new Vector3(Float(f, 6), spot.y, Float(f, 7)), Float(f, 8), Str(f, 5));
+                        if (player != null && PlaceAt(player, spot, Float(f, 3))) break;
+                    }
+                    QueueTeleport(spot, Float(f, 3), isReturn: false);
                     break;
 
                 case Return:
-                    ClearMatch();
                     if (f != null && f.Length >= 3)
+                    {
+                        // The match stays on the ZDO, out of the fight, until the teleport has
+                        // left: cleared now, two players still in the arena could hit each
+                        // other, get "in combat", and have Deadheim refuse the way home.
+                        if (MatchId != 0L) SetPhase(PhaseOut);
+                        // The camera back on the character before it leaves.
+                        ArenaSpectate.End();
                         QueueTeleport(new Vector3(Float(f, 0), Float(f, 1), Float(f, 2)), Float(f, 3), isReturn: true);
+                    }
                     else
+                    {
+                        ClearMatch();
                         ArenaNet.Request(ActReturned);
+                    }
                     break;
 
                 case Result:
@@ -227,6 +261,22 @@ namespace NpcValheim.Arena
             var rows = Parse(payload);
             if (rows.Count == 0 || rows[0][0] != "L") return;
             int size = Int(rows[0], 1);
+            if (size == ArenaRules.PveLadder)
+            {
+                // Players by PvE rating, then each challenge's best times.
+                Ladders[size] = rows.Skip(1).Where(r => r[0] == "P").Select(r => new ArenaLadderRow
+                {
+                    Rank = Int(r, 1), Name = Str(r, 2), Rating = Int(r, 3), Games = Int(r, 4), Wins = Int(r, 5),
+                    Mine = Str(r, 6) == "1",
+                }).ToList();
+                BestTimes.Clear();
+                BestTimes.AddRange(rows.Skip(1).Where(r => r[0] == "B").Select(r => new ArenaBestRow
+                {
+                    Challenge = Str(r, 1), Place = Int(r, 2), Seconds = Float(r, 3), Names = Str(r, 4),
+                }));
+                LadderRevision++;
+                return;
+            }
             Ladders[size] = rows.Skip(1).Where(r => r[0] == "T").Select(r => new ArenaLadderRow
             {
                 Rank = Int(r, 1), Name = Str(r, 2), Rating = Int(r, 3), Games = Int(r, 4), Wins = Int(r, 5),
@@ -277,6 +327,7 @@ namespace NpcValheim.Arena
 
         private static void ClearMatch()
         {
+            ArenaSpectate.End();
             MatchId = 0L;
             Side = ArenaSide.None;
             Phase = PhaseNone;
@@ -351,12 +402,19 @@ namespace NpcValheim.Arena
         internal static void Tick()
         {
             var player = Player.m_localPlayer;
-            if (player == null) return;
+            if (player == null)
+            {
+                ArenaProtection.Tick(null);
+                return;
+            }
             if (Time.realtimeSinceStartup < _nextTick) return;
             _nextTick = Time.realtimeSinceStartup + 0.25f;
+            ArenaProtection.Tick(player);
 
             // A respawned or re-created character starts without the keys.
             if (MatchId != 0L) Publish();
+
+            ArenaAllies.Update(MatchId != 0L);
 
             if (_pendingTeleport) TryTeleport(player);
 
@@ -393,6 +451,23 @@ namespace NpcValheim.Arena
             }
         }
 
+        /// <summary>Puts the character on the ground at <paramref name="to"/> right away, as the
+        /// gate does; false (the caller teleports instead) where there is no ground loaded there.</summary>
+        private static bool PlaceAt(Player player, Vector3 to, float yaw)
+        {
+            if (ZoneSystem.instance == null || !ZoneSystem.instance.FindFloor(to + Vector3.up * 30f, out float floor)) return false;
+            var at = new Vector3(to.x, floor + 0.1f, to.z);
+            var rotation = Quaternion.Euler(0f, yaw, 0f);
+            player.transform.SetPositionAndRotation(at, rotation);
+            var body = player.GetComponent<Rigidbody>();
+            if (body != null)
+            {
+                body.position = at;
+                body.linearVelocity = Vector3.zero;
+            }
+            return true;
+        }
+
         private static void QueueTeleport(Vector3 to, float yaw, bool isReturn)
         {
             _pendingTeleport = true;
@@ -416,24 +491,66 @@ namespace NpcValheim.Arena
             {
                 _pendingTeleport = false;
                 Plugin.Log.LogWarning("NpcValheim Arena: teleporte ordenado pelo servidor nao aconteceu em 30 s");
+                if (_teleportIsReturn) ClearMatch();
                 return;
             }
             if (player.IsTeleporting()) return;
 
             var nview = player.GetComponent<ZNetView>();
             if (nview == null || !nview.IsValid()) return;
-            nview.InvokeRPC("RPC_TeleportTo", _teleportTo, Quaternion.Euler(0f, _teleportYaw, 0f), true);
+            TeleportAllowed = true;
+            try { nview.InvokeRPC("RPC_TeleportTo", _teleportTo, Quaternion.Euler(0f, _teleportYaw, 0f), true); }
+            finally { TeleportAllowed = false; }
             if (!player.IsTeleporting()) return;
 
             _pendingTeleport = false;
-            if (_teleportIsReturn) ArenaNet.Request(ActReturned);
+            if (_teleportIsReturn)
+            {
+                ClearMatch();
+                ArenaNet.Request(ActReturned);
+            }
         }
 
-        /// <summary>Seconds left on the snapshot's clock, counted down locally between updates.</summary>
+        /// <summary>True only while the arena's own RPC_TeleportTo runs. The RPC comes from this
+        /// very client, so Deadheim does not take it for an admin's pull and would refuse it in
+        /// combat; <see cref="TeleportPatch"/> tells it this one is the server's order.</summary>
+        internal static bool TeleportAllowed;
+
+        [HarmonyPatch]
+        private static class TeleportPatch
+        {
+            private static FieldInfo _flag;
+
+            private static bool Prepare()
+            {
+                if (_flag != null) return true;
+                foreach (var assembly in System.AppDomain.CurrentDomain.GetAssemblies())
+                {
+                    var type = assembly.GetType("Deadheim.Pvp.PvpPatches", false);
+                    if (type == null) continue;
+                    _flag = type.GetField("_teleportByAdmin", BindingFlags.NonPublic | BindingFlags.Static);
+                    break;
+                }
+                return _flag != null;
+            }
+
+            private static MethodBase TargetMethod() => AccessTools.Method(typeof(Character), "RPC_TeleportTo");
+
+            // Last, so it runs after Deadheim's own prefix has set the flag from the sender.
+            [HarmonyPriority(Priority.Last)]
+            private static void Prefix()
+            {
+                if (TeleportAllowed) _flag.SetValue(null, true);
+            }
+        }
+
+        /// <summary>Seconds left on the snapshot's clock, counted down locally between updates;
+        /// -1 when the match has no time limit.</summary>
         internal static int SecondsLeft()
         {
             var match = Snapshot.Match;
             if (match == null) return 0;
+            if (match.SecondsLeft < 0) return -1;
             return Mathf.Max(0, match.SecondsLeft - Mathf.FloorToInt(Time.realtimeSinceStartup - SnapshotAt));
         }
     }

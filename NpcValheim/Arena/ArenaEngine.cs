@@ -25,7 +25,7 @@ namespace NpcValheim.Arena
         long PlayerOfPeer(long peerId);
         bool TryGetPosition(long playerId, out Vector3 position);
         void Send(long playerId, string kind, string payload);
-        void MailItem(long playerId, string subject, string prefab, int amount);
+        void MailItem(long playerId, string subject, string prefab, int amount, int quality = 1);
         void MailLetter(long playerId, string subject, string body);
         /// <summary>Adds Deadcoins to the balance of someone online; false (and why) when the
         /// account cannot be found or written, and then nothing changed.</summary>
@@ -64,6 +64,12 @@ namespace NpcValheim.Arena
         /// <summary>Rating already settled for this seat (left early, declined): the end of the
         /// match must not charge it a second time.</summary>
         public bool Settled;
+        /// <summary>Knocked out and already sent home ("Sair agora" while watching): the match
+        /// goes on without them, and nothing sends them home a second time.</summary>
+        public bool WentHome;
+        /// <summary>A challenge: the PvE rating before it and the change it made.</summary>
+        public int PveBefore = -1;
+        public int PveChange;
 
         public bool Present => State == SeatState.Entered && !Offline;
     }
@@ -196,6 +202,10 @@ namespace NpcValheim.Arena
         /// <summary>Player and challenge -> when that challenge pays them again. In memory: a
         /// restart forgets it.</summary>
         private readonly Dictionary<string, double> _challengeCooldowns = new Dictionary<string, double>();
+        /// <summary>Challenge id -> its fastest wins, best first.</summary>
+        private readonly Dictionary<string, ArenaChallengeBestRecord> _best =
+            new Dictionary<string, ArenaChallengeBestRecord>(StringComparer.OrdinalIgnoreCase);
+        private const int BestTimesKept = 10;
         private bool _swept;
 
         private long _nextMatchId;
@@ -214,6 +224,8 @@ namespace NpcValheim.Arena
             foreach (var charter in db.LoadCharters()) _charters[charter.Id] = charter;
             _state = db.LoadState();
             _nextMatchId = db.LastMatchId();
+            foreach (var best in db.LoadBestTimes())
+                if (!string.IsNullOrEmpty(best.ChallengeId)) _best[best.ChallengeId] = best;
             _host.Log($"Arena: {_teams.Count} time(s), {_players.Count} jogador(es), {_charters.Count} carta(s) carregados de {db.Path}");
         }
 
@@ -229,6 +241,9 @@ namespace NpcValheim.Arena
         internal ArenaCharterRecord Charter(long owner, int size) =>
             _charters.TryGetValue(ArenaCharterRecord.KeyOf(owner, size), out var c) ? c : null;
         internal ArenaStateRecord State => _state;
+
+        internal IReadOnlyList<ArenaBestTime> BestTimes(string challengeId) =>
+            challengeId != null && _best.TryGetValue(challengeId, out var b) ? b.Top : (IReadOnlyList<ArenaBestTime>)new List<ArenaBestTime>();
 
         internal ArenaTeamRecord TeamOf(long playerId, int size) =>
             _teams.Values.FirstOrDefault(t => t.Size == size && t.Member(playerId) != null);
@@ -319,6 +334,7 @@ namespace NpcValheim.Arena
                 case ActLeave: LeaveMatch(playerId, "saiu"); return;
                 case ActKo: KnockedOut(playerId, Long(f, 0)); return;
                 case ActReturned: Returned(playerId); return;
+                case ActLeaveSpectate: GoHomeEarly(playerId); return;
                 case ActVendorBuy:
                     if (!IsDesk(where)) return;
                     VendorBuy(me, Str(f, 0), Int(f, 1));
@@ -449,7 +465,7 @@ namespace NpcValheim.Arena
             var list = RequestsTo(target);
             list.RemoveAll(r => r.Owner == id && r.Size == size);
             list.Add(new SignRequest { Owner = id, Size = size, Expires = _host.Now + InviteLifetime });
-            Say(target, $"{me.Name} pede a sua assinatura na carta do time \"{charter.Name}\" ({ArenaRules.BracketName(size)}). Abra a Arena [H] para assinar.", alert: true);
+            Say(target, $"{me.Name} pede a sua assinatura na carta do time \"{charter.Name}\" ({ArenaRules.BracketName(size)}). Abra a Arena (Tab > Arena) para assinar.", alert: true);
             SendState(target);
             Say(id, $"Pedido de assinatura enviado a {NameOf(target)}.");
         }
@@ -651,7 +667,7 @@ namespace NpcValheim.Arena
             if (refusal != null) { Say(id, refusal, alert: true); return; }
 
             _teamInvites[target] = new TeamInvite { TeamId = team.Id, From = id, FromName = me.Name, Expires = _host.Now + InviteLifetime };
-            Say(target, $"{me.Name} convidou você para o time \"{team.Name}\" ({ArenaRules.BracketName(size)}). Abra a Arena [H] para responder.", alert: true);
+            Say(target, $"{me.Name} convidou você para o time \"{team.Name}\" ({ArenaRules.BracketName(size)}). Abra a Arena (Tab > Arena) para responder.", alert: true);
             SendState(target);
             Say(id, $"Convite enviado a {NameOf(target)}.");
         }
@@ -990,7 +1006,7 @@ namespace NpcValheim.Arena
             _host.Log($"Arena: partida #{match.Id} FFA em {map.Name}: {string.Join(", ", players.Select(p => p.Name))}");
             foreach (var seat in match.Seats)
             {
-                Say(seat.PlayerId, $"O FFA está pronto ({players.Count} jogadores)! Abra a Arena [H] e clique Entrar ({Mathf.RoundToInt(_t.InviteAcceptSeconds)}s).", alert: true);
+                Say(seat.PlayerId, $"O FFA está pronto ({players.Count} jogadores)! Abra a Arena (Tab > Arena) e clique Entrar ({Mathf.RoundToInt(_t.InviteAcceptSeconds)}s).", alert: true);
                 SendState(seat.PlayerId);
             }
         }
@@ -1090,7 +1106,7 @@ namespace NpcValheim.Arena
                       string.Join(", ", match.Seats.Select(s => s.Name)));
             foreach (var seat in match.Seats)
             {
-                Say(seat.PlayerId, $"O desafio \"{def.Name}\" está pronto! Abra a Arena [H] e clique Entrar ({Mathf.RoundToInt(_t.InviteAcceptSeconds)}s).", alert: true);
+                Say(seat.PlayerId, $"O desafio \"{def.Name}\" está pronto! Abra a Arena (Tab > Arena) e clique Entrar ({Mathf.RoundToInt(_t.InviteAcceptSeconds)}s).", alert: true);
                 SendState(seat.PlayerId);
             }
         }
@@ -1326,7 +1342,7 @@ namespace NpcValheim.Arena
                       $"{match.Sides[ArenaSide.Gold].TeamName} x {match.Sides[ArenaSide.Green].TeamName}");
             foreach (var seat in match.Seats)
             {
-                Say(seat.PlayerId, $"A arena está pronta! Abra a Arena [H] e clique Entrar ({Mathf.RoundToInt(_t.InviteAcceptSeconds)}s).", alert: true);
+                Say(seat.PlayerId, $"A arena está pronta! Abra a Arena (Tab > Arena) e clique Entrar ({Mathf.RoundToInt(_t.InviteAcceptSeconds)}s).", alert: true);
                 SendState(seat.PlayerId);
             }
         }
@@ -1502,16 +1518,68 @@ namespace NpcValheim.Arena
                 Feed(match, match.IsChallenge ? $"{seat.Name} foi derrotado por {match.Challenge.Name}." : $"{seat.Name} foi derrotado.");
             }
 
-            var map = MapOf(match);
-            var spot = map.HasSpectator ? map.Spectator : map.SpawnFor(seat.Side);
-            _host.Send(playerId, Move, Record(F(spot.x), F(spot.y), F(spot.z), F(map.YawOf(seat.Side))));
+            // A knockout that ends the match (the last of a side, a challenge's last player)
+            // leaves nothing to watch: the end of the match sends everyone home, this one too.
             CheckWin(match);
+            if (match.Status != MatchStatus.InProgress)
+            {
+                SendMatchState(match);
+                return;
+            }
+
+            // Out of the fight, still in the arena: on its edge, on the side they fell, facing
+            // the middle. The client turns that into a free camera kept inside the arena, and
+            // sends them home with everyone else when the match ends (or earlier, if they ask).
+            var map = MapOf(match);
+            Vector3 center = EdgeCenter(map);
+            float radius = EdgeRadius(map);
+            Vector3 fell = _host.TryGetPosition(playerId, out var p) ? p : map.SpawnFor(seat.Side);
+            Vector3 spot = EdgeSpot(center, radius, fell);
+            float yaw = Mathf.Atan2(center.x - spot.x, center.z - spot.z) * Mathf.Rad2Deg;
+            string by = killer != null && killer.Side != seat.Side ? killer.Name : match.IsChallenge ? match.Challenge.Name : "";
+            _host.Send(playerId, Move, Record(F(spot.x), F(spot.y), F(spot.z), F(yaw), "1", by,
+                F(center.x), F(center.z), F(radius)));
             SendMatchState(match);
+        }
+
+        /// <summary>Metres inside the edge where a knocked-out player is put.</summary>
+        internal const float EdgeInset = 3f;
+
+        internal static Vector3 EdgeCenter(ArenaMapDef map) =>
+            map.Area != null ? new Vector3(map.Area.X, map.Center.y, map.Area.Z) : map.Center;
+
+        internal static float EdgeRadius(ArenaMapDef map) => map.Area != null ? map.Area.Radius : map.Radius;
+
+        /// <summary>The point on the arena's edge (<see cref="EdgeInset"/> inside it) in the
+        /// direction of <paramref name="fell"/> from the centre; straight north when they fell
+        /// on the centre itself. The height is the centre's: the client finds the ground.</summary>
+        internal static Vector3 EdgeSpot(Vector3 center, float radius, Vector3 fell)
+        {
+            var dir = new Vector3(fell.x - center.x, 0f, fell.z - center.z);
+            if (dir.sqrMagnitude < 0.01f) dir = Vector3.forward;
+            dir.Normalize();
+            float r = Mathf.Max(1f, radius - EdgeInset);
+            return new Vector3(center.x + dir.x * r, center.y, center.z + dir.z * r);
+        }
+
+        /// <summary>A knocked-out player who does not want to watch the rest: home now, the
+        /// result unchanged (they still count in it as knocked out, not as gone).</summary>
+        private void GoHomeEarly(long playerId)
+        {
+            var match = MatchOf(playerId);
+            var seat = match?.Seat(playerId);
+            if (seat == null || seat.State != SeatState.Entered || seat.Alive || seat.WentHome) return;
+            seat.WentHome = true;
+            seat.MovedAt = _host.Now;
+            SendReturn(playerId);
+            _host.Log($"Arena: {seat.Name} saiu da partida #{match.Id} depois de derrotado");
         }
 
         private void Returned(long playerId)
         {
-            if (_players.TryGetValue(playerId, out var p) && p.HasReturn && MatchOf(playerId) == null)
+            // Home after the match, or a knocked-out player who left it early.
+            var match = MatchOf(playerId);
+            if (_players.TryGetValue(playerId, out var p) && p.HasReturn && (match == null || match.Seat(playerId)?.WentHome == true))
             {
                 p.HasReturn = false;
                 _db.SavePlayers(new[] { p });
@@ -1527,7 +1595,7 @@ namespace NpcValheim.Arena
         {
             var match = MatchOf(playerId);
             var seat = match?.Seat(playerId);
-            if (seat != null && seat.State == SeatState.Entered)
+            if (seat != null && seat.State == SeatState.Entered && !seat.WentHome)
             {
                 if (match.Status == MatchStatus.WaitJoin)
                 {
@@ -1631,7 +1699,7 @@ namespace NpcValheim.Arena
         /// rating moves. Players still counted in the match but disconnected are charged a loss
         /// even when their side won -- TrinityCore's OfflineMemberLost, kept as it was.
         /// </summary>
-        private void EndMatch(ArenaMatch match, int winner)
+        private void EndMatch(ArenaMatch match, int winner, bool timedOut = false)
         {
             if (match.Status == MatchStatus.WaitLeave || match.Status == MatchStatus.Closed) return;
             match.Status = MatchStatus.WaitLeave;
@@ -1640,19 +1708,21 @@ namespace NpcValheim.Arena
 
             if (match.Rated)
                 SettleRated(match, winner);
+            bool record = match.IsChallenge && SettlePve(match, winner);
             DespawnCreature(match);
 
             foreach (var seat in match.Seats.Where(s => s.State == SeatState.Entered))
                 seat.Alive = seat.Alive && seat.Present;
 
-            string summary = BuildResult(match);
+            string summary = BuildResult(match, record);
             foreach (var seat in match.Seats.Where(s => s.State == SeatState.Entered || s.State == SeatState.Left))
             {
                 _host.Send(seat.PlayerId, Result, summary);
                 if (seat.State == SeatState.Entered)
                     Say(seat.PlayerId, winner == ArenaSide.None
-                        ? match.IsChallenge ? "O desafio terminou sem vencedor." : "Tempo esgotado: a partida terminou sem vencedor."
-                        : winner == seat.Side ? "Vitória!" : "Derrota.", alert: true);
+                        ? timedOut ? "Tempo esgotado: a partida terminou sem vencedor."
+                        : match.IsChallenge ? "O desafio terminou sem vencedor." : "A partida terminou sem vencedor."
+                        : winner == seat.Side ? record ? "Vitória! Novo recorde do desafio!" : "Vitória!" : "Derrota.", alert: true);
             }
 
             if (match.IsChallenge && winner == ArenaSide.Gold) PayChallenge(match);
@@ -1669,7 +1739,7 @@ namespace NpcValheim.Arena
                 EndedUtcTicks = _host.UtcNow.Ticks,
                 Summary = summary,
             });
-            _host.Log($"Arena: partida #{match.Id} terminou: {(winner == 0 ? "empate (tempo)" : match.IsFfa ? "vitória de " + SeatName(match, winner) : "vitória do " + ArenaSide.Name(winner))}");
+            _host.Log($"Arena: partida #{match.Id} terminou: {(winner == 0 ? timedOut ? "empate (tempo)" : "sem vencedor" : match.IsFfa ? "vitória de " + SeatName(match, winner) : "vitória do " + ArenaSide.Name(winner))}");
             SendMatchState(match);
         }
 
@@ -1738,6 +1808,54 @@ namespace NpcValheim.Arena
             foreach (var seat in match.Seats.Where(s => s.Present))
                 _host.Send(seat.PlayerId, ArenaWire.Celebrate, payload);
             _host.Log($"Arena: partida #{match.Id}: comemoracao VIP de {star.Name}");
+        }
+
+        /// <summary>
+        /// The PvE rating after a challenge: each player of the group who entered moves by Elo
+        /// against the challenge's difficulty -- won if the creature fell, lost otherwise (a
+        /// challenge that never started, or whose creature never came, moves nothing). A win
+        /// also goes into the challenge's best times. Returns whether it set a new record.
+        /// </summary>
+        private bool SettlePve(ArenaMatch match, int winner)
+        {
+            if (match.StartedAt <= 0 || !match.CreatureSpawned) return false;
+            bool won = winner == ArenaSide.Gold;
+            int difficulty = Mathf.Clamp(match.Challenge.Difficulty, ArenaLayout.MinDifficulty, ArenaLayout.MaxDifficulty);
+            var changed = new List<ArenaPlayerRecord>();
+            foreach (var seat in match.Seats.Where(s => s.Side == ArenaSide.Gold && s.State == SeatState.Entered))
+            {
+                var p = Player(seat.PlayerId, seat.Name);
+                int before = p.PveRatingOf(_t.ChallengeStartRating);
+                int after = ArenaRules.Apply(before, ArenaRules.PveRatingMod(before, difficulty, won, _t.ChallengeRatingK));
+                seat.PveBefore = before;
+                seat.PveChange = after - before;
+                p.PveRating = after;
+                p.PveGames++;
+                if (won) p.PveWins++;
+                changed.Add(p);
+            }
+            if (changed.Count > 0) _db.SavePlayers(changed);
+            if (!won || string.IsNullOrEmpty(match.Challenge.Id)) return false;
+
+            var winners = match.Seats.Where(s => s.Side == ArenaSide.Gold && s.State == SeatState.Entered).ToList();
+            if (winners.Count == 0) return false;
+            double seconds = Math.Round(_host.Now - match.StartedAt, 1);
+            var entry = new ArenaBestTime
+            {
+                Seconds = seconds,
+                Players = winners.Select(s => s.PlayerId).ToList(),
+                Names = string.Join(", ", winners.Select(s => s.Name)),
+                EndedUtcTicks = _host.UtcNow.Ticks,
+            };
+            if (!_best.TryGetValue(match.Challenge.Id, out var best))
+                _best[match.Challenge.Id] = best = new ArenaChallengeBestRecord { ChallengeId = match.Challenge.Id };
+            bool isRecord = best.Top.Count == 0 || seconds < best.Top[0].Seconds;
+            best.Top.Add(entry);
+            best.Top = best.Top.OrderBy(t => t.Seconds).Take(BestTimesKept).ToList();
+            if (!best.Top.Contains(entry)) return false;
+            _db.SaveBestTimes(best);
+            if (isRecord) _host.Log($"Arena: novo recorde de {match.Challenge.Name}: {seconds:0.0}s ({best.Top[0].Names})");
+            return isRecord;
         }
 
         private void SettleRated(ArenaMatch match, int winner)
@@ -1858,13 +1976,13 @@ namespace NpcValheim.Arena
             _db.SavePlayers(changed);
         }
 
-        private string BuildResult(ArenaMatch match)
+        private string BuildResult(ArenaMatch match, bool record = false)
         {
             var lines = new List<string>
             {
                 Record("R", L(match.Id), I(match.Size), match.Rated ? "1" : "0", I(match.Winner), match.Map.Name,
                     I(Mathf.RoundToInt((float)(_host.Now - (match.StartedAt > 0 ? match.StartedAt : match.CreatedAt)))),
-                    match.IsChallenge ? match.Challenge.Name : ""),
+                    match.IsChallenge ? match.Challenge.Name : "", record ? "1" : "0"),
             };
             for (int side = ArenaSide.Gold; side <= ArenaSide.Green && !match.IsFfa; side++)
             {
@@ -1874,7 +1992,10 @@ namespace NpcValheim.Arena
             foreach (var seat in match.Seats.Where(s => s.State == SeatState.Entered || s.State == SeatState.Left))
             {
                 string status = seat.State == SeatState.Left ? "saiu" : seat.Offline ? "offline" : seat.Alive ? "de pé" : "derrotado";
-                lines.Add(Record("U", I(seat.Side), seat.Name, I(seat.Kos), status, I(seat.PersonalBefore), I(seat.PersonalChange)));
+                // A challenge has no personal rating: the PvE rating stands in its columns.
+                lines.Add(match.IsChallenge
+                    ? Record("U", I(seat.Side), seat.Name, I(seat.Kos), status, I(seat.PveBefore), I(seat.PveChange))
+                    : Record("U", I(seat.Side), seat.Name, I(seat.Kos), status, I(seat.PersonalBefore), I(seat.PersonalChange)));
             }
             return Lines(lines);
         }
@@ -1968,7 +2089,7 @@ namespace NpcValheim.Arena
                         changed = true;
                     }
                 }
-                foreach (var seat in match.Seats.Where(s => s.State == SeatState.Entered))
+                foreach (var seat in match.Seats.Where(s => s.State == SeatState.Entered && !s.WentHome))
                 {
                     if (!_host.IsOnline(seat.PlayerId))
                     {
@@ -2039,9 +2160,9 @@ namespace NpcValheim.Arena
                             if (left <= 0) StartMatch(match);
                         }
                     }
-                    else if (now - match.CreatedAt >= _t.TimeLimitOf(match.IsChallenge))
+                    else if (_t.TimeLimitOf(match.IsChallenge) > 0f && now - match.CreatedAt >= _t.TimeLimitOf(match.IsChallenge))
                     {
-                        EndMatch(match, ArenaSide.None);
+                        EndMatch(match, ArenaSide.None, timedOut: true);
                     }
                     break;
 
@@ -2051,7 +2172,7 @@ namespace NpcValheim.Arena
                         foreach (var seat in match.Seats.Where(s => s.State == SeatState.Entered))
                         {
                             seat.State = SeatState.Left;
-                            if (_host.IsOnline(seat.PlayerId)) SendReturn(seat.PlayerId);
+                            if (_host.IsOnline(seat.PlayerId) && !seat.WentHome) SendReturn(seat.PlayerId);
                         }
                         CloseMatch(match, null);
                     }
@@ -2159,6 +2280,11 @@ namespace NpcValheim.Arena
                 Say(id, $"Você tem {me.Points} Pontos de Arena; custa {offer.Points}.", alert: true);
                 return;
             }
+            if (offer.PveRating > 0 && me.PveRatingOf(_t.ChallengeStartRating) < offer.PveRating)
+            {
+                Say(id, $"Requer rating PvE {offer.PveRating}. O seu é {me.PveRatingOf(_t.ChallengeStartRating)}.", alert: true);
+                return;
+            }
             if (offer.Rating > 0)
             {
                 int best = BestPurchaseRating(id, offer.Bracket);
@@ -2188,7 +2314,7 @@ namespace NpcValheim.Arena
 
             me.Points -= offer.Points;
             _db.SavePlayers(new[] { me });
-            _host.MailItem(id, "Intendente da Arena", offer.Prefab, offer.Amount);
+            _host.MailItem(id, "Intendente da Arena", offer.Prefab, offer.Amount, offer.Quality);
             _host.Log($"Arena: {me.Name} comprou {offer.Amount}x {offer.Prefab} por {offer.Points} pontos (saldo {me.Points})");
             Say(id, $"Comprado! Retire na Caixa Postal. Saldo: {me.Points} pontos.", alert: true);
             SendState(id);
@@ -2234,6 +2360,7 @@ namespace NpcValheim.Arena
 
         private void SendLadder(long playerId, int size)
         {
+            if (size == ArenaRules.PveLadder) { SendPveLadder(playerId); return; }
             var rows = new List<string> { Record("L", I(size)) };
             foreach (var team in _teams.Values.Where(t => t.Size == size)
                          .OrderByDescending(t => t.Rating).ThenBy(t => t.Name, StringComparer.OrdinalIgnoreCase).Take(100))
@@ -2242,12 +2369,35 @@ namespace NpcValheim.Arena
             _host.Send(playerId, ArenaWire.Ladder, Lines(rows));
         }
 
+        /// <summary>
+        /// The PvE ladder: "L -1", then P rows (rank, name, rating, games, wins, mine) for the
+        /// top 100 who played a challenge, then B rows (challenge name, place, seconds, names)
+        /// with each challenge's best times.
+        /// </summary>
+        private void SendPveLadder(long playerId)
+        {
+            var rows = new List<string> { Record("L", I(ArenaRules.PveLadder)) };
+            var ranked = _players.Values.Where(p => p.PveGames > 0)
+                .OrderByDescending(p => p.PveRating).ThenBy(p => p.Name, StringComparer.OrdinalIgnoreCase).Take(100).ToList();
+            foreach (var p in ranked)
+                rows.Add(Record("P", I(1 + _players.Values.Count(o => o.PveGames > 0 && o.PveRating > p.PveRating)), p.Name,
+                    I(p.PveRating), I(p.PveGames), I(p.PveWins), p.PlayerId == playerId ? "1" : "0"));
+            foreach (var challenge in _t.Challenges)
+            {
+                if (string.IsNullOrEmpty(challenge.Id) || !_best.TryGetValue(challenge.Id, out var best)) continue;
+                for (int i = 0; i < best.Top.Count; i++)
+                    rows.Add(Record("B", challenge.Name, I(i + 1), F((float)best.Top[i].Seconds), best.Top[i].Names ?? ""));
+            }
+            _host.Send(playerId, ArenaWire.Ladder, Lines(rows));
+        }
+
         /// <summary>Everything one player's arena panel draws, in one message.</summary>
         internal string BuildState(long playerId)
         {
             var lines = new List<string>();
             var me = PlayerRecord(playerId);
-            lines.Add(Record("P", I(me?.Points ?? 0), L(playerId)));
+            lines.Add(Record("P", I(me?.Points ?? 0), L(playerId), I(me?.PveRatingOf(_t.ChallengeStartRating) ?? _t.ChallengeStartRating),
+                I(me?.PveGames ?? 0), I(me?.PveWins ?? 0)));
 
             foreach (var team in _teams.Values.Where(t => t.Member(playerId) != null).OrderBy(t => t.Size))
             {
@@ -2299,13 +2449,16 @@ namespace NpcValheim.Arena
                     case MatchStatus.WaitJoin:
                         phase = "prep"; left = match.PrepEndsAt > 0 ? match.PrepEndsAt - _host.Now : _t.PreparationSeconds; break;
                     case MatchStatus.InProgress:
-                        phase = "live"; left = match.CreatedAt + _t.TimeLimitOf(match.IsChallenge) - _host.Now; break;
+                        // No limit: -1, and the client shows no clock.
+                        phase = "live";
+                        left = _t.TimeLimitOf(match.IsChallenge) > 0f ? Math.Max(0, match.CreatedAt + _t.TimeLimitOf(match.IsChallenge) - _host.Now) : -1;
+                        break;
                     default:
                         phase = "ended"; left = match.LeaveAt - _host.Now; break;
                 }
                 string mine = seat.State == SeatState.Invited ? "invited" : !seat.Alive ? "ko" : "alive";
                 lines.Add(Record("X", L(match.Id), I(match.Size), match.Rated ? "1" : "0", match.Map.Name, I(seat.Side), phase,
-                    I(Mathf.Max(0, Mathf.RoundToInt((float)left))), mine, I(match.Winner),
+                    I(left < 0 ? -1 : Mathf.Max(0, Mathf.RoundToInt((float)left))), mine, I(match.Winner),
                     match.IsChallenge ? match.Challenge.Name : ""));
                 if (match.IsChallenge)
                 {

@@ -256,8 +256,11 @@ namespace NpcValheim.UI
                         break;
                     case "live":
                         Score(match);
-                        LiveLine(() => $"{(match.IsChallenge ? "Tempo restante" : "Tempo até o empate")}: {Clock(ArenaClient.SecondsLeft())}" +
-                                       (match.Mine == "ko" ? "   ·   <color=#ee6b57>você foi derrotado</color>" : ""), 15);
+                        LiveLine(() => (ArenaClient.SecondsLeft() < 0 ? "Sem limite de tempo"
+                                           : $"{(match.IsChallenge ? "Tempo restante" : "Tempo até o empate")}: {Clock(ArenaClient.SecondsLeft())}") +
+                                       (match.Mine == "ko"
+                                           ? $"   ·   <color=#ee6b57>você foi derrotado</color> ([{ArenaSpectate.LeaveKey}] volta agora)"
+                                           : ""), 15);
                         LeaveButton(match.Rated ? "Abandonar (conta como derrota)" : "Abandonar a partida");
                         break;
                     default:
@@ -340,11 +343,11 @@ namespace NpcValheim.UI
             bool ffa = !r.IsChallenge && r.Size == ArenaRules.FfaSize;
             string outcome = r.IsChallenge
                 ? r.Winner == ArenaSide.Gold ? $"{r.Challenge} foi derrotado!" : r.Winner == ArenaSide.Green ? $"{r.Challenge} venceu" : "O desafio terminou sem vencedor"
-                : r.Winner == ArenaSide.None ? "Empate: o tempo acabou"
+                : r.Winner == ArenaSide.None ? "Empate"
                 : ffa ? $"Vitória de {r.Players.FirstOrDefault(p => p.Side == r.Winner)?.Name ?? "?"}"
                 : $"Vitória do time {SideText(r.Winner)}";
             Heading(r.IsChallenge ? $"Resultado · Desafio {r.Challenge} · {r.Map}" : $"Resultado · {r.Map} · {QueueName(r.Size, r.Rated)}");
-            Line($"{outcome}  ·  {Clock(r.Duration)}", 17, ValheimUi.Yellow, 28f);
+            Line($"{outcome}  ·  {Clock(r.Duration)}" + (r.Record ? "  ·  <color=#73db6b>novo recorde do desafio!</color>" : ""), 17, ValheimUi.Yellow, 28f);
             foreach (var side in r.Sides)
             {
                 string rating = r.Rated
@@ -358,6 +361,7 @@ namespace NpcValheim.UI
             Cell(header, "Abates", 13, ValheimUi.Muted, 70f);
             Cell(header, "Situação", 13, ValheimUi.Muted, 110f);
             if (r.Rated) Cell(header, "Pessoal", 13, ValheimUi.Muted, 130f);
+            else if (r.IsChallenge) Cell(header, "Rating PvE", 13, ValheimUi.Muted, 130f);
             var players = ffa
                 ? r.Players.OrderByDescending(p => p.Side == r.Winner).ThenByDescending(p => p.Kos)
                 : r.Players.OrderBy(p => p.Side).ThenByDescending(p => p.Kos);
@@ -368,7 +372,8 @@ namespace NpcValheim.UI
                 if (!ffa) Cell(row, SideText(p.Side), 15, null, 80f);
                 Cell(row, p.Kos.ToString(CultureInfo.InvariantCulture), 15, null, 70f);
                 Cell(row, p.Status, 15, null, 110f);
-                if (r.Rated)
+                // A challenge sends the PvE rating in the personal rating's place.
+                if (r.Rated || r.IsChallenge)
                     Cell(row, p.PersonalBefore >= 0 ? $"{p.PersonalBefore + p.PersonalChange} ({Signed(p.PersonalChange)})" : "-", 15, null, 130f);
             }
             Gap();
@@ -384,6 +389,9 @@ namespace NpcValheim.UI
         {
             var s = ArenaClient.Snapshot;
             Line($"<color=#9a9188>Pontos de Arena:</color> {s.Points}", 17, ValheimUi.Yellow, 28f);
+            Line($"<color=#9a9188>Rating PvE (desafios):</color> {s.PveRating}" +
+                 (s.PveGames > 0 ? $"   <size=13><color=#9a9188>{s.PveWins} vitória(s) em {s.PveGames} desafio(s)</color></size>" : ""),
+                15, ValheimUi.Beige, 24f);
             Gap();
             StatusBlocks(withResult: true);
             if (s.Match == null && s.Queue == null && s.SignRequests.Count == 0 && s.Invite == null && ArenaClient.LastResult == null)
@@ -757,22 +765,35 @@ namespace NpcValheim.UI
 
         protected override void OnSizeChanged() => ArenaClient.RequestLadder(Size);
 
+        /// <summary>The PvP brackets, and the PvE rating of the challenges.</summary>
+        protected override List<int> Sizes()
+        {
+            var sizes = new List<int>(Brackets());
+            sizes.Add(ArenaRules.PveLadder);
+            return sizes;
+        }
+
         protected override void Rebuild()
         {
             BracketSelector("Ranking:");
+            bool pve = Size == ArenaRules.PveLadder;
             if (!ArenaClient.Ladders.TryGetValue(Size, out var rows))
             {
                 Line("Carregando...", 15, ValheimUi.Muted);
                 return;
             }
+            if (pve)
+                Line("Rating PvE: sobe ao vencer um desafio, mais quanto mais difícil ele for; desce ao perder. Separado do PvP.", 13, ValheimUi.Muted, 22f);
             if (rows.Count == 0)
             {
-                Line(IsSolo(Size) ? "Ninguém jogou a 1v1 ranqueada ainda." : $"Nenhum time {ArenaRules.BracketName(Size)} ainda.", 15, ValheimUi.Muted);
+                Line(pve ? "Ninguém jogou um desafio ainda." : IsSolo(Size) ? "Ninguém jogou a 1v1 ranqueada ainda." : $"Nenhum time {ArenaRules.BracketName(Size)} ainda.",
+                    15, ValheimUi.Muted);
+                if (pve) BestTimes();
                 return;
             }
             var header = ButtonRow(24f);
             Cell(header, "#", 13, ValheimUi.Muted, 50f);
-            Cell(header, IsSolo(Size) ? "Jogador" : "Time", 13, ValheimUi.Muted);
+            Cell(header, pve || IsSolo(Size) ? "Jogador" : "Time", 13, ValheimUi.Muted);
             Cell(header, "Rating", 13, ValheimUi.Muted, 90f);
             Cell(header, "Jogos", 13, ValheimUi.Muted, 80f);
             Cell(header, "Vitórias", 13, ValheimUi.Muted, 90f);
@@ -787,6 +808,31 @@ namespace NpcValheim.UI
                 Cell(row, r.Games.ToString(CultureInfo.InvariantCulture), 15, color, 80f);
                 Cell(row, r.Wins.ToString(CultureInfo.InvariantCulture), 15, color, 90f);
                 Cell(row, r.Games > 0 ? $"{100 * r.Wins / r.Games}" : "-", 15, color, 60f);
+            }
+            if (pve) BestTimes();
+        }
+
+        /// <summary>Each challenge's fastest wins.</summary>
+        private void BestTimes()
+        {
+            Gap();
+            Heading("Melhores tempos dos desafios");
+            if (ArenaClient.BestTimes.Count == 0)
+            {
+                Line("Nenhum desafio vencido ainda.", 14, ValheimUi.Muted);
+                return;
+            }
+            foreach (var group in ArenaClient.BestTimes.GroupBy(b => b.Challenge))
+            {
+                Line(group.Key, 16, ValheimUi.Orange, 26f);
+                foreach (var b in group.OrderBy(b => b.Place))
+                {
+                    var row = ButtonRow(24f);
+                    var color = b.Place == 1 ? ValheimUi.Yellow : ValheimUi.Beige;
+                    Cell(row, b.Place.ToString(CultureInfo.InvariantCulture) + "º", 14, color, 50f);
+                    Cell(row, $"{(int)b.Seconds / 60}:{b.Seconds % 60f:00.0}", 14, color, 90f);
+                    Cell(row, b.Names, 14, color);
+                }
             }
         }
     }
@@ -832,7 +878,13 @@ namespace NpcValheim.UI
                     string where = o.Bracket > 1 ? $" ({ArenaRules.BracketName(o.Bracket)}+)" : "";
                     requirement = $"   <color={(meets ? "#73db6b" : "#ee6b57")}>requer rating {o.Rating}{where}</color>";
                 }
-                Cell(row, $"{o.Amount}x {ArenaConfig.OfferName(o.Prefab)}\n<size=13><color=#9a9188>{o.Points} pontos</color>{requirement}</size>", 15);
+                if (o.PveRating > 0)
+                {
+                    bool pveOk = s.PveRating >= o.PveRating;
+                    meets &= pveOk;
+                    requirement += $"   <color={(pveOk ? "#73db6b" : "#ee6b57")}>requer rating PvE {o.PveRating}</color>";
+                }
+                Cell(row, $"{o.Amount}x {ArenaConfig.OfferName(o.Prefab)}{(o.Quality > 1 ? $" (nível {o.Quality})" : "")}\n<size=13><color=#9a9188>{o.Points} pontos</color>{requirement}</size>", 15);
                 var buy = Btn(row, "Comprar", 120f, () => Buy(o));
                 buy.interactable = meets && s.Points >= o.Points;
             }

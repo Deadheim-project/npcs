@@ -20,6 +20,11 @@ namespace NpcValheim.Arena
         internal static ConfigEntry<bool> VipCelebration;
         internal static ConfigEntry<float> CelebrationSeconds;
         internal static ConfigEntry<KeyCode> PanelKey;
+
+        /// <summary>How a player opens the arena panel, as the screen says it: the key when they
+        /// set one, the Central otherwise.</summary>
+        internal static string PanelHint =>
+            PanelKey != null && PanelKey.Value != KeyCode.None ? $"[{PanelKey.Value}]" : "[Tab > Arena]";
         internal static ConfigEntry<bool> MigrateOldNpcs;
 
         internal static ConfigEntry<string> CharterCost;
@@ -71,58 +76,13 @@ namespace NpcValheim.Arena
         internal static ConfigEntry<int> ChallengeMaxPlayers;
         internal static ConfigEntry<float> ChallengeTimeLimitMinutes;
         internal static ConfigEntry<float> ChallengeCooldownMinutes;
+        internal static ConfigEntry<int> ChallengeStartRating;
+        internal static ConfigEntry<float> ChallengeRatingK;
         internal static ConfigEntry<string> ChallengeMaps;
 
-        /// <summary>One challenge as its own block of the cfg, so the Deadheim menu (Ajustes)
-        /// edits it field by field: a box to tick, the creature from a list, +/- on the numbers.</summary>
-        internal sealed class ChallengeSlot
-        {
-            public ConfigEntry<bool> On;
-            public ConfigEntry<string> Name;
-            public ConfigEntry<string> Creature;
-            public ConfigEntry<int> Level;
-            public ConfigEntry<float> Health;
-            public ConfigEntry<string> RewardItem;
-            public ConfigEntry<int> RewardAmount;
-            public ConfigEntry<string> ExtraRewards;
-            public ConfigEntry<string> Map;
-        }
-
-        /// <summary>One arena as its own block of the cfg ([Arena - Local N]): the points one
-        /// per line and a box per kind of match, instead of a whole arena squeezed into one
-        /// field of the old Maps list.</summary>
-        internal sealed class MapSlot
-        {
-            public ConfigEntry<bool> On;
-            public ConfigEntry<string> Name;
-            public ConfigEntry<string> Gold;
-            public ConfigEntry<string> Green;
-            public ConfigEntry<string> Spectator;
-            /// <summary>Aligned with <see cref="MapTypes"/>.</summary>
-            public ConfigEntry<bool>[] Types;
-
-            public bool Empty => Name.Value.Trim().Length == 0 && Gold.Value.Trim().Length == 0 && Green.Value.Trim().Length == 0;
-        }
-
-        /// <summary>The kinds of match an arena may host, as the usage text writes them, and
-        /// the label of each box in the cfg (Tipo1v1, TipoFFA...).</summary>
+        /// <summary>The kinds of match an arena may host, as the usage text and the layout file
+        /// write them.</summary>
         internal static readonly string[] MapTypes = { "1v1", "2v2", "3v3", "ffa", "pve" };
-        private static readonly string[] MapTypeLabels = { "1v1", "2v2", "3v3", "FFA", "PvE" };
-
-        internal const int MapSlotCount = 8;
-        internal static readonly List<MapSlot> MapSlots = new List<MapSlot>();
-
-        internal const int ChallengeSlotCount = 5;
-        internal static readonly List<ChallengeSlot> ChallengeSlots = new List<ChallengeSlot>();
-
-        private static readonly (bool On, string Name, string Creature, int Level, float Health, int Coins)[] ChallengeDefaults =
-        {
-            (true, "Troll Furioso", "Troll", 3, 2f, 300),
-            (true, "Fenring Alfa", "Fenring", 3, 3f, 500),
-            (false, "Abominacao Antiga", "Abomination", 3, 2f, 400),
-            (false, "Rei Goblin", "GoblinBrute", 3, 3f, 600),
-            (false, "Buscador Gigante", "SeekerBrute", 3, 3f, 800),
-        };
 
         private static ConfigSync _sync;
         private static bool _dirty = true;
@@ -146,8 +106,12 @@ namespace NpcValheim.Arena
                 "Ao subir o servidor, o Organizador e o Intendente da Arena antigos saem do mundo: o que esta a menos de 15 m " +
                 "de um Mestre da Arena e removido, o que esta sozinho vira Mestre da Arena (mantendo nome, aparencia e falas). " +
                 "Cada um fica no log. Desligue para manter os antigos (eles abrem as mesmas abas do Mestre).");
-            PanelKey = config.Bind(general, "PanelKey", KeyCode.H,
-                "Tecla que abre o painel da Arena (convites, fila, times, ranking). Preferencia de cada jogador, nao sincroniza.");
+            // No key by default since 0.1.91, like the other menus: the arena panel opens from the
+            // Deadheim Central (Tab > Arena). Renamed from PanelKey so the H already written in an
+            // existing cfg does not come back.
+            PanelKey = config.Bind(general, "AtalhoPainel", KeyCode.None,
+                "Tecla que abre o painel da Arena (convites, fila, times, ranking). None = sem tecla (o painel abre pela Central " +
+                "Deadheim: Tab > Arena). Preferencia de cada jogador, nao sincroniza.");
 
             const string teams = "Arena - Times";
             CharterCost = S(config, teams, "CharterCost", "2:80",
@@ -183,7 +147,7 @@ namespace NpcValheim.Arena
             const string ffa = "Arena - FFA";
             FfaEnabled = S(config, ffa, "Enabled", true,
                 "FFA (todos contra todos): fila solo no Mestre da Arena, cada um por si, sem time e sem rating. " +
-                "Vence o ultimo de pe. So usa arenas com TipoFFA marcado ([Arena - Local N]). Metade nasce no inicio " +
+                "Vence o ultimo de pe. So usa arenas marcadas para Todos contra todos (Painel de Admin, aba Arena). Metade nasce no inicio " +
                 "Ouro e metade no Verde, lado a lado dentro do portao.");
             FfaMinPlayers = S(config, ffa, "MinPlayers", 3,
                 "Minimo de jogadores para a partida FFA comecar (2 a 16).");
@@ -195,8 +159,9 @@ namespace NpcValheim.Arena
             const string match = "Arena - Partida";
             PreparationSeconds = S(config, match, "PreparationSeconds", 60f,
                 "Preparacao antes dos portoes abrirem, contando da entrada do primeiro jogador.");
-            TimeLimitMinutes = S(config, match, "TimeLimitMinutes", 47f,
-                "Sem vencedor ate aqui, a partida acaba empatada (45 + 2 min no WoW).");
+            TimeLimitMinutes = S(config, match, "TimeLimitMinutes", 0f,
+                "Limite de tempo da partida PvP em minutos (contando a preparacao). Sem vencedor ate aqui, a partida acaba " +
+                "empatada. 0 = sem limite: a partida so acaba quando um lado vence (ou foge, ou desconecta).");
             LeaveSeconds = S(config, match, "LeaveSeconds", 120f,
                 "Depois do fim, quanto tempo o placar fica antes de todos voltarem para onde estavam.");
             GateRadius = S(config, match, "GateRadius", 6f,
@@ -245,7 +210,8 @@ namespace NpcValheim.Arena
             VendorItems = S(config, vendor, "Items", ArenaSettingsParser.DefaultOffers,
                 "O que a Loja do Mestre da Arena vende: prefab=<item>;amount=<qtd>;points=<pontos>;rating=<minimo>;bracket=<tamanho>, " +
                 "separados por |. rating = o menor entre pessoal e do time, num time do tamanho 'bracket' ou maior " +
-                "(0 = sem requisito). O item vai pelo correio. prefab=Deadcoins vende Deadcoins: amount = quantos Deadcoins " +
+                "(0 = sem requisito). Opcional: quality=<nivel> (nivel da arma/armadura, 1 a 10) e pve=<rating> (rating PvE " +
+                "minimo dos desafios). O item vai pelo correio. prefab=Deadcoins vende Deadcoins: amount = quantos Deadcoins " +
                 "vao direto para o saldo do comprador (ex.: prefab=Deadcoins;amount=10;points=200)." +
                 " Tambem se edita no jogo, no Painel de Admin (ESC > Deadheim > Admin), aba Arena > Loja.");
 
@@ -255,74 +221,36 @@ namespace NpcValheim.Arena
                 "O grupo nasce no inicio Ouro e a criatura no inicio Verde quando os portoes abrem.");
             ChallengeMaxPlayers = S(config, challenge, "MaxPlayers", 3,
                 "Jogadores por desafio (o lider e o grupo dele no mod Groups), de 1 a 10.");
-            ChallengeTimeLimitMinutes = S(config, challenge, "TimeLimitMinutes", 10f,
-                "Sem matar a criatura ate aqui (contando a preparacao), o desafio falha.");
+            ChallengeTimeLimitMinutes = S(config, challenge, "TimeLimitMinutes", 0f,
+                "Limite de tempo do desafio em minutos (contando a preparacao). Sem matar a criatura ate aqui, o desafio falha. " +
+                "0 = sem limite: o desafio acaba quando a criatura cai ou todo o grupo e derrotado.");
             ChallengeCooldownMinutes = S(config, challenge, "CooldownMinutes", 60f,
                 "Depois de receber a recompensa de um desafio, quanto tempo ate o mesmo jogador receber de novo desse desafio. " +
                 "Fica na memoria do servidor: um restart zera.");
+            ChallengeStartRating = S(config, challenge, "RatingInicial", 1000,
+                "Rating PvE inicial de cada jogador. O rating PvE e so dos desafios, separado de todo rating PvP: " +
+                "vencer um desafio sobe, perder desce, contra a Dificuldade de cada desafio (como se a criatura fosse um " +
+                "jogador com esse rating). Aparece no Ranking (aba PvE) e pode ser exigido na Loja (campo PvE).");
+            ChallengeRatingK = S(config, challenge, "RatingFator", 32f,
+                "Quanto o rating PvE anda por desafio: o maximo ganho numa vitoria (ou perdido numa derrota) contra um " +
+                "desafio de rating igual e a metade disto.");
             ChallengeMaps = S(config, challenge, "Maps", "",
                 "Antigo, opcional: nomes de arenas que os desafios podem usar, separados por virgula. Vazio = qualquer arena " +
-                "livre com TipoPvE marcado. Prefira marcar TipoPvE no bloco da propria arena ([Arena - Local N]).");
+                "livre marcada para Desafio. Prefira marcar o uso na propria arena (Painel de Admin, aba Arena).");
 
-            ChallengeSlots.Clear();
-            for (int i = 0; i < ChallengeSlotCount; i++)
+            // The arenas and challenges are no longer cfg blocks: they live in
+            // config/NpcValheim/arena-locais.json (ArenaLayout), as many as the admin makes. The
+            // old blocks are read once here, from the keys nobody binds any more, for the server
+            // to write the file from them.
+            try
             {
-                var d = ChallengeDefaults[i];
-                string section = "Arena - Desafio " + (i + 1);
-                ChallengeSlots.Add(new ChallengeSlot
-                {
-                    On = S(config, section, "Ativo", d.On,
-                        "Liga este desafio no Mestre da Arena."),
-                    Name = S(config, section, "Nome", d.Name,
-                        "Nome que os jogadores veem no botao e no placar."),
-                    // No AcceptableValueList: it would reset "bestiario:id" to the first creature.
-                    // The server checks the value on every rebuild (ChallengeDefs) and on every save.
-                    Creature = S(config, section, "Criatura", d.Creature,
-                        "Criatura que o grupo enfrenta: uma do jogo (" + string.Join(", ", ArenaSettingsParser.ChallengeCreatures) +
-                        ") ou uma do Bestiario, como bestiario:troll_anciao. Sem chefes: matar um contaria como chefe derrotado."),
-                    Level = S(config, section, "Nivel", d.Level, new ConfigDescription(
-                        "Nivel do jogo: 1 = sem estrela, 2 = uma estrela, 3 = duas estrelas; acima disso a vida e o dano sobem mais.",
-                        new AcceptableValueRange<int>(1, 10))),
-                    Health = S(config, section, "Vida", d.Health, new ConfigDescription(
-                        "Multiplicador de vida por cima do nivel (2 = o dobro).",
-                        new AcceptableValueRange<float>(0.1f, 100f))),
-                    RewardItem = S(config, section, "Recompensa", "Coins",
-                        "Item (prefab) que cada jogador recebe pelo correio quando a criatura cai. Coins = moedas. Vazio = nenhum."),
-                    RewardAmount = S(config, section, "Quantidade", d.Coins, new ConfigDescription(
-                        "Quantidade da recompensa, por jogador.",
-                        new AcceptableValueRange<int>(0, 9999))),
-                    ExtraRewards = S(config, section, "RecompensasExtras", "",
-                        "Mais itens, opcional: item:qtd separados por virgula (ex.: TrophyTroll:1,MeadHealthMajor:5)."),
-                    Map = S(config, section, "Arena", "",
-                        "Opcional: nome da arena (Nome de um [Arena - Local N]) onde este desafio acontece. Vazio = qualquer arena " +
-                        "livre com TipoPvE marcado."),
-                });
+                var orphans = HarmonyLib.AccessTools.Property(typeof(ConfigFile), "OrphanedEntries")?.GetValue(config, null)
+                    as IDictionary<ConfigDefinition, string>;
+                ArenaLayout.CaptureLegacy(orphans);
             }
-
-            MapSlots.Clear();
-            for (int i = 0; i < MapSlotCount; i++)
+            catch (Exception e)
             {
-                string section = "Arena - Local " + (i + 1);
-                var slot = new MapSlot
-                {
-                    On = S(config, section, "Ativo", false,
-                        "Liga esta arena. Desligada, o bloco fica guardado mas nenhuma fila usa."),
-                    Name = S(config, section, "Nome", "",
-                        "Nome da arena (o que os jogadores veem no placar). Sem ; nem |, ate 32 letras."),
-                    Gold = S(config, section, "Ouro", "",
-                        "Inicio do time Ouro: x,y,z,giro (giro = para onde o jogador olha, em graus; opcional). " +
-                        "Ex.: 100,30,100,90. No Painel de Admin (ESC > Deadheim > Admin), aba Arena, 'Marcar aqui' preenche com onde voce esta."),
-                    Green = S(config, section, "Verde", "",
-                        "Inicio do time Verde: x,y,z,giro. No desafio (PvE) a criatura nasce aqui. No FFA metade nasce no Ouro e metade aqui. " +
-                        "Os dois inicios precisam estar a menos de 300 m um do outro e dentro de uma area de arena (ArenaZones do " +
-                        "Deadheim: PvP sempre, sem perda de skill), criada sozinha quando a arena e salva pelo Painel de Admin; quem sai da area durante a partida fugiu."),
-                    Spectator = S(config, section, "Espectador", "",
-                        "Opcional: x,y,z para onde vai quem foi derrotado, assistindo o resto. Vazio = fica no proprio inicio."),
-                    Types = new ConfigEntry<bool>[MapTypes.Length],
-                };
-                for (int k = 0; k < MapTypes.Length; k++)
-                    slot.Types[k] = S(config, section, "Tipo" + MapTypeLabels[k], true, TypeDescription(k));
-                MapSlots.Add(slot);
+                Plugin.Log.LogWarning("NpcValheim Arena: nao foi possivel ler os blocos antigos de arena da cfg: " + e.Message);
             }
             MigrateLegacyMaps(config);
         }
@@ -335,70 +263,70 @@ namespace NpcValheim.Arena
             config.Remove(old.Definition);
         }
 
-        private static string TypeDescription(int type)
-        {
-            switch (MapTypes[type])
-            {
-                case "ffa": return "Usar esta arena no FFA (todos contra todos, fila solo).";
-                case "pve": return "Usar esta arena nos desafios contra criatura (PvE).";
-                default: return $"Usar esta arena nas partidas {MapTypes[type]} (ranqueada e escaramuca).";
-            }
-        }
-
         /// <summary>
         /// Up to 0.1.87 every arena was one entry of [Arena - Partida] Maps. Whatever is still
-        /// there moves into the free Local blocks once, keeping its usage, and the old key leaves
-        /// the file: two places for the same arena would sooner or later disagree.
+        /// there joins the old blocks the server turns into the layout file, and the old key
+        /// leaves the cfg.
         /// </summary>
         private static void MigrateLegacyMaps(ConfigFile config)
         {
-            var legacy = config.Bind("Arena - Partida", "Maps", "", "Antigo: as arenas agora ficam nos blocos [Arena - Local N].");
+            var legacy = config.Bind("Arena - Partida", "Maps", "", "Antigo: as arenas agora ficam em config/NpcValheim/arena-locais.json.");
             string raw = legacy.Value;
             config.Remove(legacy.Definition);
-            if (string.IsNullOrWhiteSpace(raw))
-            {
-                config.Save();
-                return;
-            }
+            config.Save();
+            if (string.IsNullOrWhiteSpace(raw)) return;
             var problems = new List<string>();
             foreach (var map in ArenaSettingsParser.ParseMaps(raw, problems))
-            {
-                int slot = SaveMap(map, out string error);
-                if (slot > 0) Plugin.Log.LogInfo($"NpcValheim Arena: arena \"{map.Name}\" da lista Maps antiga foi para [Arena - Local {slot}]");
-                else Plugin.Log.LogWarning($"NpcValheim Arena: arena \"{map.Name}\" da lista Maps antiga nao coube: {error}");
-            }
+                ArenaLayout.AddLegacy(ToLayout(map, true));
             foreach (var p in problems) Plugin.Log.LogWarning("NpcValheim Arena: lista Maps antiga: " + p);
-            config.Save();
+        }
+
+        private static ArenaLayoutMap ToLayout(ArenaMapDef map, bool on)
+        {
+            var entry = new ArenaLayoutMap
+            {
+                On = on,
+                Name = map.Name,
+                Gold = ArenaSettingsParser.FormatPoint(map.Gold, map.GoldYaw),
+                Green = ArenaSettingsParser.FormatPoint(map.Green, map.GreenYaw),
+                Spectator = map.HasSpectator
+                    ? string.Format(System.Globalization.CultureInfo.InvariantCulture, "{0:0.##},{1:0.##},{2:0.##}",
+                        map.Spectator.x, map.Spectator.y, map.Spectator.z)
+                    : "",
+            };
+            for (int k = 0; k < MapTypes.Length; k++) entry.Types[k] = Serves(map, MapTypes[k]);
+            return entry;
         }
 
         /// <summary>
-        /// The arenas of the Local blocks switched on, read through the same parser the wire and
-        /// the old Maps list use, so a point is checked the same way everywhere. A block that is
-        /// on but broken is named by its number and left out.
+        /// The arenas switched on, read through the same parser the wire and the old Maps list
+        /// use, so a point is checked the same way everywhere. One that is on but broken is
+        /// named and left out.
         /// </summary>
         internal static List<ArenaMapDef> ConfiguredMaps(List<string> problems)
         {
             var result = new List<ArenaMapDef>();
             var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            for (int i = 0; i < MapSlots.Count; i++)
+            var all = ArenaLayout.Maps;
+            for (int i = 0; i < all.Count; i++)
             {
-                var s = MapSlots[i];
-                if (!s.On.Value) continue;
-                string name = ArenaSettingsParser.CleanMapName(s.Name.Value);
-                string label = "Local " + (i + 1) + (name.Length > 0 ? $" ({name})" : "");
+                var s = all[i];
+                if (!s.On) continue;
+                string name = ArenaSettingsParser.CleanMapName(s.Name);
+                string label = name.Length > 0 ? $"Arena {name}" : $"Arena {i + 1}";
                 if (name.Length == 0)
                 {
-                    problems?.Add($"{label}: ligado mas sem Nome");
+                    problems?.Add($"{label}: ligada mas sem nome");
                     continue;
                 }
-                var types = MapTypes.Where((t, k) => s.Types[k].Value).ToList();
+                var types = MapTypes.Where((t, k) => k < s.Types.Length && s.Types[k]).ToList();
                 if (types.Count == 0)
                 {
-                    problems?.Add($"{label}: nenhum tipo marcado (Tipo1v1, Tipo2v2, Tipo3v3, TipoFFA, TipoPvE): nenhuma fila usa esta arena");
+                    problems?.Add($"{label}: nenhum uso marcado (1v1, 2v2, 3v3, FFA, Desafio): nenhuma fila usa esta arena");
                     continue;
                 }
-                string entry = name + ";" + s.Gold.Value.Trim() + ";" + s.Green.Value.Trim() +
-                               (s.Spectator.Value.Trim().Length > 0 ? ";" + s.Spectator.Value.Trim() : "") +
+                string entry = name + ";" + (s.Gold ?? "").Trim() + ";" + (s.Green ?? "").Trim() +
+                               ((s.Spectator ?? "").Trim().Length > 0 ? ";" + s.Spectator.Trim() : "") +
                                ";uso=" + string.Join(",", types);
                 var local = new List<string>();
                 var parsed = ArenaSettingsParser.ParseMaps(entry, local);
@@ -410,7 +338,7 @@ namespace NpcValheim.Arena
                 if (parsed.Count != 1) continue;
                 if (!names.Add(name))
                 {
-                    problems?.Add($"{label}: o nome \"{name}\" ja e de outro Local; vale o primeiro");
+                    problems?.Add($"{label}: o nome \"{name}\" ja e de outra arena; vale a primeira");
                     continue;
                 }
                 result.Add(parsed[0]);
@@ -418,47 +346,34 @@ namespace NpcValheim.Arena
             return result;
         }
 
-        /// <summary>Saves an arena into the Local block of the same name, or the first empty one.
-        /// Returns the block number, or 0 with the reason.</summary>
-        internal static int SaveMap(ArenaMapDef map, out string error) => SaveMap(map, null, true, out error);
+        /// <summary>Saves an arena over the one of the same name, or as a new one. False with the
+        /// reason when it cannot (another arena has the name). Server only; the caller commits.</summary>
+        internal static bool SaveMap(ArenaMapDef map, out string error) => SaveMap(map, null, true, out error);
 
-        /// <summary>The same, renaming: the block saved as <paramref name="previous"/> takes the
+        /// <summary>The same, renaming: the arena saved as <paramref name="previous"/> takes the
         /// new name, and a challenge that named the old one follows it.</summary>
-        internal static int SaveMap(ArenaMapDef map, string previous, bool on, out string error)
+        internal static bool SaveMap(ArenaMapDef map, string previous, bool on, out string error)
         {
             error = null;
+            var all = ArenaLayout.Maps;
             int at = -1;
             previous = (previous ?? "").Trim();
             if (previous.Length > 0)
-                at = MapSlots.FindIndex(s => string.Equals(s.Name.Value.Trim(), previous, StringComparison.OrdinalIgnoreCase));
-            int clash = MapSlots.FindIndex(s => string.Equals(s.Name.Value.Trim(), map.Name, StringComparison.OrdinalIgnoreCase));
+                at = all.FindIndex(s => string.Equals(s.Name.Trim(), previous, StringComparison.OrdinalIgnoreCase));
+            int clash = all.FindIndex(s => string.Equals(s.Name.Trim(), map.Name, StringComparison.OrdinalIgnoreCase));
             if (at >= 0 && clash >= 0 && clash != at)
             {
                 error = $"outra arena ja se chama \"{map.Name}\"";
-                return 0;
+                return false;
             }
             if (at < 0) at = clash;
-            if (at < 0) at = MapSlots.FindIndex(s => s.Empty);
-            if (at < 0)
-            {
-                error = $"as {MapSlotCount} vagas de arena ([Arena - Local 1] a {MapSlotCount}) estao ocupadas; remova uma";
-                return 0;
-            }
-            var slot = MapSlots[at];
-            slot.Name.Value = map.Name;
-            slot.Gold.Value = ArenaSettingsParser.FormatPoint(map.Gold, map.GoldYaw);
-            slot.Green.Value = ArenaSettingsParser.FormatPoint(map.Green, map.GreenYaw);
-            slot.Spectator.Value = map.HasSpectator
-                ? string.Format(System.Globalization.CultureInfo.InvariantCulture, "{0:0.##},{1:0.##},{2:0.##}",
-                    map.Spectator.x, map.Spectator.y, map.Spectator.z)
-                : "";
-            for (int k = 0; k < MapTypes.Length; k++)
-                slot.Types[k].Value = Serves(map, MapTypes[k]);
-            slot.On.Value = on;
+            var entry = ToLayout(map, on);
+            if (at < 0) all.Add(entry);
+            else all[at] = entry;
             if (previous.Length > 0 && !string.Equals(previous, map.Name, StringComparison.OrdinalIgnoreCase))
-                foreach (var ch in ChallengeSlots.Where(c => string.Equals(c.Map.Value.Trim(), previous, StringComparison.OrdinalIgnoreCase)))
-                    ch.Map.Value = map.Name;
-            return at + 1;
+                foreach (var ch in ArenaLayout.Challenges.Where(c => string.Equals(c.Map.Trim(), previous, StringComparison.OrdinalIgnoreCase)))
+                    ch.Map = map.Name;
+            return true;
         }
 
         private static bool Serves(ArenaMapDef map, string type)
@@ -471,65 +386,49 @@ namespace NpcValheim.Arena
             }
         }
 
-        /// <summary>Empties the Local block of this arena; false when there is none.</summary>
-        internal static bool RemoveMap(string name)
-        {
-            var slot = MapSlots.FirstOrDefault(s => string.Equals(s.Name.Value.Trim(), (name ?? "").Trim(), StringComparison.OrdinalIgnoreCase));
-            if (slot == null) return false;
-            slot.On.Value = false;
-            slot.Name.Value = "";
-            slot.Gold.Value = "";
-            slot.Green.Value = "";
-            slot.Spectator.Value = "";
-            foreach (var t in slot.Types) t.Value = true;
-            return true;
-        }
+        /// <summary>Takes this arena out of the list; false when there is none. Server only;
+        /// the caller commits.</summary>
+        internal static bool RemoveMap(string name) =>
+            ArenaLayout.Maps.RemoveAll(s => string.Equals(s.Name.Trim(), (name ?? "").Trim(), StringComparison.OrdinalIgnoreCase)) > 0;
 
-        /// <summary>The Local blocks as the admin page edits them, empty ones left out.</summary>
+        /// <summary>The arenas as the admin page edits them.</summary>
         internal static List<ArenaDraft> MapDrafts() =>
-            MapSlots.Select((s, i) => s.Empty ? null : ArenaDraft.FromSlot(i, s.On.Value, s.Name.Value, s.Gold.Value, s.Green.Value,
-                s.Spectator.Value, s.Types.Select(t => t.Value).ToArray())).Where(d => d != null).ToList();
+            ArenaLayout.Maps.Select((s, i) => ArenaDraft.FromSlot(i, s.On, s.Name, s.Gold, s.Green, s.Spectator, s.Types)).ToList();
 
-        internal static ChallengeDraft ChallengeDraft(int slot)
+        internal static ChallengeDraft ChallengeDraft(ArenaLayoutChallenge s) => new ChallengeDraft
         {
-            var s = ChallengeSlots[slot];
-            return new ChallengeDraft
-            {
-                Slot = slot, On = s.On.Value, Name = s.Name.Value, Creature = s.Creature.Value, Level = s.Level.Value,
-                Health = s.Health.Value, Reward = s.RewardItem.Value, Amount = s.RewardAmount.Value, Extras = s.ExtraRewards.Value,
-                Map = s.Map.Value,
-            };
-        }
+            Id = s.Id, On = s.On, Name = s.Name, Creature = s.Creature, Level = s.Level, Health = s.Health, Reward = s.Reward,
+            Amount = s.Amount, Extras = s.Extras, Map = s.Map, Difficulty = s.Difficulty, Saved = true,
+        };
 
-        /// <summary>Every Local block as one text, for the admin page to notice a change.</summary>
-        internal static string MapsText() =>
-            string.Join("|", MapSlots.Select(s => string.Join(";", s.On.Value, s.Name.Value, s.Gold.Value, s.Green.Value,
-                s.Spectator.Value, string.Join(",", s.Types.Select(t => t.Value)))));
+        /// <summary>The whole layout as one text, for the admin page to notice a change.</summary>
+        internal static string MapsText() => ArenaLayout.Hash + ":" + ArenaLayout.Revision;
 
-        /// <summary>The challenges switched on, in slot order. With checkWorld, each creature
+        /// <summary>The challenges switched on, in the file's order. With checkWorld, each creature
         /// and reward is also checked against the running game.</summary>
         internal static List<ArenaChallengeDef> ChallengeDefs(List<string> problems, bool checkWorld)
         {
             var result = new List<ArenaChallengeDef>();
             var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            for (int i = 0; i < ChallengeSlots.Count; i++)
+            foreach (var s in ArenaLayout.Challenges)
             {
-                var s = ChallengeSlots[i];
-                if (!s.On.Value) continue;
-                string slot = "Desafio " + (i + 1);
-                var def = ArenaSettingsParser.MakeChallenge(slot, s.Name.Value, s.Creature.Value, s.Level.Value, s.Health.Value,
-                    s.RewardItem.Value, s.RewardAmount.Value, s.ExtraRewards.Value, problems);
+                if (!s.On) continue;
+                string label = "Desafio " + (s.Name.Trim().Length > 0 ? s.Name.Trim() : s.Id);
+                var def = ArenaSettingsParser.MakeChallenge(label, s.Name, s.Creature, s.Level, s.Health,
+                    s.Reward, s.Amount, s.Extras, problems);
                 if (def == null) continue;
-                string map = ArenaSettingsParser.CleanMapName(s.Map.Value);
+                def.Id = s.Id;
+                def.Difficulty = Mathf.Clamp(s.Difficulty, ArenaLayout.MinDifficulty, ArenaLayout.MaxDifficulty);
+                string map = ArenaSettingsParser.CleanMapName(s.Map);
                 def.Map = map.Length > 0 ? map : null;
                 if (!names.Add(def.Name))
                 {
-                    problems?.Add($"{slot}: o nome \"{def.Name}\" ja e de outro desafio");
+                    problems?.Add($"{label}: o nome \"{def.Name}\" ja e de outro desafio");
                     continue;
                 }
                 if (checkWorld && !ArenaChallengeCreature.Usable(def, out string why))
                 {
-                    problems?.Add($"{slot} ({def.Name}): {why}");
+                    problems?.Add($"{label} ({def.Name}): {why}");
                     continue;
                 }
                 result.Add(def);
@@ -562,6 +461,7 @@ namespace NpcValheim.Arena
                 _nextRebuild = Time.realtimeSinceStartup + 30f;
 
                 var problems = new List<string>();
+                ArenaLayoutNet.EnsureLoaded();
                 _current = Build(problems, checkWorld: true);
                 string text = string.Join("\n", problems);
                 if (!string.Equals(text, _reported, StringComparison.Ordinal))
@@ -609,7 +509,7 @@ namespace NpcValheim.Arena
                 RatedUpdateSeconds = Mathf.Max(1f, RatedUpdateSeconds.Value),
                 InviteAcceptSeconds = Mathf.Clamp(InviteAcceptSeconds.Value, 10f, 600f),
                 PreparationSeconds = Mathf.Clamp(PreparationSeconds.Value, 5f, 600f),
-                TimeLimitSeconds = Mathf.Clamp(TimeLimitMinutes.Value, 1f, 240f) * 60f,
+                TimeLimitSeconds = TimeLimitMinutes.Value <= 0f ? 0f : Mathf.Clamp(TimeLimitMinutes.Value, 1f, 240f) * 60f,
                 LeaveSeconds = Mathf.Clamp(LeaveSeconds.Value, 5f, 600f),
                 GateRadius = Mathf.Clamp(GateRadius.Value, 2f, 100f),
                 MaxPoints = Mathf.Max(0, MaxPoints.Value),
@@ -664,8 +564,10 @@ namespace NpcValheim.Arena
 
             t.ChallengeEnabled = ChallengeEnabled.Value;
             t.ChallengeMaxPlayers = Mathf.Clamp(ChallengeMaxPlayers.Value, 1, 10);
-            t.ChallengeTimeLimitSeconds = Mathf.Clamp(ChallengeTimeLimitMinutes.Value, 1f, 120f) * 60f;
+            t.ChallengeTimeLimitSeconds = ChallengeTimeLimitMinutes.Value <= 0f ? 0f : Mathf.Clamp(ChallengeTimeLimitMinutes.Value, 1f, 120f) * 60f;
             t.ChallengeCooldownSeconds = Mathf.Max(0f, ChallengeCooldownMinutes.Value) * 60f;
+            t.ChallengeStartRating = Mathf.Clamp(ChallengeStartRating.Value, 0, ArenaLayout.MaxDifficulty);
+            t.ChallengeRatingK = Mathf.Clamp(ChallengeRatingK.Value, 1f, 200f);
             t.ChallengeMaps = ArenaSettingsParser.ParseNames(ChallengeMaps.Value);
             t.Challenges = ChallengeDefs(problems, checkWorld);
             problems.AddRange(ArenaSettingsParser.UsageProblems(t));

@@ -67,14 +67,18 @@ namespace NpcValheim.Arena
         }
     }
 
-    /// <summary>One challenge as the admin page edits it ([Arena - Desafio N]).</summary>
+    /// <summary>One challenge as the admin page edits it (an entry of ArenaLayout.Challenges).</summary>
     internal sealed class ChallengeDraft
     {
-        public int Slot;
+        /// <summary>Stable: made by the page for a new challenge, kept by the server forever.</summary>
+        public string Id = "";
+        /// <summary>The server has it (false for a new one not saved yet).</summary>
+        public bool Saved;
         public bool On;
         public string Name = "", Creature = "", Reward = "", Extras = "", Map = "";
         public int Level = 1, Amount;
         public float Health = 1f;
+        public int Difficulty = ArenaLayout.DefaultDifficulty;
 
         public ChallengeDraft Clone() => (ChallengeDraft)MemberwiseClone();
     }

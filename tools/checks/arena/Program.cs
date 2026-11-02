@@ -65,7 +65,12 @@ class Program
             float.Parse(f[i + 1], System.Globalization.CultureInfo.InvariantCulture),
             float.Parse(f[i + 2], System.Globalization.CultureInfo.InvariantCulture));
 
-        public void MailItem(long playerId, string subject, string prefab, int amount) => Items.Add((playerId, prefab, amount));
+        public int LastQuality;
+        public void MailItem(long playerId, string subject, string prefab, int amount, int quality = 1)
+        {
+            Items.Add((playerId, prefab, amount));
+            LastQuality = quality;
+        }
         public void MailLetter(long playerId, string subject, string body) => Letters.Add((playerId, body));
         public readonly Dictionary<long, int> Deadcoins = new Dictionary<long, int>();
         public bool LedgerBroken;
@@ -145,6 +150,7 @@ class Program
         foreach (var kv in Names) host.Online[kv.Key] = kv.Value;
         var engine = new ArenaEngine(host, new ArenaDatabase(db));
         engine.SetTuning(tuning ?? Tuning());
+        Dbs[engine] = db;
         return (engine, host, db);
     }
 
@@ -215,6 +221,7 @@ class Program
             Bestiary();
             BestiaryKit();
             BestiarySchedule();
+            Version090();
         }
         catch (Exception ex)
         {
@@ -1525,6 +1532,194 @@ class Program
         Do(e, E, ArenaEngine.AtBattlemaster, ArenaWire.ActChallengeJoin, "Troll Furioso\n");
         Check("disabled: refused", e.MatchOf(E) == null && h.Got(E, ArenaWire.Alert, "desligados"));
     }
+
+    // ------------------------------------------------- 0.1.90: layout, no clock, edge, PvE
+
+    static ArenaTuning PveTuning(float limit)
+    {
+        var t = ChallengeTuning();
+        t.Challenges[0].Id = "troll_furioso";
+        t.Challenges[0].Difficulty = 1500;
+        t.ChallengeTimeLimitSeconds = limit;
+        t.ChallengeCooldownSeconds = 0f;
+        return t;
+    }
+
+    static void Version090()
+    {
+        Section("0.1.90: PvE rating (Elo 650 against the challenge's difficulty)");
+        // 1000 against 1500: chance 1/(1+10^(500/650)) = 0.14537; K 32.
+        Check("1000 beats a 1500 challenge: +28", ArenaRules.PveRatingMod(1000, 1500, true, 32f) == 28);
+        Check("1000 loses to it: -4", ArenaRules.PveRatingMod(1000, 1500, false, 32f) == -4);
+        Check("even: +16 / -16", ArenaRules.PveRatingMod(1500, 1500, true, 32f) == 16 && ArenaRules.PveRatingMod(1500, 1500, false, 32f) == -16);
+        Check("the PvE ladder reads as PvE", ArenaRules.BracketName(ArenaRules.PveLadder) == "PvE");
+
+        Section("0.1.90: the arenas and challenges file");
+        var maps = Enumerable.Range(1, 12).Select(i => new ArenaLayoutMap
+        {
+            On = i % 2 == 0, Name = "Arena " + i, Gold = $"{i},30,0,90", Green = $"{i + 40},30,0,270",
+            Types = new[] { true, false, true, true, i == 12 },
+        }).ToList();
+        var taken = new List<string>();
+        var challenges = new List<ArenaLayoutChallenge>();
+        for (int i = 1; i <= 9; i++)
+        {
+            var c = new ArenaLayoutChallenge
+            {
+                On = true, Name = i <= 2 ? "Troll Furioso" : "Lobo " + i, Creature = "Troll", Level = 2, Health = 1.5f,
+                Reward = "Coins", Amount = 10 * i, Extras = "TrophyTroll:1", Map = "Arena 3", Difficulty = 1000 + 100 * i,
+            };
+            c.Id = ArenaLayout.NewId(c.Name, taken);
+            taken.Add(c.Id);
+            challenges.Add(c);
+        }
+        Check("ids: from the name, accents out, a clash gets _2", taken[0] == "troll_furioso" && taken[1] == "troll_furioso_2" &&
+                                                              ArenaLayout.NewId("Ação Épica!", null) == "acao_epica");
+        Check("ids are safe on the wire", taken.All(ArenaLayout.ValidId) && !ArenaLayout.ValidId("a\tb") && !ArenaLayout.ValidId(""));
+        string json = ArenaLayout.ToJson(maps, challenges);
+        var problems = new List<string>();
+        bool ok = ArenaLayout.Parse(json, problems, out var maps2, out var challenges2);
+        Check("12 arenas and 9 challenges: written and read back", ok && problems.Count == 0 && maps2.Count == 12 && challenges2.Count == 9,
+            string.Join(" / ", problems));
+        Check("nothing changes on the way", ok && ArenaLayout.ToJson(maps2, challenges2) == json);
+        Check("fields kept: types, difficulty, id", ok && maps2[11].Types[4] && !maps2[0].Types[1] && !maps2[0].On &&
+                                                    challenges2[8].Difficulty == 1900 && challenges2[1].Id == "troll_furioso_2");
+        Check("one line on the wire", json.IndexOf('\n') < 0 && json.IndexOf('\t') < 0);
+
+        // The cfg blocks of 0.1.89, captured as orphans, become the file.
+        var orphans = new Dictionary<BepInEx.Configuration.ConfigDefinition, string>
+        {
+            { new BepInEx.Configuration.ConfigDefinition("Arena - Local 1", "Ativo"), "true" },
+            { new BepInEx.Configuration.ConfigDefinition("Arena - Local 1", "Nome"), "Coliseu" },
+            { new BepInEx.Configuration.ConfigDefinition("Arena - Local 1", "Ouro"), "1,2,3,90" },
+            { new BepInEx.Configuration.ConfigDefinition("Arena - Local 1", "Verde"), "41,2,3,270" },
+            { new BepInEx.Configuration.ConfigDefinition("Arena - Local 1", "TipoFFA"), "false" },
+            { new BepInEx.Configuration.ConfigDefinition("Arena - Desafio 3", "Ativo"), "true" },
+            { new BepInEx.Configuration.ConfigDefinition("Arena - Desafio 3", "Nome"), "Lobo Alfa" },
+            { new BepInEx.Configuration.ConfigDefinition("Arena - Desafio 3", "Criatura"), "Wolf" },
+            { new BepInEx.Configuration.ConfigDefinition("Arena - Desafio 3", "Nivel"), "3" },
+            { new BepInEx.Configuration.ConfigDefinition("Arena - Desafio 3", "Quantidade"), "50" },
+            { new BepInEx.Configuration.ConfigDefinition("Arena - Outra", "Nome"), "x" },
+        };
+        string file = Path.Combine(Path.GetTempPath(), "arenacheck-layout-" + Guid.NewGuid().ToString("N") + ".json");
+        ArenaLayout.CaptureLegacy(orphans);
+        ArenaLayout.LoadOrSeed(file, problems, out var migratedMaps, out var migratedChallenges);
+        Check("migration: the old blocks went to the file", File.Exists(file) && migratedMaps.Count == 1 && migratedMaps[0].Name == "Coliseu" &&
+                                                            !migratedMaps[0].Types[3] && migratedMaps[0].Types[0] &&
+                                                            migratedChallenges.Count == 1 && migratedChallenges[0].Id == "lobo_alfa" &&
+                                                            migratedChallenges[0].Level == 3 && migratedChallenges[0].Amount == 50);
+        ArenaLayout.LoadOrSeed(file, problems, out var again, out var againChallenges);
+        Check("migration: the second start reads the file, not the cfg", again.Count == 1 && againChallenges.Count == 1);
+        File.Delete(file);
+        ArenaLayout.LoadOrSeed(file, null, out var fresh, out var seeded);
+        Check("no file and no old blocks: the five example challenges", fresh.Count == 0 && seeded.Count == 5 && seeded.All(c => ArenaLayout.ValidId(c.Id)));
+        File.Delete(file);
+
+        Section("0.1.90: the shop sells by level and by PvE rating");
+        var offer = new ArenaOffer { Prefab = "SwordIron", Amount = 1, Points = 300, Quality = 3, PveRating = 1200 };
+        var parsed = ArenaSettingsParser.ParseOffers(ArenaSettingsParser.FormatOffer(offer), null).SingleOrDefault();
+        Check("quality= and pve= survive the cfg", parsed != null && parsed.Quality == 3 && parsed.PveRating == 1200);
+
+        Section("0.1.90: no time limit");
+        var (e, h, _) = NewEngine(PveTuning(0f));
+        var open = StartChallenge(e, h, A);
+        Advance(e, h, 1800, 5);
+        Check("limit 0: still going after 30 min", open.Status == MatchStatus.InProgress);
+        Check("the client is told there is no clock (-1)", h.Last(A, ArenaWire.State)?.Split('\n').Any(l => l.StartsWith("X\t") && l.Split('\t')[7] == "-1") == true,
+            h.Last(A, ArenaWire.State));
+        Do(e, A, "", ArenaWire.ActLeave);
+        Advance(e, h, 121);
+        (e, h, _) = NewEngine(PveTuning(300f));
+        var timed = StartChallenge(e, h, A);
+        Advance(e, h, 300);
+        Check("limit 5 min: ends with no winner", timed.Winner == ArenaSide.None && h.Got(A, ArenaWire.Alert, "Tempo esgotado"));
+        Check("a time-out moves the PvE rating like a loss", e.PlayerRecord(A).PveGames == 1 && e.PlayerRecord(A).PveRating < 1000);
+
+        Section("0.1.90: knocked out -> the arena's edge, watching");
+        Check("edge: towards where they fell, 3 m inside", ArenaEngine.EdgeSpot(new Vector3(0, 5, 0), 30f, new Vector3(-10, 0, 0)) == new Vector3(-27, 5, 0));
+        Check("edge: straight north when they fell on the centre", ArenaEngine.EdgeSpot(Vector3.zero, 30f, Vector3.zero) == new Vector3(0, 0, 27));
+        (e, h, _) = NewEngine(PveTuning(0f));
+        var watched = StartChallenge(e, h, A, B);
+        Do(e, B, "", ArenaWire.ActKo, "0");
+        var move = h.Last(B, ArenaWire.Move)?.Split('\t');
+        // Tuning(): Gold (100,30,100), Green (140,30,100) -> centre (120,30,100), radius 50; B fell at the Gold start.
+        Check("the Move says: watch, beaten by the creature, centre and radius", move != null && move.Length == 9 && move[4] == "1" &&
+                                                                              move[5] == "Troll Furioso" && move[6] == "120" && move[7] == "100" && move[8] == "50",
+            string.Join("|", move ?? new string[0]));
+        Check("to the edge on the Gold side, facing the middle", move != null && move[0] == "73" && move[2] == "100" && Math.Abs(float.Parse(move[3], System.Globalization.CultureInfo.InvariantCulture) - 90f) < 0.01f);
+        Advance(e, h, 60, 1);
+        Check("watching from the edge is not running away", watched.Seat(B).State == SeatState.Entered && watched.Status == MatchStatus.InProgress);
+        int returns = h.Sent.Count(s => s.To == B && s.Kind == ArenaWire.Return);
+        Do(e, B, "", ArenaWire.ActLeaveSpectate);
+        Check("Sair agora: home at once", h.Sent.Count(s => s.To == B && s.Kind == ArenaWire.Return) == returns + 1 && watched.Seat(B).WentHome);
+        Do(e, A, "", ArenaWire.ActLeaveSpectate);
+        Check("someone still standing cannot", !watched.Seat(A).WentHome);
+        Advance(e, h, 30, 1);
+        Check("gone home is not counted as fleeing", watched.Seat(B).State == SeatState.Entered && watched.Status == MatchStatus.InProgress);
+
+        Section("0.1.90: PvE rating and best times");
+        h.Creatures.Remove(watched.Id);
+        Advance(e, h, 1.5);
+        Check("the group wins: both +28 (1000 against 1500)", watched.Winner == ArenaSide.Gold &&
+                                                             e.PlayerRecord(A).PveRating == 1028 && e.PlayerRecord(B).PveRating == 1028 &&
+                                                             e.PlayerRecord(A).PveGames == 1 && e.PlayerRecord(A).PveWins == 1);
+        var result = h.Last(A, ArenaWire.Result) ?? "";
+        Check("the result: first time is a record, PvE before and change", result.Split('\n')[0].Split('\t').Last() == "1" &&
+                                                                         result.Contains("Bravo\t0\tderrotado\t1000\t28"), result);
+        Check("the best time is kept", e.BestTimes("troll_furioso").Count == 1 && e.BestTimes("troll_furioso")[0].Names == "Alfa, Bravo");
+        Advance(e, h, 121);
+        Check("the one who left early is not sent home twice", h.Sent.Count(s => s.To == B && s.Kind == ArenaWire.Return) == returns + 1);
+
+        var slower = StartChallenge(e, h, A);
+        Advance(e, h, 200, 2);
+        h.Creatures.Remove(slower.Id);
+        Advance(e, h, 1.5);
+        Check("a slower win: no record, second place", (h.Last(A, ArenaWire.Result) ?? "").Split('\n')[0].EndsWith("\t0") &&
+                                                       e.BestTimes("troll_furioso").Count == 2 &&
+                                                       e.BestTimes("troll_furioso")[0].Seconds < e.BestTimes("troll_furioso")[1].Seconds);
+        Advance(e, h, 121);
+
+        int before = e.PlayerRecord(A).PveRating;
+        var lost = StartChallenge(e, h, A);
+        int movesBefore = h.Sent.Count(s => s.To == A && s.Kind == ArenaWire.Move);
+        Do(e, A, "", ArenaWire.ActKo, "0");
+        Check("a knockout that ends the match sends nobody to the edge",
+            h.Sent.Count(s => s.To == A && s.Kind == ArenaWire.Move) == movesBefore && lost.Status == MatchStatus.WaitLeave);
+        Check("a loss takes PvE rating, keeps the wins", lost.Winner == ArenaSide.Green && e.PlayerRecord(A).PveRating < before &&
+                                                        e.PlayerRecord(A).PveWins == 2 && e.PlayerRecord(A).PveGames == 3);
+        Advance(e, h, 121);
+        Check("the PvP ratings are untouched", e.PlayerRecord(A).MmrOf(2, 1500) == 1500 && !e.Teams.Any());
+
+        Do(e, A, "", ArenaWire.ActLadder, ArenaRules.PveLadder.ToString());
+        var ladder = h.Last(A, ArenaWire.Ladder) ?? "";
+        Check("the PvE ladder: players by rating, then the best times", ladder.StartsWith("L\t-1") &&
+                                                                       ladder.Contains("P\t1\tAlfa\t") && ladder.Contains("P\t2\tBravo\t1028\t1\t1\t0") &&ladder.Contains("B\tTroll Furioso\t1\t"), ladder);
+        Check("the panel gets the PvE rating", h.Last(A, ArenaWire.State)?.Split('\n')[0].Split('\t').Length >= 6);
+
+        // A server restart keeps the records.
+        var (e2, h2, _) = NewEngine(PveTuning(0f), e == null ? null : FindDb(e));
+        Check("best times survive a restart", e2.BestTimes("troll_furioso").Count == 2);
+
+        Section("0.1.90: the shop's PvE requirement");
+        var shop = PveTuning(0f);
+        shop.Offers = new List<ArenaOffer>
+        {
+            new ArenaOffer { Prefab = "SwordIron", Amount = 1, Points = 100, Quality = 3, PveRating = 1100 },
+            new ArenaOffer { Prefab = "ArmorKit1", Amount = 1, Points = 100, PveRating = 1000 },
+        };
+        e2.SetTuning(shop);
+        e2.PlayerRecord(B).Points = 500;
+        Do(e2, B, ArenaEngine.AtVendor, ArenaWire.ActVendorBuy, "SwordIron\n100");
+        Check("below the PvE requirement: refused", h2.Items.Count == 0 && h2.Got(B, ArenaWire.Alert, "rating PvE 1100"));
+        Do(e2, B, ArenaEngine.AtVendor, ArenaWire.ActVendorBuy, "ArmorKit1\n100");
+        Check("at or above it: sold", h2.Items.Count == 1 && e2.PlayerRecord(B).Points == 400);
+        e2.PlayerRecord(B).PveRating = 1200;
+        Do(e2, B, ArenaEngine.AtVendor, ArenaWire.ActVendorBuy, "SwordIron\n100");
+        Check("the item goes at its level", h2.Items.Count == 2 && h2.LastQuality == 3);
+    }
+
+    static readonly Dictionary<ArenaEngine, string> Dbs = new Dictionary<ArenaEngine, string>();
+    static string FindDb(ArenaEngine e) => Dbs.TryGetValue(e, out var db) ? db : null;
 
     // ----------------------------------------------------------------------- bestiary
 

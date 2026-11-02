@@ -30,6 +30,7 @@ namespace NpcValheim.Arena
             // A client knows no bestiary until this server sends one; the server reads its file
             // on the first tick of the session (ArenaBestiaryNet.EnsureLoaded).
             ArenaBestiary.Forget();
+            ArenaLayout.Forget();
             rpc.Register(RpcRequest, (Action<long, string, string>)OnRequest);
             rpc.Register(RpcMessage, (Action<long, string, string>)OnMessage);
             rpc.Register(ArenaBeastFx.Rpc, (Action<long, ZPackage>)ArenaBeastFx.OnRpc);
@@ -119,10 +120,19 @@ namespace NpcValheim.Arena
             // server knows the peer's character, and must not be dropped with the rest below.
             try
             {
-                if (action == ArenaWire.ActHello) ArenaBestiaryNet.SendHash(sender);
+                if (action == ArenaWire.ActHello)
+                {
+                    ArenaBestiaryNet.SendHash(sender);
+                    ArenaLayoutNet.SendHash(sender);
+                }
                 if (action == ArenaWire.ActBestiaryGet)
                 {
                     ArenaBestiaryNet.SendTo(sender);
+                    return;
+                }
+                if (action == ArenaWire.ActLayoutGet)
+                {
+                    ArenaLayoutNet.SendTo(sender);
                     return;
                 }
             }
@@ -164,7 +174,8 @@ namespace NpcValheim.Arena
                 }
                 if (action == ArenaWire.ActAdminMapSet || action == ArenaWire.ActAdminMapRemove ||
                     action == ArenaWire.ActAdminOfferSet || action == ArenaWire.ActAdminOfferRemove ||
-                    action == ArenaWire.ActAdminPointsSet || action == ArenaWire.ActAdminChallengeSet)
+                    action == ArenaWire.ActAdminPointsSet || action == ArenaWire.ActAdminChallengeSet ||
+                    action == ArenaWire.ActAdminChallengeRemove)
                 {
                     HandleCfgEdit(sender, name, admin, action, payload ?? "");
                     return;
@@ -248,23 +259,49 @@ namespace NpcValheim.Arena
                 ArenaNet.Send(sender, ArenaWire.Notice, "Só admin.");
                 return;
             }
-            string arena = payload.Trim();
+            // "arena" or "arena\nraio": with a radius, the area that holds the starts keeps its
+            // centre and takes that radius (the page's < > buttons).
+            var f = payload.Split('\n');
+            string arena = f[0].Trim();
             var map = ArenaConfig.ConfiguredMaps(null).FirstOrDefault(m => string.Equals(m.Name, arena, StringComparison.OrdinalIgnoreCase));
             if (map == null)
             {
                 ArenaNet.Send(sender, ArenaWire.Notice, $"Salve a arena \"{arena}\" com os dois inícios marcados antes de criar a área.");
                 return;
             }
-            ArenaNet.Send(sender, ArenaWire.Notice, MakeZoneAround(name, map, force: true));
+            float? radius = null;
+            if (f.Length > 1 && f[1].Trim().Length > 0)
+            {
+                if (!float.TryParse(f[1].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out float r) ||
+                    r < ArenaSettingsParser.MinZoneRadius || r > ArenaSettingsParser.MaxZoneRadius)
+                {
+                    ArenaNet.Send(sender, ArenaWire.Notice,
+                        $"Raio entre {ArenaSettingsParser.MinZoneRadius:0} e {ArenaSettingsParser.MaxZoneRadius:0} m.");
+                    return;
+                }
+                radius = r;
+            }
+            ArenaNet.Send(sender, ArenaWire.Notice, MakeZoneAround(name, map, force: true, radius));
         }
 
         /// <summary>The area around an arena, when no area holds both starts (or always, with
-        /// force): a Deadheim ArenaZone named after the arena. Returns what to tell the admin.</summary>
-        private static string MakeZoneAround(string admin, ArenaMapDef map, bool force)
+        /// force): a Deadheim ArenaZone named after the arena. With <paramref name="radius"/>,
+        /// the area already holding both starts is resized instead (same centre), refused when
+        /// the new circle would leave a start outside. Returns what to tell the admin.</summary>
+        private static string MakeZoneAround(string admin, ArenaMapDef map, bool force, float? radius = null)
         {
             if (!ArenaDeadheim.Installed) return "";
             if (!force && ArenaDeadheim.CoversMap(map, out _)) return "";
             var zone = ArenaHealth.ZoneAround(map.Name, map.Gold, map.Green);
+            if (radius != null)
+            {
+                var holder = ArenaSettingsParser.ZoneHolding(ArenaDeadheim.Zones(), map.Gold, map.Green);
+                if (holder != null) zone = new ArenaZone { Name = holder.Name, X = holder.X, Z = holder.Z, Radius = holder.Radius };
+                zone.Radius = radius.Value;
+                if (!zone.Contains(map.Gold) || !zone.Contains(map.Green))
+                    return string.Format(CultureInfo.InvariantCulture,
+                        " Com {0:0} m os inícios ficariam fora da área \"{1}\": aumente o raio.", radius.Value, zone.Name);
+            }
             string before = ArenaDeadheim.ZonesText;
             string after = ArenaSettingsParser.SetZone(before, zone.Name, zone.X, zone.Z, zone.Radius);
             if (!ArenaDeadheim.TryWriteZones(after, out string why)) return " Não consegui criar a área de PvP: " + why + ".";
@@ -274,10 +311,10 @@ namespace NpcValheim.Arena
         }
 
         /// <summary>
-        /// An arena (Maps) or an Intendente item (Items) saved or removed from an admin page.
-        /// The entry is parsed exactly as the cfg is, so the page cannot save what the server
-        /// would then refuse to read; the cfg is saved and ServerSync sends it to everyone,
-        /// all from the setting changing, as if the file had been edited by hand.
+        /// An arena, a challenge, an Intendente item or the points per match saved or removed
+        /// from an admin page. Each entry is parsed exactly as the server reads it, so the page
+        /// cannot save what would then be refused. Arenas and challenges go to arena-locais.json
+        /// (ArenaLayoutNet.Commit sends it to everyone); the rest is the cfg, which ServerSync sends.
         /// </summary>
         private static void HandleCfgEdit(long sender, string name, bool admin, string action, string payload)
         {
@@ -309,12 +346,12 @@ namespace NpcValheim.Arena
                         ArenaNet.Send(sender, ArenaWire.Notice, "Nome de arena inválido (sem ; ou |, até 32 letras).");
                         return;
                     }
-                    int slot = ArenaConfig.SaveMap(map, previous, on, out string full);
-                    if (slot == 0)
+                    if (!ArenaConfig.SaveMap(map, previous, on, out string full))
                     {
                         ArenaNet.Send(sender, ArenaWire.Notice, "Não salvei: " + full + ".");
                         return;
                     }
+                    if (!ArenaLayoutNet.Commit(sender)) return;
                     done = $"Arena \"{map.Name}\" salva" + (on ? "." : " (desligada).") + MakeZoneAround(name, map, force: false);
                     if (!ArenaDeadheim.CoversMap(map, out string why)) done += " Ainda não vale: " + why + ".";
                     break;
@@ -327,6 +364,7 @@ namespace NpcValheim.Arena
                         ArenaNet.Send(sender, ArenaWire.Notice, $"Não há arena \"{map}\".");
                         return;
                     }
+                    if (!ArenaLayoutNet.Commit(sender)) return;
                     done = $"Arena \"{map}\" removida.";
                     break;
                 }
@@ -393,15 +431,21 @@ namespace NpcValheim.Arena
                 }
                 case ArenaWire.ActAdminChallengeSet:
                 {
-                    // "slot/ativo/nome/criatura/nivel/vida/recompensa/quantidade/extras", uma linha cada:
-                    // one [Arena - Desafio N] block, as the Battlemaster's form fills it.
+                    // "id/ativo/nome/criatura/nivel/vida/recompensa/quantidade/extras/arena/dificuldade",
+                    // uma linha cada: one challenge of arena-locais.json, as the admin page fills it.
+                    // An id not in the list is a new challenge (the page makes the id).
                     var f = payload.Split('\n');
                     var inv = System.Globalization.CultureInfo.InvariantCulture;
-                    if ((f.Length != 9 && f.Length != 10) ||
-                        !int.TryParse(f[0].Trim(), System.Globalization.NumberStyles.Integer, inv, out int slot) ||
-                        slot < 1 || slot > ArenaConfig.ChallengeSlots.Count)
+                    string id = f.Length > 0 ? f[0].Trim() : "";
+                    if (f.Length != 11 || !ArenaLayout.ValidId(id))
                     {
                         ArenaNet.Send(sender, ArenaWire.Notice, "Pedido de desafio malformado.");
+                        return;
+                    }
+                    if (!int.TryParse(f[10].Trim(), System.Globalization.NumberStyles.Integer, inv, out int difficulty) ||
+                        difficulty < ArenaLayout.MinDifficulty || difficulty > ArenaLayout.MaxDifficulty)
+                    {
+                        ArenaNet.Send(sender, ArenaWire.Notice, $"Dificuldade de {ArenaLayout.MinDifficulty} a {ArenaLayout.MaxDifficulty}.");
                         return;
                     }
                     string creature = System.Array.Find(ArenaSettingsParser.ChallengeCreatures,
@@ -445,25 +489,49 @@ namespace NpcValheim.Arena
                         ArenaNet.Send(sender, ArenaWire.Notice, $"\"{reward}\" não é um item que o jogo conhece (use o prefab, ex.: Coins).");
                         return;
                     }
-                    string label = "Desafio " + slot;
-                    var def = ArenaSettingsParser.MakeChallenge(label, f[2], creature, level, health, reward, amount, f[8], problems);
+                    var def = ArenaSettingsParser.MakeChallenge("Desafio", f[2], creature, level, health, reward, amount, f[8], problems);
                     if (def == null || problems.Count > 0)
                     {
                         ArenaNet.Send(sender, ArenaWire.Notice, problems.Count > 0 ? problems[0] : "Desafio inválido.");
                         return;
                     }
-                    var s = ArenaConfig.ChallengeSlots[slot - 1];
-                    s.On.Value = f[1].Trim() == "1";
-                    s.Name.Value = def.Name;
-                    s.Creature.Value = creature;
-                    s.Level.Value = level;
-                    s.Health.Value = health;
-                    s.RewardItem.Value = reward;
-                    s.RewardAmount.Value = amount;
-                    s.ExtraRewards.Value = f[8].Trim();
-                    if (f.Length == 10) s.Map.Value = ArenaSettingsParser.CleanMapName(f[9]);
-                    done = $"{label} salvo: {def.Name} ({creature}, nível {level}, vida x{health.ToString("0.##", inv)})" +
-                           (s.On.Value ? ", ligado." : ", desligado.");
+                    // The name is what the Battlemaster and the queue go by: one challenge per name.
+                    if (ArenaLayout.Challenges.Any(c => !string.Equals(c.Id, id, StringComparison.OrdinalIgnoreCase) &&
+                                                        string.Equals(c.Name.Trim(), def.Name, StringComparison.OrdinalIgnoreCase)))
+                    {
+                        ArenaNet.Send(sender, ArenaWire.Notice, $"Já há um desafio chamado \"{def.Name}\".");
+                        return;
+                    }
+                    var s = ArenaLayout.Challenge(id);
+                    bool isNew = s == null;
+                    if (isNew) ArenaLayout.Challenges.Add(s = new ArenaLayoutChallenge { Id = id });
+                    s.On = f[1].Trim() == "1";
+                    s.Name = def.Name;
+                    s.Creature = creature;
+                    s.Level = level;
+                    s.Health = health;
+                    s.Reward = reward;
+                    s.Amount = amount;
+                    s.Extras = f[8].Trim();
+                    s.Map = ArenaSettingsParser.CleanMapName(f[9]);
+                    s.Difficulty = difficulty;
+                    if (!ArenaLayoutNet.Commit(sender)) return;
+                    done = $"Desafio {(isNew ? "criado" : "salvo")}: {def.Name} ({creature}, nível {level}, vida x{health.ToString("0.##", inv)}, " +
+                           $"dificuldade {difficulty})" + (s.On ? ", ligado." : ", desligado.");
+                    break;
+                }
+                case ArenaWire.ActAdminChallengeRemove:
+                {
+                    string id = payload.Trim();
+                    var s = ArenaLayout.Challenge(id);
+                    if (s == null)
+                    {
+                        ArenaNet.Send(sender, ArenaWire.Notice, "Esse desafio não existe mais.");
+                        return;
+                    }
+                    ArenaLayout.Challenges.Remove(s);
+                    if (!ArenaLayoutNet.Commit(sender)) return;
+                    done = $"Desafio \"{s.Name}\" removido.";
                     break;
                 }
                 default:
@@ -576,8 +644,8 @@ namespace NpcValheim.Arena
                 if (_online.TryGetValue(playerId, out var p)) ArenaNet.Send(p.Peer, kind, payload);
             }
 
-            public void MailItem(long playerId, string subject, string prefab, int amount) =>
-                MailDatabase.SendItem(playerId, subject, prefab, 1, amount);
+            public void MailItem(long playerId, string subject, string prefab, int amount, int quality = 1) =>
+                MailDatabase.SendItem(playerId, subject, prefab, Math.Max(1, quality), amount);
 
             public void MailLetter(long playerId, string subject, string body) =>
                 MailDatabase.SendMessage(playerId, 0L, "Mestre da Arena", subject, body);
