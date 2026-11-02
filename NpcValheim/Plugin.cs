@@ -20,7 +20,7 @@ namespace NpcValheim
     {
         public const string Guid = "com.npcvalheim.mod";
         public const string Name = "NpcValheim";
-        public const string Version = "0.1.89";
+        public const string Version = "0.1.90";
 
         internal static ManualLogSource Log;
         private Harmony _harmony;
@@ -169,14 +169,18 @@ namespace NpcValheim
                 "Bloqueia o teleportador (rotas e Voltar para casa) para quem carrega minério ou metal, como o portal do jogo. " +
                 "O mundo com 'teletransportar tudo' libera mesmo ligado.");
 
-            QuestJournalKey = Config.Bind("Quests", "JournalKey", UnityEngine.KeyCode.J,
-                "Opens the player's quest journal from anywhere in the world.");
+            // 0.1.90: no key by default. The journal, the shop and the admin panel open from the
+            // Deadheim Central (Tab, next to the inventory) and from ESC > Deadheim > Admin. The keys
+            // were renamed (JournalKey, ShopKey, PanelKey) so the J/F7/F8 already written in an
+            // existing cfg do not come back; set one here to have a shortcut again.
+            QuestJournalKey = Config.Bind("Quests", "AtalhoDiario", UnityEngine.KeyCode.None,
+                "Tecla que abre o diario de missoes de qualquer lugar. None = sem tecla (o diario abre pela Central Deadheim, no Tab).");
 
-            VipShopKey = Config.Bind("VIP", "ShopKey", UnityEngine.KeyCode.F7,
-                "VIP-only shortcut that opens the Deadcoins shop from anywhere in the world. It opens nothing else.");
+            VipShopKey = Config.Bind("VIP", "AtalhoLoja", UnityEngine.KeyCode.None,
+                "So VIP: tecla que abre a Loja Deadcoins de qualquer lugar. None = sem tecla (a loja abre pela Central Deadheim, no Tab).");
 
-            AdminPanelKey = Config.Bind("Admin", "PanelKey", UnityEngine.KeyCode.F8,
-                "Admin-only: opens the Deadheim admin panel (global message, go to / pull a player, buff and heal in an area).");
+            AdminPanelKey = Config.Bind("Admin", "AtalhoPainel", UnityEngine.KeyCode.None,
+                "So admin: tecla que abre o Painel de Admin do Deadheim. None = sem tecla (o painel abre em ESC > Deadheim > Admin).");
 
             ShowQuestTracker = Config.Bind("Quests", "ShowTracker", true,
                 "Shows the on-screen objective tracker: what you are doing and how far along, without opening a menu.");

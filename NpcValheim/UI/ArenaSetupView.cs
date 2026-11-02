@@ -49,7 +49,7 @@ namespace NpcValheim.UI
             ["goto"] = ("Ir até a arena", "Teleporta você para o início Ouro desta arena."),
             ["remove"] = ("Remover", "Apaga o bloco da cfg. Uma partida em andamento nessa arena termina normalmente."),
             ["challengeArena"] = ("Arena do desafio", "Qualquer uma = a primeira arena livre marcada para Desafio contra criatura. Escolha uma para o desafio acontecer sempre nela."),
-            ["creature"] = ("Criatura", "Do jogo: uma criatura comum, com nível e vida daqui. Bestiário: uma criatura montada na aba Bestiário do F8, com nível, vida, ataques e habilidades de lá."),
+            ["creature"] = ("Criatura", "Do jogo: uma criatura comum, com nível e vida daqui. Bestiário: uma criatura montada na aba Bestiário do Painel de Admin, com nível, vida, ataques e habilidades de lá."),
             ["level"] = ("Força", "Nível do jogo: 1 = sem estrela, 2 = uma, 3 = duas; acima disso a vida e o dano sobem mais."),
             ["health"] = ("Vida x", "Multiplica a vida por cima do nível (2 = o dobro)."),
             ["reward"] = ("Recompensa", "Item que cada jogador recebe pela Caixa Postal quando a criatura cai: o nome do item no jogo (Coins = moedas) e a quantidade."),
@@ -474,7 +474,7 @@ namespace NpcValheim.UI
             var list = CreatureList(!FromBestiary(c));
             if (list.Length == 0)
             {
-                Say("O Bestiário está vazio: crie uma criatura na aba Bestiário do F8.");
+                Say("O Bestiário está vazio: crie uma criatura na aba Bestiário do Painel de Admin.");
                 return;
             }
             c.Creature = list[0];

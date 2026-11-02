@@ -234,7 +234,7 @@ namespace NpcValheim.Arena
                 "Modos: 1v1, 2v2, 3v3, ffa, pve (desafio). Empate conta como derrota. So recebe quem terminou dentro da arena " +
                 "(quem fugiu ou abandonou nao recebe). Vitoria sem nenhum adversario derrotado (W.O.: o outro lado fugiu, recusou ou caiu) " +
                 "paga como derrota. Vale para ranqueada e escaramuca. Modo fora da lista = 0. " +
-                "Tambem se edita no jogo, no F8, aba Arena > Pontos. E a unica fonte de Pontos de Arena " +
+                "Tambem se edita no jogo, no Painel de Admin (ESC > Deadheim > Admin), aba Arena > Pontos. E a unica fonte de Pontos de Arena " +
                 "(nao ha distribuicao periodica).");
             MatchPointsDailyCap = S(config, points, "PorPartidaTetoDiario", 300,
                 "Maximo de pontos por partida que um jogador ganha por dia (UTC). 0 = sem teto.");
@@ -247,7 +247,7 @@ namespace NpcValheim.Arena
                 "separados por |. rating = o menor entre pessoal e do time, num time do tamanho 'bracket' ou maior " +
                 "(0 = sem requisito). O item vai pelo correio. prefab=Deadcoins vende Deadcoins: amount = quantos Deadcoins " +
                 "vao direto para o saldo do comprador (ex.: prefab=Deadcoins;amount=10;points=200)." +
-                " Tambem se edita no jogo, no F8, aba Arena > Loja.");
+                " Tambem se edita no jogo, no Painel de Admin (ESC > Deadheim > Admin), aba Arena > Loja.");
 
             const string challenge = "Arena - Desafio";
             ChallengeEnabled = S(config, challenge, "Enabled", true,
@@ -311,11 +311,11 @@ namespace NpcValheim.Arena
                         "Nome da arena (o que os jogadores veem no placar). Sem ; nem |, ate 32 letras."),
                     Gold = S(config, section, "Ouro", "",
                         "Inicio do time Ouro: x,y,z,giro (giro = para onde o jogador olha, em graus; opcional). " +
-                        "Ex.: 100,30,100,90. No F8, aba Arena, 'Marcar aqui' preenche com onde voce esta."),
+                        "Ex.: 100,30,100,90. No Painel de Admin (ESC > Deadheim > Admin), aba Arena, 'Marcar aqui' preenche com onde voce esta."),
                     Green = S(config, section, "Verde", "",
                         "Inicio do time Verde: x,y,z,giro. No desafio (PvE) a criatura nasce aqui. No FFA metade nasce no Ouro e metade aqui. " +
                         "Os dois inicios precisam estar a menos de 300 m um do outro e dentro de uma area de arena (ArenaZones do " +
-                        "Deadheim: PvP sempre, sem perda de skill), criada sozinha quando a arena e salva pelo F8; quem sai da area durante a partida fugiu."),
+                        "Deadheim: PvP sempre, sem perda de skill), criada sozinha quando a arena e salva pelo Painel de Admin; quem sai da area durante a partida fugiu."),
                     Spectator = S(config, section, "Espectador", "",
                         "Opcional: x,y,z para onde vai quem foi derrotado, assistindo o resto. Vazio = fica no proprio inicio."),
                     Types = new ConfigEntry<bool>[MapTypes.Length],

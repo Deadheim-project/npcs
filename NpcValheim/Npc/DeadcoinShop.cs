@@ -559,7 +559,7 @@ namespace NpcValheim.Npc
                     ServeBalance(sender);
                     break;
                 case ActionBuy:
-                    ServePurchase(sender, payload ?? "", "VIP remote (F7)");
+                    ServePurchase(sender, payload ?? "", "VIP remote (Central)");
                     break;
                 default:
                     Plugin.Log.LogWarning($"NpcValheim: unknown remote Deadcoins request '{action}' from peer {sender}");

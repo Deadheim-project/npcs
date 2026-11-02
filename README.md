@@ -407,12 +407,12 @@ quando esta versão entrar.
   conexão, se ele estiver online; pelo nome entre os arquivos existentes, se
   estiver offline e houver só uma conta com esse nome) e grava o novo saldo. O
   saldo nunca fica negativo, e o jogador online vê o valor novo na hora. Não
-  aparece na loja remota (F7).
+  aparece na loja remota (Central Deadheim).
 - **Itens pelo NPC:** a aba **Itens (admin)** da loja edita a lista: item (nome do
   jogo, como "Madeira", ou o prefab, "Wood"), quantidade por compra e preço, **Salvar**
   (mesmo item = muda), **Editar** / **Remover** em cada linha. O servidor confere o
   admin e o item e grava `[DeadcoinShop] Items` no cfg; o ServerSync manda a lista
-  nova a todos, então a loja, o F7 e o arquivo nunca discordam.
+  nova a todos, então a loja, a loja remota e o arquivo nunca discordam.
 - **Log:** `BepInEx/config/DonationShop/log/log.txt`, uma linha por compra ou
   crédito de admin com data, conta e o saldo antes e depois. O log do servidor
   também mostra, uma vez por minuto por jogador, qual arquivo de saldo foi lido.
@@ -440,14 +440,15 @@ couber cai no chão, como no Mercador.
 Não há checagem de distância. Saldo e preço nunca saem do servidor, então estar
 perto do balcão não protege nada.
 
-### F7: a loja em qualquer lugar, só para VIP
+### A loja em qualquer lugar, só para VIP
 
-Um VIP abre a Loja Deadcoins de qualquer lugar do mapa com **F7**
-(`VIP.ShopKey`). O F7 não abre mais nada: os outros NPCs precisam ser
-visitados. Ver *Acesso VIP*.
+Um VIP abre a Loja Deadcoins de qualquer lugar do mapa pela **Central Deadheim**
+(o painel ao lado do inventário, no Tab, do mod Deadheim 7.9.0). Desde a 0.1.90
+não há tecla por padrão; quem quiser uma define `VIP.AtalhoLoja` (era `VIP.ShopKey`,
+F7). A loja não abre outros NPCs: eles precisam ser visitados. Ver *Acesso VIP*.
 
 A loja não precisa de NPC, porque o saldo é do jogador e a lista é do servidor.
-Pelo F7 ela abre sozinha e fala direto com o servidor por uma RPC própria
+Pela Central ela abre sozinha e fala direto com o servidor por uma RPC própria
 (`NpcValheim_DeadcoinRemoteRequest`). O **servidor** confere se quem pediu é VIP
 antes de responder, e um não-VIP recebe "A loja remota é só para VIP". No NPC, a
 compra continua valendo para todo mundo.
@@ -908,8 +909,8 @@ aceitar/entregar missões funcionam para qualquer jogador. A permissão governa
 ### Acesso VIP
 
 Com `VipList.dll` instalado, um jogador presente em `Detalhes.VipList.cfg` pode
-pressionar **F7** em qualquer lugar do mapa para abrir a **Loja Deadcoins**, e só
-ela. A tecla pode ser alterada em `VIP.ShopKey`.
+abrir a **Loja Deadcoins** de qualquer lugar do mapa pela Central Deadheim (Tab), e só
+ela. Uma tecla pode ser definida em `VIP.AtalhoLoja` (padrão: nenhuma).
 
 Até a 0.1.50 o F7 abria um diretório com todos os NPCs do servidor, cada um por
 meio de uma cópia escondida criada ao lado do VIP. Isso saiu de propósito: os
