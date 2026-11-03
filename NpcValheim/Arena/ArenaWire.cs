@@ -33,11 +33,17 @@ namespace NpcValheim.Arena
         internal const string Layout = "layout";
         /// <summary>The layout's hash, on the hello: the client asks for the JSON only when its own differs.</summary>
         internal const string LayoutHash = "layoutHash";
+        /// <summary>The classes of the Arena balanceada as JSON (ArenaClasses), like the layout.</summary>
+        internal const string Classes = "classes";
+        internal const string ClassesHash = "classesHash";
 
         // client -> server actions
         internal const string ActData = "data";
         internal const string ActBestiaryGet = "bestiary.get";
         internal const string ActLayoutGet = "layout.get";
+        internal const string ActClassesGet = "classes.get";
+        /// <summary>Arena balanceada: the client wears its class's kit ("matchId\nclassId").</summary>
+        internal const string ActKit = "match.kit";
         internal const string ActHello = "hello";
         internal const string ActCharterBuy = "charter.buy";
         internal const string ActCharterOffer = "charter.offer";
@@ -79,6 +85,9 @@ namespace NpcValheim.Arena
         internal const string ActAdminBeastSet = "admin.beast.set";
         internal const string ActAdminBeastRemove = "admin.beast.del";
         internal const string ActAdminBeastSpawn = "admin.beast.spawn";
+        internal const string ActAdminClassSet = "admin.class.set";
+        internal const string ActAdminClassRemove = "admin.class.del";
+        internal const string ActAdminBalancedSet = "admin.balanced.set";
 
         internal static string Clean(string text) =>
             string.IsNullOrEmpty(text) ? "" : text.Replace('\t', ' ').Replace('\n', ' ').Replace('\r', ' ');

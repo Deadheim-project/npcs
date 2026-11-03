@@ -80,6 +80,13 @@ namespace NpcValheim.Arena
         internal static ConfigEntry<float> ChallengeRatingK;
         internal static ConfigEntry<string> ChallengeMaps;
 
+        internal enum BalancedRating { Misturado, Separado }
+
+        internal static ConfigEntry<bool> BalancedEnabled;
+        internal static ConfigEntry<bool> BalancedFfa;
+        internal static ConfigEntry<BalancedRating> BalancedRatingMode;
+        internal static ConfigEntry<float> KitDeadlineSeconds;
+
         /// <summary>The kinds of match an arena may host, as the usage text and the layout file
         /// write them.</summary>
         internal static readonly string[] MapTypes = { "1v1", "2v2", "3v3", "ffa", "pve" };
@@ -237,6 +244,21 @@ namespace NpcValheim.Arena
             ChallengeMaps = S(config, challenge, "Maps", "",
                 "Antigo, opcional: nomes de arenas que os desafios podem usar, separados por virgula. Vazio = qualquer arena " +
                 "livre marcada para Desafio. Prefira marcar o uso na propria arena (Painel de Admin, aba Arena).");
+
+            const string balanced = "Arena - Balanceada";
+            BalancedEnabled = S(config, balanced, "Enabled", true,
+                "Arena balanceada: fila separada (ranqueada, escaramuca e FFA) em que o equipamento, a comida e as skills de cada um " +
+                "nao contam. O jogador marca \"Arena balanceada\" no painel da Arena e escolhe uma classe; na partida ele luta com o kit " +
+                "da classe (armadura fixa e um cinto de armas trocadas pelas teclas 1 a 8) e o equipamento dele volta no fim. " +
+                "As classes ficam em config/NpcValheim/arena-classes.json e se editam no Painel de Admin, aba Arena > Balanceada.");
+            BalancedFfa = S(config, balanced, "FFA", true,
+                "Permite o FFA balanceado (alem da ranqueada e da escaramuca balanceadas). Segue [Arena - FFA] Enabled.");
+            BalancedRatingMode = S(config, balanced, "Rating", BalancedRating.Misturado,
+                "Misturado = a ranqueada balanceada mexe no mesmo rating da ranqueada normal. Separado = rating proprio " +
+                "(do time, pessoal e MMR), com aba propria no Ranking.");
+            KitDeadlineSeconds = S(config, balanced, "PrazoKit", 20f,
+                "Segundos, depois de entrar, para o jogo vestir o kit da classe e o servidor ver. Sem isso o jogador sai da partida " +
+                "antes de comecar, sem perder rating (10 a 60).");
 
             // The arenas and challenges are no longer cfg blocks: they live in
             // config/NpcValheim/arena-locais.json (ArenaLayout), as many as the admin makes. The
@@ -436,6 +458,26 @@ namespace NpcValheim.Arena
             return result;
         }
 
+        /// <summary>The classes switched on, in the file's order. With checkWorld, each item is also
+        /// checked against the running game; a class with a problem is named and left out.</summary>
+        internal static List<ArenaClassDef> ClassDefs(List<string> problems, bool checkWorld)
+        {
+            ArenaClassesNet.EnsureLoaded();
+            var result = new List<ArenaClassDef>();
+            foreach (var c in ArenaClasses.All)
+            {
+                if (!c.On) continue;
+                var found = checkWorld ? ArenaClassesNet.Problems(c) : ArenaClasses.Problems(c);
+                if (found.Count > 0)
+                {
+                    foreach (var p in found) problems?.Add($"Classe {(c.Name.Length > 0 ? c.Name : c.Id)}: {p}");
+                    continue;
+                }
+                result.Add(c);
+            }
+            return result;
+        }
+
         private static ConfigEntry<T> S<T>(ConfigFile config, string section, string key, T value, string description) =>
             S(config, section, key, value, new ConfigDescription(description));
 
@@ -570,6 +612,14 @@ namespace NpcValheim.Arena
             t.ChallengeRatingK = Mathf.Clamp(ChallengeRatingK.Value, 1f, 200f);
             t.ChallengeMaps = ArenaSettingsParser.ParseNames(ChallengeMaps.Value);
             t.Challenges = ChallengeDefs(problems, checkWorld);
+
+            t.BalancedEnabled = BalancedEnabled.Value;
+            t.BalancedFfa = BalancedFfa.Value;
+            t.BalancedSeparateRating = BalancedRatingMode.Value == BalancedRating.Separado;
+            t.KitDeadlineSeconds = Mathf.Clamp(KitDeadlineSeconds.Value, 10f, 60f);
+            t.Classes = ClassDefs(problems, checkWorld);
+            if (t.BalancedEnabled && t.Classes.Count == 0)
+                problems.Add("Arena balanceada: nenhuma classe ligada e sem problemas (Painel de Admin, aba Arena > Balanceada)");
             problems.AddRange(ArenaSettingsParser.UsageProblems(t));
             return t;
         }

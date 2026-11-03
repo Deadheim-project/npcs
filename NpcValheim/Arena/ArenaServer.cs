@@ -31,6 +31,7 @@ namespace NpcValheim.Arena
             // on the first tick of the session (ArenaBestiaryNet.EnsureLoaded).
             ArenaBestiary.Forget();
             ArenaLayout.Forget();
+            ArenaClasses.Forget();
             rpc.Register(RpcRequest, (Action<long, string, string>)OnRequest);
             rpc.Register(RpcMessage, (Action<long, string, string>)OnMessage);
             rpc.Register(ArenaBeastFx.Rpc, (Action<long, ZPackage>)ArenaBeastFx.OnRpc);
@@ -124,6 +125,7 @@ namespace NpcValheim.Arena
                 {
                     ArenaBestiaryNet.SendHash(sender);
                     ArenaLayoutNet.SendHash(sender);
+                    ArenaClassesNet.SendHash(sender);
                 }
                 if (action == ArenaWire.ActBestiaryGet)
                 {
@@ -133,6 +135,11 @@ namespace NpcValheim.Arena
                 if (action == ArenaWire.ActLayoutGet)
                 {
                     ArenaLayoutNet.SendTo(sender);
+                    return;
+                }
+                if (action == ArenaWire.ActClassesGet)
+                {
+                    ArenaClassesNet.SendTo(sender);
                     return;
                 }
             }
@@ -175,7 +182,8 @@ namespace NpcValheim.Arena
                 if (action == ArenaWire.ActAdminMapSet || action == ArenaWire.ActAdminMapRemove ||
                     action == ArenaWire.ActAdminOfferSet || action == ArenaWire.ActAdminOfferRemove ||
                     action == ArenaWire.ActAdminPointsSet || action == ArenaWire.ActAdminChallengeSet ||
-                    action == ArenaWire.ActAdminChallengeRemove)
+                    action == ArenaWire.ActAdminChallengeRemove || action == ArenaWire.ActAdminClassSet ||
+                    action == ArenaWire.ActAdminClassRemove || action == ArenaWire.ActAdminBalancedSet)
                 {
                     HandleCfgEdit(sender, name, admin, action, payload ?? "");
                     return;
@@ -534,12 +542,77 @@ namespace NpcValheim.Arena
                     done = $"Desafio \"{s.Name}\" removido.";
                     break;
                 }
+                case ArenaWire.ActAdminClassSet:
+                {
+                    // One class of arena-classes.json, as JSON. An id not in the list is a new class
+                    // (the page makes the id); a class with a problem is not saved.
+                    ArenaClassesNet.EnsureLoaded();
+                    var c = ArenaClasses.ParseOne(payload, out string bad);
+                    if (c == null || !ArenaLayout.ValidId(c.Id))
+                    {
+                        ArenaNet.Send(sender, ArenaWire.Notice, bad ?? "Classe sem id válido.");
+                        return;
+                    }
+                    var found = ArenaClassesNet.Problems(c);
+                    if (found.Count > 0)
+                    {
+                        ArenaNet.Send(sender, ArenaWire.Notice, $"Não salvei a classe \"{c.Name}\": {found[0]}.");
+                        return;
+                    }
+                    if (ArenaClasses.All.Any(x => !string.Equals(x.Id, c.Id, StringComparison.OrdinalIgnoreCase) &&
+                                                  string.Equals(x.Name.Trim(), c.Name.Trim(), StringComparison.OrdinalIgnoreCase)))
+                    {
+                        ArenaNet.Send(sender, ArenaWire.Notice, $"Já há uma classe chamada \"{c.Name}\".");
+                        return;
+                    }
+                    int at = ArenaClasses.All.FindIndex(x => string.Equals(x.Id, c.Id, StringComparison.OrdinalIgnoreCase));
+                    if (at >= 0) ArenaClasses.All[at] = c;
+                    else ArenaClasses.All.Add(c);
+                    if (!ArenaClassesNet.Commit(sender)) return;
+                    done = $"Classe {(at >= 0 ? "salva" : "criada")}: {c.Name} ({c.Belt.Count} no cinto)" + (c.On ? ", ligada." : ", desligada.");
+                    break;
+                }
+                case ArenaWire.ActAdminBalancedSet:
+                {
+                    // "ligada\nffa\nseparado\nprazo": [Arena - Balanceada] of the cfg.
+                    var f = payload.Split('\n');
+                    if (f.Length < 4 || !float.TryParse(f[3].Trim(), System.Globalization.NumberStyles.Float,
+                            System.Globalization.CultureInfo.InvariantCulture, out float deadline))
+                    {
+                        ArenaNet.Send(sender, ArenaWire.Notice, "Pedido da Arena balanceada malformado.");
+                        return;
+                    }
+                    ArenaConfig.BalancedEnabled.Value = f[0].Trim() == "1";
+                    ArenaConfig.BalancedFfa.Value = f[1].Trim() == "1";
+                    ArenaConfig.BalancedRatingMode.Value = f[2].Trim() == "1" ? ArenaConfig.BalancedRating.Separado : ArenaConfig.BalancedRating.Misturado;
+                    ArenaConfig.KitDeadlineSeconds.Value = Mathf.Clamp(deadline, 10f, 60f);
+                    done = $"Arena balanceada {(ArenaConfig.BalancedEnabled.Value ? "ligada" : "desligada")} · FFA {(ArenaConfig.BalancedFfa.Value ? "sim" : "não")} · " +
+                           $"rating {ArenaConfig.BalancedRatingMode.Value} · prazo do kit {ArenaConfig.KitDeadlineSeconds.Value:0} s.";
+                    break;
+                }
+                case ArenaWire.ActAdminClassRemove:
+                {
+                    ArenaClassesNet.EnsureLoaded();
+                    string id = payload.Trim();
+                    var c = ArenaClasses.Find(id);
+                    if (c == null)
+                    {
+                        ArenaNet.Send(sender, ArenaWire.Notice, "Essa classe não existe mais.");
+                        return;
+                    }
+                    ArenaClasses.All.Remove(c);
+                    if (!ArenaClassesNet.Commit(sender)) return;
+                    done = $"Classe \"{c.Name}\" removida. Quem está na preparação com ela sai sem perder rating.";
+                    break;
+                }
                 default:
                     return;
             }
 
             ArenaConfig.Invalidate();
-            Plugin.Log.LogInfo($"NpcValheim Arena: {name} '{action}' \"{payload}\"");
+            // A class goes to the log by name only: its JSON is long.
+            string logged = action == ArenaWire.ActAdminClassSet ? done : $"\"{payload}\"";
+            Plugin.Log.LogInfo($"NpcValheim Arena: {name} '{action}' {logged}");
             ArenaNet.Send(sender, ArenaWire.Notice, done);
         }
 
@@ -711,6 +784,59 @@ namespace NpcValheim.Arena
             public float CreatureHealth(long matchId) =>
                 _creatures.TryGetValue(matchId, out var id) ? ArenaChallengeCreature.Health(id) : -1f;
 
+            /// <summary>Every monster ZDO inside the arena goes: a prefab with a Character that is
+            /// not a player, not one of ours (NpcValheim_*) and not tamed. Looks only at the zones the
+            /// arena covers, so it costs a few thousand objects.</summary>
+            public void ClearMonsters(ArenaMapDef map)
+            {
+                var man = ZDOMan.instance;
+                var scene = ZNetScene.instance;
+                if (man == null || scene == null || map == null) return;
+                var sectors = Sectors(man);
+                if (sectors == null) return;
+
+                float reach = map.Area != null ? map.Area.Radius + ArenaZone.Slack : map.Radius;
+                var center = map.Area != null ? new Vector3(map.Area.X, 0f, map.Area.Z) : map.Center;
+                var zone = ZoneSystem.GetZone(center);
+                int span = Mathf.CeilToInt(reach / 64f) + 1;
+                var kinds = new Dictionary<int, bool>();
+                var doomed = new List<ZDOID>();
+                for (int dx = -span; dx <= span; dx++)
+                    for (int dy = -span; dy <= span; dy++)
+                    {
+                        long index = ZoneSystem.SectorToIndex(new Vector2s(zone.x + dx, zone.y + dy)).Sector;
+                        if (index < 0 || index >= sectors.Length || sectors[index] == null) continue;
+                        foreach (var zdo in sectors[index])
+                        {
+                            if (zdo == null || !IsMonster(scene, zdo, kinds)) continue;
+                            var at = zdo.GetPosition();
+                            var flat = new Vector3(at.x, center.y, at.z);
+                            if (map.Area != null ? !map.Area.Contains(at, ArenaZone.Slack) : Vector3.Distance(flat, center) > reach) continue;
+                            doomed.Add(zdo.m_uid);
+                        }
+                    }
+                foreach (var id in doomed) ArenaChallengeCreature.Despawn(id);
+                if (doomed.Count > 0)
+                    Plugin.Log.LogInfo($"NpcValheim Arena: {doomed.Count} monstro(s) removido(s) da arena \"{map.Name}\"");
+            }
+
+            private static bool IsMonster(ZNetScene scene, ZDO zdo, Dictionary<int, bool> cache)
+            {
+                int hash = zdo.GetPrefab();
+                if (!cache.TryGetValue(hash, out bool monster))
+                {
+                    var prefab = scene.GetPrefab(hash);
+                    monster = prefab != null && prefab.GetComponent<Character>() != null &&
+                              prefab.GetComponent<Player>() == null &&
+                              !prefab.name.StartsWith("NpcValheim", StringComparison.OrdinalIgnoreCase);
+                    cache[hash] = monster;
+                }
+                return monster && !zdo.GetBool(ZDOVars.s_tamed, false);
+            }
+
+            private static readonly HarmonyLib.AccessTools.FieldRef<ZDOMan, List<ZDO>[]> Sectors =
+                HarmonyLib.AccessTools.FieldRefAccess<ZDOMan, List<ZDO>[]>("m_objectsBySector");
+
             public void DespawnCreature(long matchId)
             {
                 if (!_creatures.TryGetValue(matchId, out var id)) return;
@@ -729,6 +855,49 @@ namespace NpcValheim.Arena
                         if (ability.Kind == "summon" && ability.Prefab.Length > 0) all.Add(ability.Prefab);
                 ArenaChallengeCreature.Sweep(all, live);
                 ArenaBeastSweep.Request();
+            }
+
+            /// <summary>The equipment VisEquipment publishes on the character's ZDO (prefab hash and
+            /// quality), turned back into prefab names through the ObjectDB.</summary>
+            public bool TryReadKit(long playerId, out ArenaWornKit worn)
+            {
+                worn = null;
+                if (!_online.TryGetValue(playerId, out var p)) return false;
+                ZDO zdo = null;
+                var local = Player.m_localPlayer;
+                if (local != null && local.GetPlayerID() == playerId && p.Peer == GameApi.LocalRpcSenderId())
+                {
+                    var nview = local.GetComponent<ZNetView>();
+                    zdo = nview != null && nview.IsValid() ? nview.GetZDO() : null;
+                }
+                else GameApi.TryGetSenderZdo(p.Peer, out zdo);
+                if (zdo == null) return false;
+                worn = new ArenaWornKit
+                {
+                    Right = ItemName(zdo.GetInt(ZDOVars.s_rightItem)),
+                    RightQuality = zdo.GetInt(ZDOVars.s_rightItemQuality),
+                    Left = ItemName(zdo.GetInt(ZDOVars.s_leftItem)),
+                    LeftQuality = zdo.GetInt(ZDOVars.s_leftItemQuality),
+                    RightBack = ItemName(zdo.GetInt(ZDOVars.s_rightBackItem)),
+                    RightBackQuality = zdo.GetInt(ZDOVars.s_rightBackItemQuality),
+                    LeftBack = ItemName(zdo.GetInt(ZDOVars.s_leftBackItem)),
+                    LeftBackQuality = zdo.GetInt(ZDOVars.s_leftBackItemQuality),
+                    Chest = ItemName(zdo.GetInt(ZDOVars.s_chestItem)),
+                    Legs = ItemName(zdo.GetInt(ZDOVars.s_legItem)),
+                    Helmet = ItemName(zdo.GetInt(ZDOVars.s_helmetItem)),
+                    Cape = ItemName(zdo.GetInt(ZDOVars.s_shoulderItem)),
+                    CapeQuality = zdo.GetInt(ZDOVars.s_shoulderItemQuality),
+                    Utility = ItemName(zdo.GetInt(ZDOVars.s_utilityItem)),
+                    Trinket = ItemName(zdo.GetInt(ZDOVars.s_trinketItem)),
+                };
+                return true;
+            }
+
+            private static string ItemName(int hash)
+            {
+                if (hash == 0) return "";
+                var prefab = ObjectDB.instance != null ? ObjectDB.instance.GetItemPrefab(hash) : null;
+                return prefab != null ? prefab.name : "#" + hash.ToString(CultureInfo.InvariantCulture);
             }
 
             public void Log(string text) => Plugin.Log.LogInfo("NpcValheim " + text);

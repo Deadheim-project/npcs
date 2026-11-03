@@ -265,6 +265,22 @@ namespace NpcValheim.Arena
         public List<string> ChallengeMaps = new List<string>();
         public List<ArenaChallengeDef> Challenges = new List<ArenaChallengeDef>();
 
+        // Arena balanceada: a queue of its own where everyone fights with the kit of a class
+        // (ArenaClasses), not with their own gear.
+        public bool BalancedEnabled = true;
+        public bool BalancedFfa = true;
+        /// <summary>Separado: the balanced rated matches move a rating of their own (the team's
+        /// BalancedRating, the member's BalancedPersonal, MMR "b{size}"); Misturado: the same
+        /// rating as the normal queue.</summary>
+        public bool BalancedSeparateRating;
+        /// <summary>Seconds from entering for the client to wear the kit and the server to see it.</summary>
+        public float KitDeadlineSeconds = 20f;
+        /// <summary>The classes switched on and without problems.</summary>
+        public List<ArenaClassDef> Classes = new List<ArenaClassDef>();
+
+        public ArenaClassDef ClassOf(string id) =>
+            string.IsNullOrEmpty(id) ? null : Classes.FirstOrDefault(c => string.Equals(c.Id, id.Trim(), StringComparison.OrdinalIgnoreCase));
+
         public ArenaChallengeDef ChallengeNamed(string name) =>
             Challenges.FirstOrDefault(c => string.Equals(c.Name, (name ?? "").Trim(), StringComparison.OrdinalIgnoreCase));
 

@@ -6,9 +6,12 @@ namespace NpcValheim.Arena
 {
     /// <summary>
     /// A knocked-out player watching the rest of the match: the body on the arena's edge (the
-    /// server's Move), the game's own free camera (GameCamera.ToggleFreeFly) kept inside the
-    /// arena, and a key to go home before the end. While the free camera is on the game takes
-    /// no input for the character (PlayerController.TakeInput), so the body stays put.
+    /// server's Move), a free camera of our own kept inside the arena, and a key to go home
+    /// before the end. The camera is NOT the game's GameCamera.ToggleFreeFly: AzuAntiCheat's
+    /// client check reads GameCamera.m_freeFly and kicks anyone who is not a moderator with the
+    /// FreeFlyCam bypass, so using it got players kicked. Here m_freeFly stays false; the camera
+    /// transform is driven from a prefix on GameCamera.UpdateCamera and the character's input is
+    /// shut off by patching the two TakeInput methods, so the body stays put.
     /// Everything that ends the match for this client ends this first (ArenaClient.ClearMatch,
     /// the Return), so nobody is left flying after the teleport home.
     /// </summary>
@@ -27,16 +30,9 @@ namespace NpcValheim.Arena
 
         private static Vector3 _center;
         private static float _radius;
-        private static bool _turnedOn;
-
-        private static readonly AccessTools.FieldRef<GameCamera, float> Yaw =
-            AccessTools.FieldRefAccess<GameCamera, float>("m_freeFlyYaw");
-        private static readonly AccessTools.FieldRef<GameCamera, float> Pitch =
-            AccessTools.FieldRefAccess<GameCamera, float>("m_freeFlyPitch");
-        private static readonly AccessTools.FieldRef<GameCamera, float> Speed =
-            AccessTools.FieldRefAccess<GameCamera, float>("m_freeFlySpeed");
-        private static readonly AccessTools.FieldRef<GameCamera, Transform> Lockon =
-            AccessTools.FieldRefAccess<GameCamera, Transform>("m_freeFlyLockon");
+        private static float _yaw;
+        private static float _pitch;
+        private static float _speed = 12f;
 
         internal static void Begin(Vector3 center, float radius, string by)
         {
@@ -45,16 +41,14 @@ namespace NpcValheim.Arena
             By = by ?? "";
             LeaveAsked = false;
             Active = true;
+            _speed = 12f;
 
+            // The camera starts where it is, looking where it looked.
             var cam = GameCamera.instance;
-            if (cam == null || GameCamera.InFreeFly()) return;
-            // The free camera starts where the camera is, looking where it looked.
+            if (cam == null) return;
             var angles = cam.transform.eulerAngles;
-            Yaw(cam) = angles.y;
-            Pitch(cam) = angles.x > 180f ? angles.x - 360f : angles.x;
-            Speed(cam) = Mathf.Min(Speed(cam), 20f);
-            cam.ToggleFreeFly();
-            _turnedOn = true;
+            _yaw = angles.y;
+            _pitch = angles.x > 180f ? angles.x - 360f : angles.x;
         }
 
         internal static void End()
@@ -62,8 +56,6 @@ namespace NpcValheim.Arena
             if (!Active) return;
             Active = false;
             LeaveAsked = false;
-            if (_turnedOn && GameCamera.instance != null && GameCamera.InFreeFly()) GameCamera.instance.ToggleFreeFly();
-            _turnedOn = false;
         }
 
         /// <summary>Every frame, from the HUD: the key to go home now.</summary>
@@ -82,21 +74,48 @@ namespace NpcValheim.Arena
             }
         }
 
-        /// <summary>The free camera, kept over the arena: within its radius (plus
-        /// <see cref="Slack"/>) and <see cref="MaxHeight"/> above its middle, never locked onto
-        /// something that would carry it away, never faster than <see cref="MaxSpeed"/>.</summary>
-        [HarmonyPatch]
-        private static class FreeFlyPatch
+        private static bool InputFree() =>
+            (!Chat.instance || !Chat.instance.HasFocus()) && !Console.IsVisible() && !Menu.IsVisible() &&
+            !TextInput.IsVisible() && !UI.UiInputBlocker.IsTyping;
+
+        /// <summary>The camera, driven by hand: look with the mouse, move with the game's own
+        /// movement keys, scroll for speed; kept within the arena's radius (plus
+        /// <see cref="Slack"/>) and <see cref="MaxHeight"/> above its middle.</summary>
+        [HarmonyPatch(typeof(GameCamera), "UpdateCamera")]
+        private static class CameraPatch
         {
-            private static MethodBase TargetMethod() => AccessTools.Method(typeof(GameCamera), "UpdateFreeFly");
-
-            private static void Postfix(GameCamera __instance)
+            private static bool Prefix(GameCamera __instance, float dt)
             {
-                if (!Active || !_turnedOn) return;
-                Lockon(__instance) = null;
-                if (Speed(__instance) > MaxSpeed) Speed(__instance) = MaxSpeed;
-
+                if (!Active) return true;
                 var t = __instance.transform;
+                if (InputFree())
+                {
+                    var look = ZInput.GetMouseDelta();
+                    look.x += ZInput.GetJoyRightStickX() * 110f * dt;
+                    look.y += -ZInput.GetJoyRightStickY() * 110f * dt;
+                    _yaw += look.x;
+                    _pitch = Mathf.Clamp(_pitch - look.y, -89f, 89f);
+
+                    float wheel = ZInput.GetMouseScrollWheel();
+                    if (wheel > 0f) _speed *= 1.2f;
+                    if (wheel < 0f) _speed *= 0.8f;
+                    _speed = Mathf.Clamp(_speed, 2f, MaxSpeed);
+
+                    var move = Vector3.zero;
+                    if (ZInput.GetButton("Left")) move -= Vector3.right;
+                    if (ZInput.GetButton("Right")) move += Vector3.right;
+                    if (ZInput.GetButton("Forward")) move += Vector3.forward;
+                    if (ZInput.GetButton("Backward")) move -= Vector3.forward;
+                    if (ZInput.GetButton("Jump")) move += Vector3.up;
+                    if (ZInput.GetButton("Crouch")) move -= Vector3.up;
+                    var stick = ZInput.GetJoyLeftStick();
+                    move += Vector3.right * stick.x + Vector3.forward * stick.y;
+                    if (move.magnitude > 1f) move.Normalize();
+                    t.position += t.TransformVector(move) * (_speed * dt);
+                }
+
+                t.rotation = Quaternion.Euler(0f, _yaw, 0f) * Quaternion.Euler(_pitch, 0f, 0f);
+
                 var pos = t.position;
                 var flat = new Vector2(pos.x - _center.x, pos.z - _center.z);
                 float max = _radius + Slack;
@@ -108,15 +127,31 @@ namespace NpcValheim.Arena
                 }
                 pos.y = Mathf.Clamp(pos.y, _center.y - 20f, _center.y + MaxHeight);
                 t.position = pos;
+                return false;
             }
         }
 
-        /// <summary>In the free camera the right mouse button takes a screenshot (GameCamera.LateUpdate);
-        /// someone watching a match would fill their screenshots folder.</summary>
-        [HarmonyPatch(typeof(GameCamera), nameof(GameCamera.ScreenShot))]
-        private static class ScreenShotPatch
+        /// <summary>No input for the character while watching, as the game's free camera did.</summary>
+        [HarmonyPatch(typeof(PlayerController), "TakeInput")]
+        private static class ControllerInputPatch
         {
-            private static bool Prefix() => !Active;
+            private static bool Prefix(ref bool __result)
+            {
+                if (!Active) return true;
+                __result = false;
+                return false;
+            }
+        }
+
+        [HarmonyPatch(typeof(Player), "TakeInput")]
+        private static class PlayerInputPatch
+        {
+            private static bool Prefix(ref bool __result)
+            {
+                if (!Active) return true;
+                __result = false;
+                return false;
+            }
         }
     }
 }

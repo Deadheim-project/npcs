@@ -205,9 +205,13 @@ namespace NpcValheim.UI
 
         protected static string Kind(bool rated) => rated ? "Ranqueada" : "Escaramuça";
 
-        /// <summary>A queue as people read it: "2v2 Ranqueada", "FFA".</summary>
-        protected static string QueueName(int size, bool rated) =>
-            size == ArenaRules.FfaSize ? "FFA (todos contra todos)" : $"{ArenaRules.BracketName(size)} {Kind(rated)}";
+        /// <summary>A queue as people read it: "2v2 Ranqueada", "FFA", "2v2 Escaramuça balanceada".</summary>
+        protected static string QueueName(int size, bool rated, bool balanced = false) =>
+            (size == ArenaRules.FfaSize ? "FFA (todos contra todos)" : $"{ArenaRules.BracketName(size)} {Kind(rated)}") +
+            (balanced ? size == ArenaRules.FfaSize ? " balanceado" : " balanceada" : "");
+
+        /// <summary>A class's name as the server sent the classes, or its id while they have not arrived.</summary>
+        internal static string ClassName(string id) => ArenaClasses.Find(id)?.Name ?? id ?? "";
 
         /// <summary>My personal rating in a team, from the snapshot.</summary>
         protected static int PersonalIn(ArenaTeamView team)
@@ -228,9 +232,12 @@ namespace NpcValheim.UI
             {
                 Heading(match.IsChallenge
                     ? $"Desafio: {match.Challenge} · {match.Map}"
-                    : match.Size == ArenaRules.FfaSize
-                        ? $"Partida: {match.Map} · FFA (todos contra todos)"
-                        : $"Partida: {match.Map} · {ArenaRules.BracketName(match.Size)} {Kind(match.Rated)}");
+                    : $"Partida: {match.Map} · {QueueName(match.Size, match.Rated, match.Balanced)}");
+                if (match.Balanced)
+                    Line(match.Phase == "invited"
+                            ? $"Arena balanceada · você: <color=#ffe300>{ClassName(match.ClassId)}</color>. Ao entrar, você luta com o kit da classe."
+                            : $"Partida balanceada: você luta de <color=#ffe300>{ClassName(match.ClassId)}</color>. Seu equipamento volta no fim.",
+                        15, ValheimUi.Beige, 24f);
                 switch (match.Phase)
                 {
                     case "invited":
@@ -281,7 +288,7 @@ namespace NpcValheim.UI
                 {
                     int since = queue.Waited;
                     float at = ArenaClient.SnapshotAt;
-                    LiveLine(() => $"Na fila: {QueueName(queue.Size, queue.Rated)} · esperando {Clock(since + Mathf.FloorToInt(Time.realtimeSinceStartup - at))}", 15, ValheimUi.Yellow);
+                    LiveLine(() => $"Na fila: {QueueName(queue.Size, queue.Rated, queue.Balanced)} · esperando {Clock(since + Mathf.FloorToInt(Time.realtimeSinceStartup - at))}", 15, ValheimUi.Yellow);
                 }
                 var row = ButtonRow();
                 Btn(row, "Sair da fila", 160f, () => Ask(ArenaWire.ActQueueLeave));
@@ -346,7 +353,7 @@ namespace NpcValheim.UI
                 : r.Winner == ArenaSide.None ? "Empate"
                 : ffa ? $"Vitória de {r.Players.FirstOrDefault(p => p.Side == r.Winner)?.Name ?? "?"}"
                 : $"Vitória do time {SideText(r.Winner)}";
-            Heading(r.IsChallenge ? $"Resultado · Desafio {r.Challenge} · {r.Map}" : $"Resultado · {r.Map} · {QueueName(r.Size, r.Rated)}");
+            Heading(r.IsChallenge ? $"Resultado · Desafio {r.Challenge} · {r.Map}" : $"Resultado · {r.Map} · {QueueName(r.Size, r.Rated, r.Balanced)}");
             Line($"{outcome}  ·  {Clock(r.Duration)}" + (r.Record ? "  ·  <color=#73db6b>novo recorde do desafio!</color>" : ""), 17, ValheimUi.Yellow, 28f);
             foreach (var side in r.Sides)
             {
@@ -357,6 +364,7 @@ namespace NpcValheim.UI
             }
             var header = ButtonRow(24f);
             Cell(header, "Jogador", 13, ValheimUi.Muted);
+            if (r.Balanced) Cell(header, "Classe", 13, ValheimUi.Muted, 150f);
             if (!ffa) Cell(header, "Time", 13, ValheimUi.Muted, 80f);
             Cell(header, "Abates", 13, ValheimUi.Muted, 70f);
             Cell(header, "Situação", 13, ValheimUi.Muted, 110f);
@@ -369,6 +377,8 @@ namespace NpcValheim.UI
             {
                 var row = ButtonRow(24f);
                 Cell(row, p.Name, 15);
+                // A kit that diverged during the fight is marked for everyone to see.
+                if (r.Balanced) Cell(row, p.Class + (p.KitDiverged ? " <color=#ee6b57>(kit divergiu)</color>" : ""), 15, null, 150f);
                 if (!ffa) Cell(row, SideText(p.Side), 15, null, 80f);
                 Cell(row, p.Kos.ToString(CultureInfo.InvariantCulture), 15, null, 70f);
                 Cell(row, p.Status, 15, null, 110f);
@@ -661,37 +671,132 @@ namespace NpcValheim.UI
                 14, ValheimUi.Muted);
 
             bool busy = s.Queue != null || s.Match != null;
+            bool balanced = BalancedBlock(team, solo);
+            string tail = balanced ? " balanceada" : "";
+            bool classMissing = balanced && BalancedChoice.ClassId.Length == 0;
             var row = ButtonRow(40f);
-            var rated = Btn(row, "Entrar: Ranqueada", 210f, () => Join(true), 15);
-            rated.interactable = !busy && (team != null || solo) && !(solo && grouped);
-            var skirmish = Btn(row, "Entrar: Escaramuça", 210f, () => Join(false), 15);
-            skirmish.interactable = !busy && (ArenaConfig.Skirmish?.Value ?? true);
+            var rated = Btn(row, "Entrar: Ranqueada" + tail, balanced ? 270f : 210f, () => Join(true), 15);
+            rated.interactable = !busy && (team != null || solo) && !(solo && grouped) && !classMissing;
+            var skirmish = Btn(row, "Entrar: Escaramuça" + tail, balanced ? 270f : 210f, () => Join(false), 15);
+            skirmish.interactable = !busy && (ArenaConfig.Skirmish?.Value ?? true) && !classMissing;
             Line(solo
                     ? "1v1: entre sem grupo. Ranqueada vale rating; escaramuça, não."
                     : $"Ranqueada: grupo de exatamente {Size} do mesmo time, rating em jogo. Escaramuça: sozinho ou em grupo, sem rating.",
                 13, ValheimUi.Muted, 22f);
+            if (balanced && grouped)
+                Line("Na balanceada, cada um do grupo escolhe a própria classe no painel dele antes de você entrar na fila.", 13, ValheimUi.Muted, 22f);
             Gap();
-            FfaBlock(busy);
-            ChallengeBlock(busy, group.Count);
+            FfaBlock(busy, balanced, classMissing);
+            if (!balanced) ChallengeBlock(busy, group.Count);
             StatusBlocks(withResult: true);
         }
 
+        private const float ClassCardWidth = 150f;
+        private const float BeltSlot = 46f;
+
+        /// <summary>
+        /// The "Arena balanceada" checkbox and, when it is on, the class cards and the chosen
+        /// class: its description, armour, health and the 8 slots of its belt. Returns whether the
+        /// queue buttons below go to the balanced queue.
+        /// </summary>
+        private bool BalancedBlock(ArenaTeamView team, bool solo)
+        {
+            if (!(ArenaConfig.BalancedEnabled?.Value ?? false)) return false;
+            ArenaClassesNet.AskIfMissing();
+            bool on = BalancedChoice.On;
+            var check = ButtonRow(36f);
+            var box = Btn(check, (on ? "[X]" : "[  ]") + "  Arena balanceada", 230f, () =>
+            {
+                BalancedChoice.On = !BalancedChoice.On;
+                Invalidate();
+            }, 15);
+            var boxLabel = box.GetComponentInChildren<TextMeshProUGUI>();
+            if (boxLabel != null) boxLabel.color = on ? ValheimUi.Yellow : ValheimUi.Orange;
+            ValheimUi.AddTooltip(box.gameObject, "Arena balanceada",
+                "Fila separada em que o seu equipamento, a sua comida e as suas skills não contam: todos lutam com o kit de uma classe. " +
+                "O seu inventário não é tocado e o seu equipamento volta no fim da partida.");
+            Cell(check, on ? "o seu equipamento não conta: você luta com o kit da classe" : "", 13, ValheimUi.Muted);
+            if (!on) return false;
+
+            var classes = ArenaClasses.All.Where(c => c.On).ToList();
+            if (classes.Count == 0)
+            {
+                Line(ArenaClasses.Loaded ? "O servidor ainda não tem classes ligadas." : "Carregando as classes...", 14, ValheimUi.Muted);
+                return true;
+            }
+            string chosen = BalancedChoice.ClassId;
+            var cards = ButtonRow(40f);
+            foreach (var c in classes)
+            {
+                var cls = c;
+                bool mine = string.Equals(cls.Id, chosen, StringComparison.OrdinalIgnoreCase);
+                var card = Btn(cards, cls.Name, ClassCardWidth, () =>
+                {
+                    BalancedChoice.ClassId = cls.Id;
+                    Invalidate();
+                }, 14);
+                var label = card.GetComponentInChildren<TextMeshProUGUI>();
+                if (label != null) label.color = mine ? ValheimUi.Yellow : ValheimUi.Orange;
+                card.image.color = mine ? Color.white : new Color(0.72f, 0.72f, 0.72f, 1f);
+            }
+            var pick = classes.FirstOrDefault(c => string.Equals(c.Id, chosen, StringComparison.OrdinalIgnoreCase));
+            if (pick == null)
+            {
+                Line("Escolha a sua classe para entrar na fila balanceada.", 15, ValheimUi.Yellow);
+                return true;
+            }
+
+            if (pick.Description.Length > 0) Line(pick.Description, 14, ValheimUi.Beige, 40f);
+            string armor = string.Join(", ", pick.Armor().Where(a => a.Item != null).Select(a => ItemNames.Display(a.Item.Prefab)));
+            Line($"Vida {pick.Health:0} · Vigor {pick.Stamina:0}" + (pick.Eitr > 0 ? $" · Eitr {pick.Eitr:0}" : "") +
+                 (armor.Length > 0 ? $"  ·  <color=#9a9188>{armor}</color>" : ""), 14, ValheimUi.Beige, 24f);
+            string skills = string.Join(", ", pick.Skills.OrderByDescending(kv => kv.Value).Select(kv => $"{SkillName(kv.Key)} {kv.Value}"));
+            Line($"Skills: {(skills.Length > 0 ? skills + $" · as outras {pick.SkillLevel}" : $"todas {pick.SkillLevel}")}", 13, ValheimUi.Muted, 22f);
+
+            Line("Cinto (teclas 1 a 8 na partida):", 13, ValheimUi.Muted, 20f);
+            var belt = ButtonRow(BeltSlot + 4f);
+            for (int i = 0; i < ArenaClasses.MaxBelt; i++)
+            {
+                var slot = ValheimUi.CreateInlay(belt, "Slot");
+                ValheimUi.SetWidth(slot.gameObject, BeltSlot);
+                ValheimUi.SetHeight(slot.gameObject, BeltSlot);
+                if (i >= pick.Belt.Count) continue;
+                var item = pick.Belt[i];
+                var icon = ValheimUi.CreateItemIcon(slot, item.Prefab, BeltSlot - 8f);
+                ValheimUi.AddTooltip(icon.gameObject, ItemNames.Display(item.Prefab) + (item.Quality > 1 ? $" (nível {item.Quality})" : ""),
+                    $"Tecla {i + 1}" + (pick.Start.Contains(item.Prefab, StringComparer.OrdinalIgnoreCase) ? " · começa equipado" : ""));
+            }
+            Fill(belt);
+
+            if (team != null && team.BalancedRating >= 0 && !solo)
+                Line($"Rating balanceado do time: {team.BalancedRating}", 14, ValheimUi.Beige, 22f);
+            else if (team != null && team.BalancedRating >= 0)
+                Line($"Seu rating 1v1 balanceado: {team.BalancedRating}", 14, ValheimUi.Beige, 22f);
+            return true;
+        }
+
+        private static string SkillName(string skill) =>
+            Enum.TryParse(skill, true, out Skills.SkillType type) ? ValheimUi.Localize("$skill_" + type.ToString().ToLowerInvariant()) : skill;
+
+        private static void Fill(RectTransform row) => Flexible(ValheimUi.CreateRect("Fill", row).gameObject);
+
         /// <summary>The free-for-all: always alone, even in a group; no team, no rating.</summary>
-        private void FfaBlock(bool busy)
+        private void FfaBlock(bool busy, bool balanced, bool classMissing)
         {
             if (!(ArenaConfig.FfaEnabled?.Value ?? false)) return;
+            if (balanced && !(ArenaConfig.BalancedFfa?.Value ?? false)) return;
             int max = Mathf.Clamp(ArenaConfig.FfaMaxPlayers?.Value ?? 8, 2, 16);
             int min = Mathf.Clamp(ArenaConfig.FfaMinPlayers?.Value ?? 3, 2, max);
-            Heading("FFA (todos contra todos)");
+            Heading(balanced ? "FFA balanceado (todos contra todos)" : "FFA (todos contra todos)");
             Line($"Cada um por si, de {min} a {max} jogadores. Vence o último de pé. Você entra sozinho, mesmo em grupo. Sem rating.",
                 14, ValheimUi.Muted);
             var row = ButtonRow(40f);
-            var go = Btn(row, "Entrar: FFA", 210f, () =>
+            var go = Btn(row, balanced ? "Entrar: FFA balanceado" : "Entrar: FFA", balanced ? 270f : 210f, () =>
             {
-                Ask(ArenaWire.ActFfaJoin);
-                Say("Entrando na fila do FFA...");
+                Ask(ArenaWire.ActFfaJoin, balanced ? "1\n" + BalancedChoice.ClassId : "");
+                Say(balanced ? "Entrando na fila do FFA balanceado..." : "Entrando na fila do FFA...");
             }, 15);
-            go.interactable = !busy;
+            go.interactable = !busy && !classMissing;
             Gap();
         }
 
@@ -745,8 +850,9 @@ namespace NpcValheim.UI
             }
             long me = ZDOMan.GetSessionID();
             string peers = string.Join(",", group.Where(m => m.Peer != me).Select(m => m.Peer.ToString(CultureInfo.InvariantCulture)));
-            Ask(ArenaWire.ActQueueJoin, $"{Size}\n{(rated ? 1 : 0)}\n{peers}");
-            Say("Entrando na fila...");
+            bool balanced = (ArenaConfig.BalancedEnabled?.Value ?? false) && BalancedChoice.On;
+            Ask(ArenaWire.ActQueueJoin, $"{Size}\n{(rated ? 1 : 0)}\n{peers}" + (balanced ? $"\n1\n{BalancedChoice.ClassId}" : ""));
+            Say(balanced ? "Entrando na fila balanceada..." : "Entrando na fila...");
         }
     }
 
@@ -765,10 +871,13 @@ namespace NpcValheim.UI
 
         protected override void OnSizeChanged() => ArenaClient.RequestLadder(Size);
 
-        /// <summary>The PvP brackets, and the PvE rating of the challenges.</summary>
+        /// <summary>The PvP brackets, the Arena balanceada's when its rating is apart, and the
+        /// PvE rating of the challenges.</summary>
         protected override List<int> Sizes()
         {
             var sizes = new List<int>(Brackets());
+            if ((ArenaConfig.BalancedEnabled?.Value ?? false) && ArenaConfig.BalancedRatingMode?.Value == ArenaConfig.BalancedRating.Separado)
+                sizes.AddRange(Brackets().Select(ArenaRules.BalancedLadder));
             sizes.Add(ArenaRules.PveLadder);
             return sizes;
         }
@@ -784,16 +893,20 @@ namespace NpcValheim.UI
             }
             if (pve)
                 Line("Rating PvE: sobe ao vencer um desafio, mais quanto mais difícil ele for; desce ao perder. Separado do PvP.", 13, ValheimUi.Muted, 22f);
+            if (ArenaRules.IsBalancedLadder(Size))
+                Line("Arena balanceada: o rating das ranqueadas com o kit das classes, separado do rating normal.", 13, ValheimUi.Muted, 22f);
             if (rows.Count == 0)
             {
-                Line(pve ? "Ninguém jogou um desafio ainda." : IsSolo(Size) ? "Ninguém jogou a 1v1 ranqueada ainda." : $"Nenhum time {ArenaRules.BracketName(Size)} ainda.",
+                Line(pve ? "Ninguém jogou um desafio ainda."
+                    : ArenaRules.IsBalancedLadder(Size) ? "Ninguém jogou essa ranqueada balanceada ainda."
+                    : IsSolo(Size) ? "Ninguém jogou a 1v1 ranqueada ainda." : $"Nenhum time {ArenaRules.BracketName(Size)} ainda.",
                     15, ValheimUi.Muted);
                 if (pve) BestTimes();
                 return;
             }
             var header = ButtonRow(24f);
             Cell(header, "#", 13, ValheimUi.Muted, 50f);
-            Cell(header, pve || IsSolo(Size) ? "Jogador" : "Time", 13, ValheimUi.Muted);
+            Cell(header, pve || IsSolo(ArenaRules.BracketOfLadder(Size)) ? "Jogador" : "Time", 13, ValheimUi.Muted);
             Cell(header, "Rating", 13, ValheimUi.Muted, 90f);
             Cell(header, "Jogos", 13, ValheimUi.Muted, 80f);
             Cell(header, "Vitórias", 13, ValheimUi.Muted, 90f);

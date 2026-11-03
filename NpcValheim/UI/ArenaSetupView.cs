@@ -33,11 +33,12 @@ namespace NpcValheim.UI
         private const float ZoneStep = 10f;
         private static readonly CultureInfo Inv = CultureInfo.InvariantCulture;
 
-        private enum Sub { Arenas, Challenges, Points, Shop }
+        private enum Sub { Arenas, Challenges, Points, Shop, Classes }
 
         private static readonly (Sub Sub, string Label, float Width)[] Subs =
         {
             (Sub.Arenas, "Arenas", 104f), (Sub.Challenges, "Desafios", 104f), (Sub.Points, "Pontos", 104f), (Sub.Shop, "Loja", 90f),
+            (Sub.Classes, "Balanceada", 120f),
         };
 
         private static readonly Dictionary<string, (string Title, string Text)> Tips = new Dictionary<string, (string, string)>
@@ -61,6 +62,14 @@ namespace NpcValheim.UI
             ["points"] = ("Pontos por partida", "Quanto cada tipo de partida dá a quem termina dentro da arena. Empate paga a derrota."),
             ["cap"] = ("Máximo por dia", "O máximo de pontos que uma pessoa ganha em partidas por dia. 0 = sem máximo."),
             ["grant"] = ("Dar pontos", "Dá (ou tira, com número negativo) pontos de arena a um jogador pelo nome."),
+            ["balanced"] = ("Arena balanceada", "Fila separada (ranqueada, escaramuça e FFA) em que o equipamento, a comida e as skills de cada um não contam: todos lutam com o kit de uma classe. O inventário não é tocado e o equipamento volta no fim."),
+            ["balancedRating"] = ("Rating", "Misturado: a ranqueada balanceada mexe no mesmo rating da normal. Separado: rating próprio (do time, pessoal e MMR), com aba própria no Ranking."),
+            ["kitDeadline"] = ("Prazo do kit", "Segundos, depois de entrar, para o jogo vestir o kit e o servidor ver. Sem isso o jogador sai antes de começar, sem perder rating."),
+            ["armor"] = ("Armadura", "Fixa da classe: o nome do item no jogo e o nível depois de dois-pontos, como ArmorIronChest:2. Vazio = nada nesse lugar."),
+            ["belt"] = ("Cinto", "Até 8 armas, escudos, cajados e munições, trocados pelas teclas 1 a 8 na partida. Item:nível, como SwordIron:2."),
+            ["start"] = ("Começa equipado", "Itens do cinto que entram equipados, separados por vírgula: SwordIron,ShieldBanded,ArrowIron."),
+            ["vitals"] = ("Vida, vigor e eitr", "No lugar da comida: a comida do jogador fica de fora (nem gasta nem cura) durante a partida."),
+            ["skills"] = ("Skills", "Nível de cada skill, no lugar das do jogador: Swords:60,Blocking:40. As outras ficam no nível padrão."),
         };
 
         // What is being edited is static: F8 builds a new page every time it opens, and an
@@ -80,6 +89,12 @@ namespace NpcValheim.UI
         private static int _selChallenge;
         private static string _seenChallenges;
 
+        // Classes of the Arena balanceada by id, new ones kept here until saved. -1 = Visão geral.
+        private static readonly List<ClassDraft> _classes = new List<ClassDraft>();
+        private static readonly HashSet<string> _dirtyClasses = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        private static int _selClass = -1;
+        private static int _seenClasses = -1;
+
         private static readonly string[,] _points = new string[5, 2];
         private static string _cap = "";
         private static bool _pointsDirty;
@@ -90,7 +105,7 @@ namespace NpcValheim.UI
         private readonly List<GameObject> _sideRows = new List<GameObject>();
         private readonly List<(Sub Sub, Button Button)> _subButtons = new List<(Sub, Button)>();
         private readonly List<(Sub Sub, GameObject Go)> _barButtons = new List<(Sub, GameObject)>();
-        private GameObject _newArena, _newChallenge;
+        private GameObject _newArena, _newChallenge, _newClass;
         private OfferForm _offerForm;
 
         protected override void OnBuild()
@@ -107,6 +122,7 @@ namespace NpcValheim.UI
             footLayout.childControlHeight = true;
             _newArena = Btn(foot, "+ Nova arena", 0f, NewArena, 14).gameObject;
             _newChallenge = Btn(foot, "+ Novo desafio", 0f, NewChallenge, 14).gameObject;
+            _newClass = Btn(foot, "+ Nova classe", 0f, NewClass, 14).gameObject;
 
             CreateList(new Vector2(SideWidth + 10f, 0f), Vector2.zero);
             _area = (RectTransform)List.parent.parent;
@@ -147,6 +163,8 @@ namespace NpcValheim.UI
             Bar(bar, Sub.Challenges, "Testar agora", 150f, TestChallenge, "test");
             Bar(bar, Sub.Challenges, "Remover", 110f, RemoveChallenge, "remove");
             Bar(bar, Sub.Points, "Salvar", 110f, SavePoints, "save");
+            Bar(bar, Sub.Classes, "Salvar", 110f, SaveClass, "save");
+            Bar(bar, Sub.Classes, "Remover", 110f, RemoveClass, "remove");
             Layout();
         }
 
@@ -170,10 +188,11 @@ namespace NpcValheim.UI
         /// pick from, the item form only in Loja, the actions of this sub-page only.</summary>
         private void Layout()
         {
-            bool side = _sub == Sub.Arenas || _sub == Sub.Challenges;
+            bool side = _sub == Sub.Arenas || _sub == Sub.Challenges || _sub == Sub.Classes;
             _side.gameObject.SetActive(side);
             _newArena.SetActive(_sub == Sub.Arenas);
             _newChallenge.SetActive(_sub == Sub.Challenges);
+            _newClass.SetActive(_sub == Sub.Classes);
             ValheimUi.Anchor(_pane, Vector2.zero, Vector2.one, new Vector2(side ? SideWidth + 10f : 0f, 0f), Vector2.zero);
             _shop.gameObject.SetActive(_sub == Sub.Shop);
             bool bar = _sub != Sub.Shop;
@@ -191,6 +210,7 @@ namespace NpcValheim.UI
         {
             ArenaBestiaryNet.AskIfMissing();
             ArenaLayoutNet.AskIfMissing();
+            ArenaClassesNet.AskIfMissing();
         }
 
         // The cfg and the local choices only: the arena state changes every few seconds during a
@@ -198,7 +218,8 @@ namespace NpcValheim.UI
         protected override string Signature() =>
             $"{_sub}:{_selArena}:{_selChallenge}:{_arenas.Count}:{_challenges.Count}:" + ArenaConfig.MapsText() + ":" + ArenaDeadheim.ZonesText + ":" +
             ArenaConfig.MatchPoints?.Value + ":" + ArenaConfig.MatchPointsDailyCap?.Value + ":" +
-            ArenaConfig.VendorItems?.Value + ":" + ArenaBestiary.Revision;
+            ArenaConfig.VendorItems?.Value + ":" + ArenaBestiary.Revision + ":" + ArenaClasses.Revision + ":" + _selClass + ":" + _classes.Count + ":" +
+            ArenaConfig.BalancedEnabled?.Value + ArenaConfig.BalancedFfa?.Value + ArenaConfig.BalancedRatingMode?.Value + ArenaConfig.KitDeadlineSeconds?.Value;
 
         // ------------------------------------------------------------------ the copies
 
@@ -277,6 +298,35 @@ namespace NpcValheim.UI
                 _selChallenge = Mathf.Clamp(at >= 0 ? at : _selChallenge, 0, Math.Max(0, _challenges.Count - 1));
             }
 
+            // The classes as the server has them, with what is being edited here on top, as the
+            // challenges above.
+            if (ArenaClasses.Revision != _seenClasses)
+            {
+                _seenClasses = ArenaClasses.Revision;
+                string selectedId = CurrentClass?.Id;
+                var merged = new List<ClassDraft>();
+                foreach (var c in ArenaClasses.All)
+                {
+                    var server = ClassDraft.From(c);
+                    var mine = _classes.FirstOrDefault(x => Eq(x.Id, server.Id));
+                    if (mine != null && _dirtyClasses.Contains(mine.Id) && mine.Key != server.Key)
+                    {
+                        mine.Saved = true;
+                        merged.Add(mine);
+                        continue;
+                    }
+                    _dirtyClasses.Remove(server.Id);
+                    merged.Add(server);
+                }
+                foreach (var mine in _classes.Where(c => !c.Saved && _dirtyClasses.Contains(c.Id)))
+                    if (!merged.Any(m => Eq(m.Id, mine.Id))) merged.Add(mine);
+                _dirtyClasses.IntersectWith(merged.Select(m => m.Id));
+                _classes.Clear();
+                _classes.AddRange(merged);
+                int at = selectedId != null ? _classes.FindIndex(c => Eq(c.Id, selectedId)) : -1;
+                _selClass = Mathf.Clamp(at >= 0 ? at : _selClass, -1, _classes.Count - 1);
+            }
+
             string points = ArenaConfig.MatchPoints?.Value + ":" + ArenaConfig.MatchPointsDailyCap?.Value;
             if (points != _seenPoints && (!_pointsDirty || PointsMatch()))
             {
@@ -299,6 +349,7 @@ namespace NpcValheim.UI
             Eq(a.Extras.Trim(), b.Extras.Trim()) && Eq(a.Map.Trim(), b.Map.Trim()) && a.Difficulty == b.Difficulty;
 
         private ArenaDraft CurrentArena => _selArena >= 0 && _selArena < _arenas.Count ? _arenas[_selArena] : null;
+        private ClassDraft CurrentClass => _selClass >= 0 && _selClass < _classes.Count ? _classes[_selClass] : null;
         private ChallengeDraft CurrentChallenge => _selChallenge >= 0 && _selChallenge < _challenges.Count ? _challenges[_selChallenge] : null;
 
         private static bool Eq(string a, string b) => string.Equals((a ?? "").Trim(), (b ?? "").Trim(), StringComparison.OrdinalIgnoreCase);
@@ -604,6 +655,126 @@ namespace NpcValheim.UI
 
         private static bool ItemKnown(string prefab) => ObjectDB.instance == null || ObjectDB.instance.GetItemPrefab(prefab.Trim()) != null;
 
+        // ------------------------------------------------------------------ classes (Arena balanceada)
+
+        /// <summary>A class as this page edits it: the item fields as typed ("SwordIron:2"), turned
+        /// into a class (ArenaClassDef) only to check it and to save it.</summary>
+        private sealed class ClassDraft
+        {
+            public string Id = "";
+            public bool Saved;
+            public bool On = true;
+            public string Name = "", Description = "";
+            public readonly string[] Armor = new string[5];
+            public readonly string[] Belt = new string[ArenaClasses.MaxBelt];
+            public string Start = "", Skills = "", Health = "150", Stamina = "150", Eitr = "0", SkillLevel = "20";
+
+            internal static ClassDraft From(ArenaClassDef c)
+            {
+                var d = new ClassDraft
+                {
+                    Id = c.Id, Saved = true, On = c.On, Name = c.Name, Description = c.Description,
+                    Start = string.Join(",", c.Start), Skills = c.SkillsText,
+                    Health = c.Health.ToString("0.##", Inv), Stamina = c.Stamina.ToString("0.##", Inv), Eitr = c.Eitr.ToString("0.##", Inv),
+                    SkillLevel = c.SkillLevel.ToString(Inv),
+                };
+                int k = 0;
+                foreach (var (_, item) in c.Armor()) d.Armor[k++] = item?.ToString() ?? "";
+                for (int i = 0; i < d.Belt.Length; i++) d.Belt[i] = i < c.Belt.Count ? c.Belt[i].ToString() : "";
+                return d;
+            }
+
+            internal ArenaClassDef ToDef()
+            {
+                var c = new ArenaClassDef
+                {
+                    Id = Id, On = On, Name = ArenaSettingsParser.CleanMapName(Name), Description = ArenaWire.Clean(Description).Trim(),
+                    Chest = ArenaKitItem.Parse(Armor[0]), Legs = ArenaKitItem.Parse(Armor[1]), Helmet = ArenaKitItem.Parse(Armor[2]),
+                    Cape = ArenaKitItem.Parse(Armor[3]), Utility = ArenaKitItem.Parse(Armor[4]),
+                    Health = Number(Health, 150f, ArenaClasses.MinVital, ArenaClasses.MaxVital),
+                    Stamina = Number(Stamina, 150f, ArenaClasses.MinVital, ArenaClasses.MaxVital),
+                    Eitr = Number(Eitr, 0f, 0f, ArenaClasses.MaxVital),
+                    SkillLevel = Mathf.RoundToInt(Number(SkillLevel, 20f, 0f, ArenaClasses.MaxSkill)),
+                    Skills = ArenaClasses.ParseSkills(Skills),
+                };
+                foreach (var text in Belt)
+                {
+                    var item = ArenaKitItem.Parse(text);
+                    if (item != null) c.Belt.Add(item);
+                }
+                foreach (var part in (Start ?? "").Split(new[] { ',', ';' }, StringSplitOptions.RemoveEmptyEntries))
+                    if (part.Trim().Length > 0) c.Start.Add(part.Trim());
+                return c;
+            }
+
+            /// <summary>The class as the server would keep it, for "is this saved yet".</summary>
+            internal string Key => ArenaClasses.ToJsonOne(ToDef());
+
+            private static float Number(string text, float fallback, float min, float max) =>
+                float.TryParse((text ?? "").Trim().Replace(',', '.'), NumberStyles.Float, Inv, out float v) ? Mathf.Clamp(v, min, max) : fallback;
+        }
+
+        private void TouchClass()
+        {
+            var c = CurrentClass;
+            if (c != null) _dirtyClasses.Add(c.Id);
+        }
+
+        private void NewClass()
+        {
+            var taken = _classes.Select(c => c.Id).Concat(ArenaClasses.All.Select(c => c.Id)).ToList();
+            int n = 1;
+            while (_classes.Any(c => Eq(c.Name, "Nova classe " + n))) n++;
+            string name = "Nova classe " + n;
+            var c = new ClassDraft { Id = ArenaLayout.NewId(name, taken), Saved = false, Name = name };
+            for (int i = 0; i < c.Armor.Length; i++) c.Armor[i] = "";
+            for (int i = 0; i < c.Belt.Length; i++) c.Belt[i] = "";
+            c.Belt[0] = "SwordIron:2";
+            c.Start = "SwordIron";
+            _classes.Add(c);
+            _dirtyClasses.Add(c.Id);
+            _selClass = _classes.Count - 1;
+            _sub = Sub.Classes;
+            Say("Classe nova: monte a armadura e o cinto e clique Salvar.");
+            Invalidate();
+        }
+
+        private void RemoveClass()
+        {
+            var c = CurrentClass;
+            if (c == null) return;
+            if (!c.Saved)
+            {
+                _classes.Remove(c);
+                _dirtyClasses.Remove(c.Id);
+                _selClass = Mathf.Clamp(_selClass, -1, _classes.Count - 1);
+                Invalidate();
+                return;
+            }
+            Ask(ArenaWire.ActAdminClassRemove, c.Id);
+            Say($"Removendo a classe \"{c.Name.Trim()}\"...");
+        }
+
+        private void SaveClass()
+        {
+            var c = CurrentClass;
+            if (c == null)
+            {
+                Say("Escolha uma classe na lista (ou + Nova classe).");
+                return;
+            }
+            string json = ArenaClasses.ToJsonOne(c.ToDef());
+            Ask(ArenaWire.ActAdminClassSet, json);
+            Say($"Salvando a classe \"{c.Name.Trim()}\"...");
+        }
+
+        private void SaveBalanced(bool enabled, bool ffa, bool separate, float deadline)
+        {
+            Ask(ArenaWire.ActAdminBalancedSet, string.Join("\n", enabled ? "1" : "0", ffa ? "1" : "0", separate ? "1" : "0",
+                Mathf.Clamp(deadline, 10f, 60f).ToString("0", Inv)));
+            Say("Salvando a Arena balanceada...");
+        }
+
         // ------------------------------------------------------------------ points and shop
 
         private bool PointsMatch()
@@ -703,6 +874,10 @@ namespace NpcValheim.UI
                 case Sub.Challenges: DrawChallenge(); break;
                 case Sub.Points: DrawPoints(); break;
                 case Sub.Shop: DrawShop(); break;
+                case Sub.Classes:
+                    if (CurrentClass != null) DrawClass(CurrentClass);
+                    else DrawBalanced();
+                    break;
             }
         }
 
@@ -738,6 +913,20 @@ namespace NpcValheim.UI
                     SideButton((c.On ? Mark(ok) : "<color=#9a9188>-</color>") + " " + name +
                                (_dirtyChallenges.Contains(c.Id) ? " <color=#ffe300>*</color>" : ""),
                         i == _selChallenge, () => { _selChallenge = index; Invalidate(); });
+                }
+            }
+            else if (_sub == Sub.Classes)
+            {
+                SideButton("Visão geral", _selClass < 0, () => { _selClass = -1; Invalidate(); });
+                for (int i = 0; i < _classes.Count; i++)
+                {
+                    int index = i;
+                    var c = _classes[i];
+                    bool ok = ArenaClassesNet.Problems(c.ToDef()).Count == 0;
+                    string name = c.Name.Trim().Length > 0 ? c.Name.Trim() : "Classe " + (i + 1);
+                    SideButton((c.On ? Mark(ok) : "<color=#9a9188>-</color>") + " " + name +
+                               (_dirtyClasses.Contains(c.Id) ? " <color=#ffe300>*</color>" : ""),
+                        i == _selClass, () => { _selClass = index; Invalidate(); });
                 }
             }
         }
@@ -985,6 +1174,111 @@ namespace NpcValheim.UI
             Checks(ArenaHealth.ForChallenge(c, saved, ready, CreatureProblem, ItemKnown), null, c);
             if (_dirtyChallenges.Contains(c.Id))
                 Line(c.Saved ? "Mudanças ainda não salvas: clique Salvar." : "Desafio novo, ainda não salvo: clique Salvar.", 13, ValheimUi.Yellow, 22f);
+        }
+
+        /// <summary>Balanceada, Visão geral: the [Arena - Balanceada] settings, and what is
+        /// missing for it to work.</summary>
+        private void DrawBalanced()
+        {
+            Heading("Arena balanceada");
+            Line("Fila separada em que o equipamento, a comida e as skills de cada um não contam: o jogador marca \"Arena balanceada\" " +
+                 "no painel da Arena, escolhe uma classe e luta com o kit dela. O inventário não é tocado e o equipamento volta no fim.",
+                13, ValheimUi.Muted, 40f);
+            bool enabled = ArenaConfig.BalancedEnabled?.Value ?? false;
+            bool ffa = ArenaConfig.BalancedFfa?.Value ?? false;
+            bool separate = ArenaConfig.BalancedRatingMode?.Value == ArenaConfig.BalancedRating.Separado;
+            float deadline = ArenaConfig.KitDeadlineSeconds?.Value ?? 20f;
+
+            var on = Field("Ligada", "balanced");
+            Toggle(on, enabled, "Ligada", "Desligada", () => SaveBalanced(!enabled, ffa, separate, deadline));
+            Cell(on, "FFA balanceado", 14, ValheimUi.Beige, 130f);
+            Toggle(on, ffa, "Sim", "Não", () => SaveBalanced(enabled, !ffa, separate, deadline));
+            Fill(on);
+            var rating = Field("Rating", "balancedRating");
+            Toggle(rating, separate, "Separado", "Misturado", () => SaveBalanced(enabled, ffa, !separate, deadline));
+            Cell(rating, separate ? "rating próprio, aba própria no Ranking" : "o mesmo rating da ranqueada normal", 13, ValheimUi.Muted);
+            var kit = Field("Prazo do kit", "kitDeadline");
+            Step(kit, $"{deadline:0} s", 70f, d => SaveBalanced(enabled, ffa, separate, deadline + d * 5f));
+            Fill(kit);
+            Gap();
+
+            Heading("O que falta para funcionar");
+            var usable = ArenaConfig.ClassDefs(null, checkWorld: true);
+            Checks(new[]
+            {
+                new ArenaCheck { Ok = ArenaClasses.Loaded, Text = ArenaClasses.Loaded ? "Classes recebidas do servidor" : "As classes ainda não chegaram do servidor" },
+                new ArenaCheck { Ok = usable.Count > 0, Text = usable.Count > 0 ? $"{usable.Count} classe(s) ligada(s) e sem problemas: {string.Join(", ", usable.Select(c => c.Name))}" : "Nenhuma classe ligada e sem problemas: clique + Nova classe ou corrija uma da lista" },
+                new ArenaCheck { Ok = enabled, Text = enabled ? "Arena balanceada ligada" : "Arena balanceada desligada: a opção não aparece no painel dos jogadores" },
+            }, null, null);
+            foreach (var problem in ArenaConfig.Problems().Where(p => p.StartsWith("Classe ", StringComparison.Ordinal)))
+                Line(problem, 12, ValheimUi.Danger, 22f);
+        }
+
+        private void Toggle(RectTransform row, bool on, string yes, string no, UnityEngine.Events.UnityAction click)
+        {
+            var button = Btn(row, on ? yes : no, 110f, click, 14);
+            var label = button.GetComponentInChildren<TextMeshProUGUI>();
+            if (label != null) label.color = on ? ValheimUi.Yellow : ValheimUi.Orange;
+        }
+
+        private static readonly string[] ArmorLabels = { "Peito", "Pernas", "Cabeça", "Capa", "Utilitário" };
+
+        private void DrawClass(ClassDraft c)
+        {
+            var top = Field("Nome");
+            Text(top, c.Name, 0f, v => { c.Name = v; TouchClass(); });
+            Toggle(top, c.On, "Ligada", "Desligada", () => { c.On = !c.On; TouchClass(); Invalidate(); });
+            var desc = Field("Descrição");
+            Text(desc, c.Description, 0f, v => { c.Description = v; TouchClass(); });
+
+            Heading("Armadura (fixa)");
+            for (int i = 0; i < ArmorLabels.Length; i++)
+            {
+                int slot = i;
+                var row = Field(ArmorLabels[i], "armor");
+                Text(row, c.Armor[i], 240f, v => { c.Armor[slot] = v; TouchClass(); });
+                var piece = ArenaKitItem.Parse(c.Armor[i]);
+                if (piece != null) ArenaConfig.OfferIcon(row, piece.Prefab, 30f);
+                Cell(row, piece != null ? ItemNames.Display(piece.Prefab) : "nada", 13, ValheimUi.Muted);
+            }
+
+            Heading("Cinto (teclas 1 a 8)");
+            for (int i = 0; i < c.Belt.Length; i += 2)
+            {
+                var row = Field($"{i + 1} e {i + 2}", "belt");
+                for (int k = i; k < i + 2; k++)
+                {
+                    int slot = k;
+                    Text(row, c.Belt[k], 190f, v => { c.Belt[slot] = v; TouchClass(); });
+                    var piece = ArenaKitItem.Parse(c.Belt[k]);
+                    if (piece != null) ArenaConfig.OfferIcon(row, piece.Prefab, 30f);
+                }
+                Fill(row);
+            }
+            var start = Field("Começa equipado", "start");
+            Text(start, c.Start, 0f, v => { c.Start = v; TouchClass(); });
+
+            Heading("No lugar da comida e das skills");
+            var vitals = Field("Vida", "vitals");
+            Text(vitals, c.Health, 70f, v => { c.Health = v; TouchClass(); });
+            Cell(vitals, "Vigor", 14, ValheimUi.Beige, 50f);
+            Text(vitals, c.Stamina, 70f, v => { c.Stamina = v; TouchClass(); });
+            Cell(vitals, "Eitr", 14, ValheimUi.Beige, 40f);
+            Text(vitals, c.Eitr, 70f, v => { c.Eitr = v; TouchClass(); });
+            Fill(vitals);
+            var skills = Field("Skills", "skills");
+            Text(skills, c.Skills, 0f, v => { c.Skills = v; TouchClass(); });
+            var level = Field("Skill padrão", "skills");
+            Text(level, c.SkillLevel, 70f, v => { c.SkillLevel = v; TouchClass(); });
+            Cell(level, "nível de toda skill fora da lista acima (0 a 100)", 13, ValheimUi.Muted);
+
+            Gap();
+            Heading("O que falta para funcionar");
+            var problems = ArenaClassesNet.Problems(c.ToDef());
+            if (problems.Count == 0) Checks(new[] { new ArenaCheck { Ok = true, Text = "Classe pronta" + (c.On ? "" : " (desligada: não aparece para os jogadores)") } }, null, null);
+            foreach (var p in problems) Checks(new[] { new ArenaCheck { Ok = false, Text = p } }, null, null);
+            if (_dirtyClasses.Contains(c.Id))
+                Line(c.Saved ? "Mudanças ainda não salvas: clique Salvar." : "Classe nova, ainda não salva: clique Salvar.", 13, ValheimUi.Yellow, 22f);
         }
 
         private void DrawPoints()

@@ -398,6 +398,30 @@ namespace NpcValheim.Npc
             return playerId == senderId || zdoUserId == senderId;
         }
 
+        /// <summary>The ZDO of the character behind an RPC sender: what every other machine
+        /// draws of it (equipment included), on the server even when the character is far away.</summary>
+        internal static bool TryGetSenderZdo(long senderId, out ZDO zdo)
+        {
+            zdo = null;
+            try
+            {
+                if (TryGetPlayer(senderId, out var player) && player != null)
+                {
+                    var nview = player.GetComponent<ZNetView>();
+                    zdo = nview != null && nview.IsValid() ? nview.GetZDO() : null;
+                    if (zdo != null) return true;
+                }
+                if (!TryGetPeerCharacterId(FindPeer(senderId), out var characterId)) return false;
+                zdo = ZDOMan.instance?.GetZDO(characterId);
+                return zdo != null;
+            }
+            catch
+            {
+                zdo = null;
+                return false;
+            }
+        }
+
         private static bool TryGetPeerCharacterId(ZNetPeer peer, out ZDOID characterId)
         {
             characterId = default;

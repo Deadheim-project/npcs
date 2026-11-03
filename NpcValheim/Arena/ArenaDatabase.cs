@@ -16,6 +16,12 @@ namespace NpcValheim.Arena
         public int WeekWins { get; set; }
         public int SeasonGames { get; set; }
         public int SeasonWins { get; set; }
+        /// <summary>Arena balanceada with its own rating ([Arena - Balanceada] Rating = Separado):
+        /// the personal rating there, meaningful once <see cref="BalancedStarted"/>.</summary>
+        public int BalancedPersonal { get; set; }
+        public bool BalancedStarted { get; set; }
+        public int BalancedGames { get; set; }
+        public int BalancedWins { get; set; }
     }
 
     /// <summary>An arena team (ArenaTeam in TrinityCore): one bracket, a captain, a rating.</summary>
@@ -36,6 +42,12 @@ namespace NpcValheim.Arena
         /// again for a while (Arena.PreviousOpponentsDiscardTimer).</summary>
         public int PreviousOpponent { get; set; }
         public long CreatedUtcTicks { get; set; }
+        /// <summary>The team's rating in the Arena balanceada when it is apart ([Arena - Balanceada]
+        /// Rating = Separado), meaningful once <see cref="BalancedStarted"/>.</summary>
+        public int BalancedRating { get; set; }
+        public bool BalancedStarted { get; set; }
+        public int BalancedGames { get; set; }
+        public int BalancedWins { get; set; }
         public List<ArenaMemberRecord> Members { get; set; } = new List<ArenaMemberRecord>();
 
         public ArenaMemberRecord Member(long playerId) => Members.FirstOrDefault(m => m.PlayerId == playerId);
@@ -70,12 +82,18 @@ namespace NpcValheim.Arena
 
         public int PveRatingOf(int start) => PveGames > 0 ? PveRating : start;
 
-        public int MmrOf(int size, int start) => Mmr != null && Mmr.TryGetValue(size.ToString(), out int v) ? v : start;
+        public int MmrOf(int size, int start) => MmrOf(size.ToString(), start);
 
-        public void SetMmr(int size, int value)
+        public void SetMmr(int size, int value) => SetMmr(size.ToString(), value);
+
+        /// <summary>The hidden rating under a key: the bracket ("2"), or "b2" for the Arena
+        /// balanceada when its rating is apart.</summary>
+        public int MmrOf(string key, int start) => Mmr != null && Mmr.TryGetValue(key, out int v) ? v : start;
+
+        public void SetMmr(string key, int value)
         {
             Mmr ??= new Dictionary<string, int>();
-            Mmr[size.ToString()] = Math.Max(0, value);
+            Mmr[key] = Math.Max(0, value);
         }
     }
 

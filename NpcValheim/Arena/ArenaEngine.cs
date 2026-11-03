@@ -37,9 +37,15 @@ namespace NpcValheim.Arena
         /// <summary>The creature's health from 0 to 1, or -1 when it is not known here.</summary>
         float CreatureHealth(long matchId);
         void DespawnCreature(long matchId);
+        /// <summary>Removes every monster in the arena (the ones players spawned or called in
+        /// there, not only the challenge's creature) when the fight is over.</summary>
+        void ClearMonsters(ArenaMapDef map);
         /// <summary>Removes challenge creatures left in the world by matches that are gone (a
         /// server that stopped mid-challenge).</summary>
         void SweepCreatures(IEnumerable<string> prefabs, Func<long, bool> live);
+        /// <summary>Arena balanceada: what the character wears, read from its ZDO (what every other
+        /// machine draws); false when the server cannot see the character now.</summary>
+        bool TryReadKit(long playerId, out ArenaWornKit worn);
         void Log(string text);
         void Warn(string text);
     }
@@ -70,6 +76,14 @@ namespace NpcValheim.Arena
         /// <summary>A challenge: the PvE rating before it and the change it made.</summary>
         public int PveBefore = -1;
         public int PveChange;
+        /// <summary>Arena balanceada: the class chosen before the queue, and the kit check --
+        /// the client said it wears it (Claimed), the ZDO showed it (Ok), by when (Deadline), and
+        /// the first difference the ZDO showed after that (Problem, for the log and the result).</summary>
+        public string ClassId = "";
+        public bool KitClaimed;
+        public bool KitOk;
+        public double KitDeadline;
+        public string KitProblem;
 
         public bool Present => State == SeatState.Entered && !Offline;
     }
@@ -104,6 +118,11 @@ namespace NpcValheim.Arena
         public bool CreatureSpawned;
         public bool CreatureDead;
         public int CreatureHealthShown = -1;
+        /// <summary>Arena balanceada: everyone fights with their class's kit.</summary>
+        public bool Balanced;
+        public double NextKitCheck;
+        /// <summary>Players the kit check took out before the gates opened.</summary>
+        public int KitKicks;
 
         public bool IsChallenge => Challenge != null;
         /// <summary>Everyone alone: each seat is a side of its own (1, 2, 3...).</summary>
@@ -127,6 +146,9 @@ namespace NpcValheim.Arena
         public int TeamRating;
         public int Mmr;
         public double JoinTime;
+        /// <summary>Arena balanceada: a queue of its own, and each player's class.</summary>
+        public bool Balanced;
+        public readonly Dictionary<long, string> Classes = new Dictionary<long, string>();
         public readonly List<long> Players = new List<long>();
         public readonly Dictionary<long, string> Names = new Dictionary<long, string>();
     }
@@ -140,6 +162,9 @@ namespace NpcValheim.Arena
         /// <summary>Set when the group is going to a challenge, not to the queue.</summary>
         public ArenaChallengeDef Challenge;
         public double Expires;
+        /// <summary>Arena balanceada: each member sends their class with the confirmation.</summary>
+        public bool Balanced;
+        public readonly Dictionary<long, string> Classes = new Dictionary<long, string>();
         public readonly List<long> Members = new List<long>();
         public readonly HashSet<long> Confirmed = new HashSet<long>();
     }
@@ -312,7 +337,7 @@ namespace NpcValheim.Arena
                 case ActTeamDisband: Disband(me, Int(f, 0)); return;
                 case ActQueueJoin:
                     if (!IsDesk(where)) return;
-                    JoinQueue(me, Int(f, 0), Int(f, 1) == 1, Str(f, 2));
+                    JoinQueue(me, Int(f, 0), Int(f, 1) == 1, Str(f, 2), Int(f, 3) == 1, Str(f, 4));
                     return;
                 case ActChallengeJoin:
                     if (!IsDesk(where)) return;
@@ -325,10 +350,11 @@ namespace NpcValheim.Arena
                     return;
                 case ActFfaJoin:
                     if (!IsDesk(where)) return;
-                    JoinFfa(me);
+                    JoinFfa(me, Int(f, 0) == 1, Str(f, 1));
                     return;
                 case ActQueueLeave: LeaveQueue(playerId); return;
-                case ActGroupConfirm: ConfirmGroup(playerId, Str(f, 0), Int(f, 1) == 1); return;
+                case ActGroupConfirm: ConfirmGroup(playerId, Str(f, 0), Int(f, 1) == 1, Str(f, 2)); return;
+                case ActKit: KitWorn(playerId, Long(f, 0), Str(f, 1)); return;
                 case ActEnter: EnterMatch(me); return;
                 case ActEnterFailed: EnterFailed(playerId); return;
                 case ActLeave: LeaveMatch(playerId, "saiu"); return;
@@ -828,7 +854,7 @@ namespace NpcValheim.Arena
         /// leader's client names its members, and each member's own client confirms it (the
         /// "confirm" round trip). A leader cannot sign up people who never grouped with them.
         /// </summary>
-        private void JoinQueue(ArenaPlayerRecord me, int size, bool rated, string peerList)
+        private void JoinQueue(ArenaPlayerRecord me, int size, bool rated, string peerList, bool balanced = false, string classId = "")
         {
             long id = me.PlayerId;
             string refusal = null;
@@ -837,6 +863,7 @@ namespace NpcValheim.Arena
             else if (!_t.Maps.Any(m => _t.MapServes(m, size)))
                 refusal = $"Nenhuma arena aceita {ArenaRules.BracketName(size)} neste servidor. Fale com um admin.";
             else if (!rated && !_t.Skirmish) refusal = "Escaramuça está desligada neste servidor.";
+            else if (balanced) refusal = BalancedRefusal(id, classId);
             if (refusal != null) { Say(id, refusal, alert: true); return; }
 
             var members = GroupOf(id, peerList);
@@ -867,9 +894,11 @@ namespace NpcValheim.Arena
             }
             if (refusal != null) { Say(id, refusal, alert: true); return; }
 
+            var classes = new Dictionary<long, string>();
+            if (balanced) classes[id] = _t.ClassOf(classId).Id;
             if (members.Count == 1)
             {
-                Enqueue(id, members, size, rated);
+                Enqueue(id, members, size, rated, balanced, classes);
                 return;
             }
 
@@ -879,15 +908,30 @@ namespace NpcValheim.Arena
                 Leader = id,
                 Size = size,
                 Rated = rated,
+                Balanced = balanced,
                 Expires = _host.Now + _t.GroupConfirmSeconds,
             };
+            foreach (var kv in classes) pending.Classes[kv.Key] = kv.Value;
             pending.Members.AddRange(members);
             pending.Confirmed.Add(id);
             _pending[pending.Ticket] = pending;
+            // Each member's own client confirms the group -- and, in the Arena balanceada, says
+            // which class that member chose on their own panel.
             foreach (var member in members.Where(m => m != id))
-                _host.Send(member, Confirm, Record(pending.Ticket, L(id), I(size), rated ? "1" : "0"));
+                _host.Send(member, Confirm, Record(pending.Ticket, L(id), I(size), rated ? "1" : "0", balanced ? "1" : "0"));
             Say(id, "Confirmando o grupo...");
             SendState(id);
+        }
+
+        /// <summary>Why this player cannot go into the Arena balanceada with this class, or null.
+        /// The class comes from the player's own panel, chosen before the queue.</summary>
+        private string BalancedRefusal(long playerId, string classId)
+        {
+            if (!_t.BalancedEnabled) return "A Arena balanceada está desligada neste servidor.";
+            if (_t.Classes.Count == 0) return "A Arena balanceada ainda não tem classes. Fale com um admin.";
+            if (_t.ClassOf(classId) == null)
+                return $"{NameOf(playerId)} precisa escolher a classe no painel da Arena (Arena balanceada).";
+            return null;
         }
 
         /// <summary>The leader and the members their client named (peer ids from the Groups
@@ -916,7 +960,7 @@ namespace NpcValheim.Arena
             return members;
         }
 
-        private void ConfirmGroup(long playerId, string ticket, bool ok)
+        private void ConfirmGroup(long playerId, string ticket, bool ok, string classId = "")
         {
             if (!_pending.TryGetValue(ticket ?? "", out var pending) || !pending.Members.Contains(playerId)) return;
             if (!ok)
@@ -925,6 +969,20 @@ namespace NpcValheim.Arena
                 Say(pending.Leader, $"{NameOf(playerId)} não está no seu grupo. Forme o grupo (Groups) e tente de novo.", alert: true);
                 SendState(pending.Leader);
                 return;
+            }
+            if (pending.Balanced && playerId != pending.Leader)
+            {
+                string refusal = BalancedRefusal(playerId, classId);
+                if (refusal != null)
+                {
+                    _pending.Remove(pending.Ticket);
+                    Say(pending.Leader, refusal, alert: true);
+                    Say(playerId, refusal, alert: true);
+                    SendState(pending.Leader);
+                    SendState(playerId);
+                    return;
+                }
+                pending.Classes[playerId] = _t.ClassOf(classId).Id;
             }
 
             pending.Confirmed.Add(playerId);
@@ -943,7 +1001,7 @@ namespace NpcValheim.Arena
                     }
                 }
                 if (pending.Challenge != null) CreateChallenge(pending.Leader, pending.Members, pending.Challenge);
-                else Enqueue(pending.Leader, pending.Members, pending.Size, pending.Rated);
+                else Enqueue(pending.Leader, pending.Members, pending.Size, pending.Rated, pending.Balanced, pending.Classes);
             }
         }
 
@@ -953,7 +1011,7 @@ namespace NpcValheim.Arena
         /// The FFA queue at the Battlemaster: always alone, whatever group the player is in --
         /// in a free-for-all the group would be opponents anyway. No team and no rating.
         /// </summary>
-        private void JoinFfa(ArenaPlayerRecord me)
+        private void JoinFfa(ArenaPlayerRecord me, bool balanced = false, string classId = "")
         {
             long id = me.PlayerId;
             string refusal = QueueRefusal(id);
@@ -961,19 +1019,23 @@ namespace NpcValheim.Arena
             else if (_t.Maps.Count == 0) refusal = "Nenhuma arena foi configurada ainda. Fale com um admin.";
             else if (!_t.Maps.Any(m => _t.MapServes(m, ArenaRules.FfaSize)))
                 refusal = "Nenhuma arena aceita FFA neste servidor. Fale com um admin.";
+            else if (balanced && !_t.BalancedFfa) refusal = "O FFA balanceado está desligado neste servidor.";
+            else if (balanced) refusal = BalancedRefusal(id, classId);
             if (refusal != null) { Say(id, refusal, alert: true); return; }
-            Enqueue(id, new List<long> { id }, ArenaRules.FfaSize, false);
+            var classes = new Dictionary<long, string>();
+            if (balanced) classes[id] = _t.ClassOf(classId).Id;
+            Enqueue(id, new List<long> { id }, ArenaRules.FfaSize, false, balanced, classes);
         }
 
         /// <summary>
         /// FFA matchmaking: a match as soon as MaxPlayers are waiting, or with everyone waiting
         /// once there are MinPlayers and the first in line has waited WaitSeconds.
         /// </summary>
-        private void MatchFfa()
+        private void MatchFfa(bool balanced)
         {
             while (_t.FfaEnabled && FreeMap(ArenaRules.FfaSize) != null)
             {
-                var waiting = _queue.Where(q => q.Size == ArenaRules.FfaSize).OrderBy(q => q.JoinTime).ToList();
+                var waiting = _queue.Where(q => q.Size == ArenaRules.FfaSize && q.Balanced == balanced).OrderBy(q => q.JoinTime).ToList();
                 if (waiting.Count < _t.FfaMinPlayers) return;
                 if (waiting.Count < _t.FfaMaxPlayers && _host.Now - waiting[0].JoinTime < _t.FfaWaitSeconds) return;
                 CreateFfa(waiting.Take(_t.FfaMaxPlayers).ToList());
@@ -994,19 +1056,24 @@ namespace NpcValheim.Arena
                 Status = MatchStatus.WaitJoin,
                 CreatedAt = _host.Now,
                 InviteExpires = _host.Now + _t.InviteAcceptSeconds,
+                Balanced = entries.Count > 0 && entries[0].Balanced,
             };
             match.Sides[ArenaSide.Gold].TeamName = match.Sides[ArenaSide.Green].TeamName = "Todos contra todos";
             // Who starts where is shuffled: sides 1, 3, 5... at Gold, 2, 4, 6... at Green.
-            var players = entries.SelectMany(e => e.Players.Select(p => (Id: p, Name: e.Names[p]))).OrderBy(_ => _random.Next()).ToList();
+            var players = entries.SelectMany(e => e.Players.Select(p => (Id: p, Name: e.Names[p], Class: e.Classes.TryGetValue(p, out var c) ? c : "")))
+                .OrderBy(_ => _random.Next()).ToList();
             for (int i = 0; i < players.Count; i++)
-                match.Seats.Add(new ArenaSeat { PlayerId = players[i].Id, Name = players[i].Name, Side = i + 1, State = SeatState.Invited });
+                match.Seats.Add(new ArenaSeat
+                {
+                    PlayerId = players[i].Id, Name = players[i].Name, Side = i + 1, State = SeatState.Invited, ClassId = players[i].Class,
+                });
             foreach (var e in entries) _queue.Remove(e);
             _matches[match.Id] = match;
 
-            _host.Log($"Arena: partida #{match.Id} FFA em {map.Name}: {string.Join(", ", players.Select(p => p.Name))}");
+            _host.Log($"Arena: partida #{match.Id} FFA{(match.Balanced ? " balanceado" : "")} em {map.Name}: {string.Join(", ", players.Select(p => p.Name))}");
             foreach (var seat in match.Seats)
             {
-                Say(seat.PlayerId, $"O FFA está pronto ({players.Count} jogadores)! Abra a Arena (Tab > Arena) e clique Entrar ({Mathf.RoundToInt(_t.InviteAcceptSeconds)}s).", alert: true);
+                Say(seat.PlayerId, $"O FFA{(match.Balanced ? " balanceado" : "")} está pronto ({players.Count} jogadores)! Abra a Arena (Tab > Arena) e clique Entrar ({Mathf.RoundToInt(_t.InviteAcceptSeconds)}s).", alert: true);
                 SendState(seat.PlayerId);
             }
         }
@@ -1071,6 +1138,16 @@ namespace NpcValheim.Arena
         }
 
         private const string BusyText = "Todas as arenas do desafio estão ocupadas. Tente de novo em instantes.";
+
+        /// <summary>Every arena that takes this kind of match has a fight going (or a group
+        /// getting in or out): a second group is never put in with it, it waits in the queue.</summary>
+        private string OccupiedText(Func<ArenaMapDef, bool> serves)
+        {
+            var maps = _t.Maps.Where(serves).Select(m => m.Name).ToList();
+            return maps.Count == 1
+                ? $"Arena ocupada: há uma luta em andamento na arena \"{maps[0]}\". A arena fica fechada a outros grupos até a luta terminar; você entra assim que ela liberar."
+                : "Arena ocupada: todas as arenas deste modo têm uma luta em andamento. Nenhuma outra luta começa antes de uma terminar; você entra assim que uma arena liberar.";
+        }
 
         private void CreateChallenge(long leader, List<long> members, ArenaChallengeDef def)
         {
@@ -1143,7 +1220,7 @@ namespace NpcValheim.Arena
             _host.DespawnCreature(match.Id);
         }
 
-        private void Enqueue(long leader, List<long> members, int size, bool rated)
+        private void Enqueue(long leader, List<long> members, int size, bool rated, bool balanced = false, Dictionary<long, string> classes = null)
         {
             var entry = new QueueEntry
             {
@@ -1151,34 +1228,40 @@ namespace NpcValheim.Arena
                 Size = size,
                 Rated = rated,
                 JoinTime = _host.Now,
+                Balanced = balanced,
             };
             foreach (var m in members)
             {
                 entry.Players.Add(m);
                 entry.Names[m] = NameOf(m);
+                if (balanced && classes != null && classes.TryGetValue(m, out string cls)) entry.Classes[m] = cls;
             }
 
             if (rated)
             {
+                bool apart = balanced && _t.BalancedSeparateRating;
                 var team = TeamOf(leader, size);
                 entry.TeamId = team.Id;
-                entry.TeamRating = Math.Max(1, team.Rating);
+                entry.TeamRating = Math.Max(1, TeamRating(team, apart));
                 // ArenaTeam::GetAverageMMR over the members who are actually queueing.
-                entry.Mmr = (int)members.Average(m => Player(m, NameOf(m)).MmrOf(size, _t.StartMatchmakerRating));
+                entry.Mmr = (int)members.Average(m => Player(m, NameOf(m)).MmrOf(MmrKey(size, apart), _t.StartMatchmakerRating));
             }
             _queue.Add(entry);
 
-            string kind = rated ? "Ranqueada" : size == ArenaRules.FfaSize ? "todos contra todos" : "Escaramuça";
-            _host.Log($"Arena: fila {ArenaRules.BracketName(size)} {kind}: {string.Join(", ", entry.Names.Values)} (MMR {entry.Mmr})");
+            string kind = (rated ? "Ranqueada" : size == ArenaRules.FfaSize ? "todos contra todos" : "Escaramuça") + (balanced ? " balanceada" : "");
+            _host.Log($"Arena: fila {ArenaRules.BracketName(size)} {kind}: {string.Join(", ", entry.Names.Values)} (MMR {entry.Mmr})" +
+                      (balanced ? " classes " + string.Join(", ", entry.Classes.Select(kv => entry.Names[kv.Key] + "=" + kv.Value)) : ""));
+            bool arenaTaken = FreeMap(size) == null;
             foreach (var m in members)
             {
                 Say(m, $"Na fila da arena {ArenaRules.BracketName(size)} ({kind}).", alert: true);
+                if (arenaTaken) Say(m, OccupiedText(map => _t.MapServes(map, size)));
                 SendState(m);
             }
 
-            if (rated) MatchRated(size, entry);
-            else if (size == ArenaRules.FfaSize) MatchFfa();
-            else MatchSkirmish(size);
+            if (rated) MatchRated(size, balanced, entry);
+            else if (size == ArenaRules.FfaSize) MatchFfa(balanced);
+            else MatchSkirmish(size, balanced);
         }
 
         private void LeaveQueue(long playerId)
@@ -1221,11 +1304,11 @@ namespace NpcValheim.Arena
         /// team's on the periodic pass. Here every waiting team gets to be the anchor, oldest
         /// first, which finds the same pairs a pass or two sooner.
         /// </summary>
-        private void MatchRated(int size, QueueEntry fresh = null)
+        private void MatchRated(int size, bool balanced, QueueEntry fresh = null)
         {
             while (true)
             {
-                var waiting = _queue.Where(q => q.Rated && q.Size == size).OrderBy(q => q.JoinTime).ToList();
+                var waiting = _queue.Where(q => q.Rated && q.Size == size && q.Balanced == balanced).OrderBy(q => q.JoinTime).ToList();
                 if (waiting.Count < 2) return;
                 if (FreeMap(size) == null) return;
 
@@ -1271,11 +1354,11 @@ namespace NpcValheim.Arena
         /// Unrated half (CheckNormalMatch): fill two sides of exactly `size`, oldest first,
         /// never splitting a group. No factions here, so any two sides will do.
         /// </summary>
-        private void MatchSkirmish(int size)
+        private void MatchSkirmish(int size, bool balanced)
         {
             while (FreeMap(size) != null)
             {
-                var waiting = _queue.Where(q => !q.Rated && q.Size == size).OrderBy(q => q.JoinTime).ToList();
+                var waiting = _queue.Where(q => !q.Rated && q.Size == size && q.Balanced == balanced).OrderBy(q => q.JoinTime).ToList();
                 var gold = new List<QueueEntry>();
                 var green = new List<QueueEntry>();
                 int goldCount = 0, greenCount = 0;
@@ -1331,6 +1414,7 @@ namespace NpcValheim.Arena
                 Status = MatchStatus.WaitJoin,
                 CreatedAt = _host.Now,
                 InviteExpires = _host.Now + _t.InviteAcceptSeconds,
+                Balanced = sideA.Count > 0 && sideA[0].Balanced,
             };
 
             FillSide(match, ArenaSide.Gold, sideA);
@@ -1338,7 +1422,7 @@ namespace NpcValheim.Arena
             foreach (var e in sideA.Concat(sideB)) _queue.Remove(e);
             _matches[match.Id] = match;
 
-            _host.Log($"Arena: partida #{match.Id} {ArenaRules.BracketName(size)} {(rated ? "Ranqueada" : "Escaramuça")} em {map.Name}: " +
+            _host.Log($"Arena: partida #{match.Id} {ArenaRules.BracketName(size)} {(rated ? "Ranqueada" : "Escaramuça")}{(match.Balanced ? " balanceada" : "")} em {map.Name}: " +
                       $"{match.Sides[ArenaSide.Gold].TeamName} x {match.Sides[ArenaSide.Green].TeamName}");
             foreach (var seat in match.Seats)
             {
@@ -1356,7 +1440,7 @@ namespace NpcValheim.Arena
                 _teams.TryGetValue(entry.TeamId, out var team);
                 info.TeamId = entry.TeamId;
                 info.TeamName = team?.Name ?? "?";
-                info.RatingBefore = team?.Rating ?? 0;
+                info.RatingBefore = team != null ? TeamRating(team, Apart(match)) : 0;
                 info.Mmr = entry.Mmr;
             }
             else
@@ -1365,7 +1449,11 @@ namespace NpcValheim.Arena
             }
             foreach (var entry in entries)
                 foreach (var p in entry.Players)
-                    match.Seats.Add(new ArenaSeat { PlayerId = p, Name = entry.Names[p], Side = side, State = SeatState.Invited });
+                    match.Seats.Add(new ArenaSeat
+                    {
+                        PlayerId = p, Name = entry.Names[p], Side = side, State = SeatState.Invited,
+                        ClassId = entry.Classes.TryGetValue(p, out string cls) ? cls : "",
+                    });
         }
 
         // --------------------------------------------------------------------------- matches
@@ -1401,11 +1489,12 @@ namespace NpcValheim.Arena
             seat.MovedAt = _host.Now;
             seat.Alive = true;
             seat.Offline = false;
+            ExpectKit(match, seat);
 
             var map = MapOf(match);
             var spawn = map.SpawnFor(seat.Side);
             _host.Send(id, Enter, Record(L(match.Id), F(spawn.x), F(spawn.y), F(spawn.z), F(map.YawOf(seat.Side)),
-                I(seat.Side), map.Name, F(_t.GateRadius)));
+                I(seat.Side), map.Name, F(_t.GateRadius), match.Balanced ? seat.ClassId : ""));
 
             if (match.PrepEndsAt > 0)
             {
@@ -1447,12 +1536,100 @@ namespace NpcValheim.Arena
             return $"{s} segundos para a batalha na Arena começar!";
         }
 
+        /// <summary>Arena balanceada: from now the client has KitDeadlineSeconds to wear the
+        /// class's kit and the server to see it on the ZDO (see CheckKits).</summary>
+        private void ExpectKit(ArenaMatch match, ArenaSeat seat)
+        {
+            seat.KitClaimed = false;
+            seat.KitOk = false;
+            seat.KitProblem = null;
+            seat.KitDeadline = _host.Now + _t.KitDeadlineSeconds;
+        }
+
+        /// <summary>The client says it wears the kit; the ZDO says whether it does.</summary>
+        private void KitWorn(long playerId, long matchId, string classId)
+        {
+            var match = MatchOf(playerId);
+            var seat = match?.Seat(playerId);
+            if (seat == null || !match.Balanced || match.Id != matchId || seat.State != SeatState.Entered) return;
+            if (!string.Equals(classId ?? "", seat.ClassId, StringComparison.OrdinalIgnoreCase))
+            {
+                _host.Warn($"Arena: {seat.Name} vestiu a classe '{classId}' na partida #{match.Id}, mas a da fila é '{seat.ClassId}'");
+                return;
+            }
+            seat.KitClaimed = true;
+            CheckKit(match, seat);
+        }
+
+        /// <summary>
+        /// Arena balanceada: compares what each player wears on their ZDO with their class's kit.
+        /// Until the gates open, a kit that never showed up by the deadline, or that changed after,
+        /// takes the player out of the match with no rating at stake. During the fight a
+        /// difference only goes to the log and the scoreboard: a ZDO a moment behind must not
+        /// throw anyone out of a fight.
+        /// </summary>
+        private void CheckKits(ArenaMatch match)
+        {
+            if (!match.Balanced || (match.Status != MatchStatus.WaitJoin && match.Status != MatchStatus.InProgress)) return;
+            if (_host.Now < match.NextKitCheck) return;
+            match.NextKitCheck = _host.Now + 2.0;
+            foreach (var seat in match.Seats.Where(s => s.Present && !s.WentHome).ToList())
+            {
+                if (match.Status != MatchStatus.WaitJoin && match.Status != MatchStatus.InProgress) return;
+                bool wasOk = seat.KitOk;
+                string problem = CheckKit(match, seat);
+                if (match.Status == MatchStatus.WaitJoin)
+                {
+                    if (wasOk && problem != null) KickKit(match, seat, "o kit mudou: " + problem);
+                    else if (!seat.KitOk && _host.Now > seat.KitDeadline)
+                        KickKit(match, seat, seat.KitClaimed ? problem ?? "o servidor não viu o kit" : "o jogo não vestiu o kit da classe");
+                }
+                else if (problem != null && seat.KitProblem == null && seat.Alive)
+                {
+                    seat.KitProblem = problem;
+                    _host.Warn($"Arena: partida #{match.Id}: o kit de {seat.Name} ({seat.ClassId}) divergiu na luta: {problem}");
+                }
+            }
+        }
+
+        /// <summary>The ZDO against the class: marks the kit seen when it matches; returns the
+        /// difference (null when it matches or the server cannot see the character now).</summary>
+        private string CheckKit(ArenaMatch match, ArenaSeat seat)
+        {
+            var cls = _t.ClassOf(seat.ClassId);
+            if (cls == null) return "a classe não existe mais";
+            if (!seat.KitClaimed || !_host.TryReadKit(seat.PlayerId, out var worn)) return null;
+            string problem = ArenaClasses.Mismatch(cls, worn);
+            if (problem == null && !seat.KitOk)
+            {
+                seat.KitOk = true;
+                _host.Log($"Arena: {seat.Name} vestiu o kit {cls.Name} na partida #{match.Id}");
+            }
+            return problem;
+        }
+
+        /// <summary>Out of a balanced match before the gates open, with no rating at stake: home,
+        /// with the reason on their screen and in the log.</summary>
+        private void KickKit(ArenaMatch match, ArenaSeat seat, string why)
+        {
+            seat.State = SeatState.Left;
+            seat.Alive = false;
+            match.KitKicks++;
+            Say(seat.PlayerId, $"Você saiu da partida balanceada sem perder rating: {why}.", alert: true);
+            SendReturn(seat.PlayerId);
+            Feed(match, $"{seat.Name} saiu: o kit da classe não ficou pronto.");
+            _host.Warn($"Arena: {seat.Name} saiu da partida #{match.Id} pelo kit ({seat.ClassId}): {why}");
+            SendMatchState(match);
+        }
+
         private void EnterFailed(long playerId)
         {
             var match = MatchOf(playerId);
             var seat = match?.Seat(playerId);
             if (seat == null || seat.State != SeatState.Entered || _host.Now - seat.EnteredAt > 20f) return;
             seat.State = SeatState.Invited;
+            seat.KitClaimed = false;
+            seat.KitOk = false;
             if (_players.TryGetValue(playerId, out var p) && p.HasReturn)
             {
                 p.HasReturn = false;
@@ -1602,10 +1779,13 @@ namespace NpcValheim.Arena
                     seat.Offline = false;
                     seat.Alive = true;
                     seat.MovedAt = _host.Now;
+                    // A new character in the world wears its own gear again: the kit comes back
+                    // with this enter, and the deadline starts over.
+                    ExpectKit(match, seat);
                     var map = MapOf(match);
                     var spawn = map.SpawnFor(seat.Side);
                     _host.Send(playerId, Enter, Record(L(match.Id), F(spawn.x), F(spawn.y), F(spawn.z),
-                        F(map.YawOf(seat.Side)), I(seat.Side), map.Name, F(_t.GateRadius)));
+                        F(map.YawOf(seat.Side)), I(seat.Side), map.Name, F(_t.GateRadius), match.Balanced ? seat.ClassId : ""));
                     SendMatchState(match);
                     return;
                 }
@@ -1662,6 +1842,29 @@ namespace NpcValheim.Arena
 
         private void StartMatch(ArenaMatch match)
         {
+            // Arena balanceada: nobody fights with their own gear. Whoever's kit the server has not
+            // seen by now leaves before the gates open, with no rating at stake; and a match left
+            // without an opponent is called off instead of handing out a walk-over.
+            if (match.Balanced)
+            {
+                var missing = match.Seats.Where(s => s.Present && !s.KitOk).ToList();
+                foreach (var seat in missing)
+                    KickKit(match, seat, seat.KitClaimed ? "o servidor não viu o kit a tempo" : "o jogo não vestiu o kit da classe");
+                bool empty = match.IsFfa
+                    ? match.Seats.Count(s => s.Present) < 2
+                    : match.PresentCount(ArenaSide.Gold) == 0 || match.PresentCount(ArenaSide.Green) == 0;
+                if (match.KitKicks > 0 && empty)
+                {
+                    foreach (var seat in match.Seats.Where(s => s.Present))
+                    {
+                        seat.State = SeatState.Left;
+                        Say(seat.PlayerId, "A partida balanceada foi cancelada: o outro lado não ficou pronto. Nada de rating mudou.", alert: true);
+                        SendReturn(seat.PlayerId);
+                    }
+                    CloseMatch(match, "kit da classe não ficou pronto");
+                    return;
+                }
+            }
             match.Status = MatchStatus.InProgress;
             match.StartedAt = _host.Now;
             if (match.IsChallenge)
@@ -1708,8 +1911,11 @@ namespace NpcValheim.Arena
 
             if (match.Rated)
                 SettleRated(match, winner);
+            foreach (var seat in match.Seats.Where(s => s.KitProblem != null))
+                _host.Log($"Arena: partida #{match.Id}: {seat.Name} terminou com o kit divergente ({seat.KitProblem})");
             bool record = match.IsChallenge && SettlePve(match, winner);
             DespawnCreature(match);
+            _host.ClearMonsters(match.Map);
 
             foreach (var seat in match.Seats.Where(s => s.State == SeatState.Entered))
                 seat.Alive = seat.Alive && seat.Present;
@@ -1858,8 +2064,40 @@ namespace NpcValheim.Arena
             return isRecord;
         }
 
+        // ----------------------------------------------- which rating a match moves
+
+        /// <summary>A balanced rated match with its own rating ([Arena - Balanceada] Rating =
+        /// Separado); every other match moves the normal one.</summary>
+        private bool Apart(ArenaMatch match) => match.Balanced && _t.BalancedSeparateRating;
+
+        internal static string MmrKey(int size, bool apart) =>
+            apart ? "b" + size.ToString(CultureInfo.InvariantCulture) : size.ToString(CultureInfo.InvariantCulture);
+
+        internal int TeamRating(ArenaTeamRecord team, bool apart) =>
+            !apart ? team.Rating : team.BalancedStarted ? team.BalancedRating : Math.Max(0, _t.StartRating);
+
+        private void SetTeamRating(ArenaTeamRecord team, bool apart, int value)
+        {
+            if (!apart) { team.Rating = value; return; }
+            team.BalancedRating = value;
+            team.BalancedStarted = true;
+        }
+
+        internal int PersonalRating(ArenaTeamRecord team, ArenaMemberRecord m, bool apart) =>
+            !apart ? m.PersonalRating
+            : m.BalancedStarted ? m.BalancedPersonal
+            : ArenaRules.StartingPersonalRating(TeamRating(team, true), _t.StartPersonalRating);
+
+        private static void SetPersonalRating(ArenaMemberRecord m, bool apart, int value)
+        {
+            if (!apart) { m.PersonalRating = value; return; }
+            m.BalancedPersonal = value;
+            m.BalancedStarted = true;
+        }
+
         private void SettleRated(ArenaMatch match, int winner)
         {
+            bool apart = Apart(match);
             var gold = match.Sides[ArenaSide.Gold];
             var green = match.Sides[ArenaSide.Green];
             _teams.TryGetValue(gold.TeamId, out var goldTeam);
@@ -1869,15 +2107,15 @@ namespace NpcValheim.Arena
             var changedPlayers = new List<ArenaPlayerRecord>();
             if (winner == ArenaSide.None)
             {
-                FinishGame(goldTeam, -Math.Abs(_t.DrawPenalty), gold);
-                FinishGame(greenTeam, -Math.Abs(_t.DrawPenalty), green);
+                FinishGame(goldTeam, -Math.Abs(_t.DrawPenalty), gold, apart);
+                FinishGame(greenTeam, -Math.Abs(_t.DrawPenalty), green, apart);
                 goldTeam.PreviousOpponent = greenTeam.Id;
                 greenTeam.PreviousOpponent = goldTeam.Id;
                 foreach (var seat in match.Seats.Where(s => s.State == SeatState.Entered && !s.Settled))
                 {
                     var own = seat.Side == ArenaSide.Gold ? goldTeam : greenTeam;
                     int against = seat.Side == ArenaSide.Gold ? green.Mmr : gold.Mmr;
-                    MemberLost(own, seat, against, 0, changedPlayers);
+                    MemberLost(own, seat, against, 0, changedPlayers, apart);
                 }
             }
             else
@@ -1890,23 +2128,27 @@ namespace NpcValheim.Arena
                 // ArenaTeam::WonAgainst / LostAgainst: team rating moves against the other
                 // side's matchmaking rating; the hidden rating moves MMR against MMR.
                 w.MmrChange = ArenaRules.MatchmakerRatingMod(w.Mmr, l.Mmr, true, _t);
-                int wChange = ArenaRules.RatingMod(wTeam.Rating, l.Mmr, true, _t);
+                int wChange = ArenaRules.RatingMod(TeamRating(wTeam, apart), l.Mmr, true, _t);
                 l.MmrChange = ArenaRules.MatchmakerRatingMod(l.Mmr, w.Mmr, false, _t);
-                int lChange = ArenaRules.RatingMod(lTeam.Rating, w.Mmr, false, _t);
-                FinishGame(wTeam, wChange, w);
-                wTeam.WeekWins++;
-                wTeam.SeasonWins++;
-                FinishGame(lTeam, lChange, l);
+                int lChange = ArenaRules.RatingMod(TeamRating(lTeam, apart), w.Mmr, false, _t);
+                FinishGame(wTeam, wChange, w, apart);
+                if (apart) wTeam.BalancedWins++;
+                else
+                {
+                    wTeam.WeekWins++;
+                    wTeam.SeasonWins++;
+                }
+                FinishGame(lTeam, lChange, l, apart);
 
                 foreach (var seat in match.Seats.Where(s => s.State == SeatState.Entered && !s.Settled))
                 {
                     if (seat.Offline)
                     {
-                        if (seat.Side == winner) MemberLost(wTeam, seat, l.Mmr, w.MmrChange, changedPlayers);
-                        else MemberLost(lTeam, seat, w.Mmr, l.MmrChange, changedPlayers);
+                        if (seat.Side == winner) MemberLost(wTeam, seat, l.Mmr, w.MmrChange, changedPlayers, apart);
+                        else MemberLost(lTeam, seat, w.Mmr, l.MmrChange, changedPlayers, apart);
                     }
-                    else if (seat.Side == winner) MemberWon(wTeam, seat, l.Mmr, w.MmrChange, changedPlayers);
-                    else MemberLost(lTeam, seat, w.Mmr, l.MmrChange, changedPlayers);
+                    else if (seat.Side == winner) MemberWon(wTeam, seat, l.Mmr, w.MmrChange, changedPlayers, apart);
+                    else MemberLost(lTeam, seat, w.Mmr, l.MmrChange, changedPlayers, apart);
                 }
 
                 wTeam.PreviousOpponent = lTeam.Id;
@@ -1918,47 +2160,70 @@ namespace NpcValheim.Arena
             foreach (var m in goldTeam.Members.Concat(greenTeam.Members)) SendState(m.PlayerId);
         }
 
-        /// <summary>ArenaTeam::FinishGame: rating floors at 0, both game counters go up.</summary>
-        private static void FinishGame(ArenaTeamRecord team, int change, ArenaSideInfo side)
+        /// <summary>ArenaTeam::FinishGame: rating floors at 0, both game counters go up (the
+        /// balanced rating apart counts its own games).</summary>
+        private void FinishGame(ArenaTeamRecord team, int change, ArenaSideInfo side, bool apart)
         {
-            side.RatingBefore = team.Rating;
-            int after = ArenaRules.Apply(team.Rating, change);
-            side.RatingChange = after - team.Rating;
-            team.Rating = after;
+            int rating = TeamRating(team, apart);
+            side.RatingBefore = rating;
+            int after = ArenaRules.Apply(rating, change);
+            side.RatingChange = after - rating;
+            SetTeamRating(team, apart, after);
+            if (apart)
+            {
+                team.BalancedGames++;
+                return;
+            }
             team.WeekGames++;
             team.SeasonGames++;
         }
 
-        private void MemberWon(ArenaTeamRecord team, ArenaSeat seat, int againstMmr, int mmrChange, List<ArenaPlayerRecord> changed)
+        private void MemberWon(ArenaTeamRecord team, ArenaSeat seat, int againstMmr, int mmrChange, List<ArenaPlayerRecord> changed, bool apart)
         {
             var m = team.Member(seat.PlayerId);
             if (m == null) return;
-            seat.PersonalBefore = m.PersonalRating;
-            int before = m.PersonalRating;
-            m.PersonalRating = ArenaRules.Apply(m.PersonalRating, ArenaRules.RatingMod(m.PersonalRating, againstMmr, true, _t));
-            seat.PersonalChange = m.PersonalRating - before;
+            int before = PersonalRating(team, m, apart);
+            seat.PersonalBefore = before;
+            int after = ArenaRules.Apply(before, ArenaRules.RatingMod(before, againstMmr, true, _t));
+            SetPersonalRating(m, apart, after);
+            seat.PersonalChange = after - before;
             var p = Player(seat.PlayerId, seat.Name);
-            p.SetMmr(team.Size, ArenaRules.Apply(p.MmrOf(team.Size, _t.StartMatchmakerRating), mmrChange));
-            m.WeekGames++;
-            m.SeasonGames++;
-            m.WeekWins++;
-            m.SeasonWins++;
+            string key = MmrKey(team.Size, apart);
+            p.SetMmr(key, ArenaRules.Apply(p.MmrOf(key, _t.StartMatchmakerRating), mmrChange));
+            if (apart)
+            {
+                m.BalancedGames++;
+                m.BalancedWins++;
+            }
+            else
+            {
+                m.WeekGames++;
+                m.SeasonGames++;
+                m.WeekWins++;
+                m.SeasonWins++;
+            }
             seat.Settled = true;
             changed.Add(p);
         }
 
-        private void MemberLost(ArenaTeamRecord team, ArenaSeat seat, int againstMmr, int mmrChange, List<ArenaPlayerRecord> changed)
+        private void MemberLost(ArenaTeamRecord team, ArenaSeat seat, int againstMmr, int mmrChange, List<ArenaPlayerRecord> changed, bool apart)
         {
             var m = team.Member(seat.PlayerId);
             if (m == null) return;
-            seat.PersonalBefore = m.PersonalRating;
-            int before = m.PersonalRating;
-            m.PersonalRating = ArenaRules.Apply(m.PersonalRating, ArenaRules.RatingMod(m.PersonalRating, againstMmr, false, _t));
-            seat.PersonalChange = m.PersonalRating - before;
+            int before = PersonalRating(team, m, apart);
+            seat.PersonalBefore = before;
+            int after = ArenaRules.Apply(before, ArenaRules.RatingMod(before, againstMmr, false, _t));
+            SetPersonalRating(m, apart, after);
+            seat.PersonalChange = after - before;
             var p = Player(seat.PlayerId, seat.Name);
-            p.SetMmr(team.Size, ArenaRules.Apply(p.MmrOf(team.Size, _t.StartMatchmakerRating), mmrChange));
-            m.WeekGames++;
-            m.SeasonGames++;
+            string key = MmrKey(team.Size, apart);
+            p.SetMmr(key, ArenaRules.Apply(p.MmrOf(key, _t.StartMatchmakerRating), mmrChange));
+            if (apart) m.BalancedGames++;
+            else
+            {
+                m.WeekGames++;
+                m.SeasonGames++;
+            }
             seat.Settled = true;
             changed.Add(p);
         }
@@ -1971,7 +2236,7 @@ namespace NpcValheim.Arena
             var other = match.Sides[ArenaSide.Other(seat.Side)];
             if (!_teams.TryGetValue(side.TeamId, out var team)) return;
             var changed = new List<ArenaPlayerRecord>();
-            MemberLost(team, seat, other.Mmr, mmrChange, changed);
+            MemberLost(team, seat, other.Mmr, mmrChange, changed, Apart(match));
             _db.SaveTeams(new[] { team });
             _db.SavePlayers(changed);
         }
@@ -1982,7 +2247,7 @@ namespace NpcValheim.Arena
             {
                 Record("R", L(match.Id), I(match.Size), match.Rated ? "1" : "0", I(match.Winner), match.Map.Name,
                     I(Mathf.RoundToInt((float)(_host.Now - (match.StartedAt > 0 ? match.StartedAt : match.CreatedAt)))),
-                    match.IsChallenge ? match.Challenge.Name : "", record ? "1" : "0"),
+                    match.IsChallenge ? match.Challenge.Name : "", record ? "1" : "0", match.Balanced ? "1" : "0"),
             };
             for (int side = ArenaSide.Gold; side <= ArenaSide.Green && !match.IsFfa; side++)
             {
@@ -1993,9 +2258,12 @@ namespace NpcValheim.Arena
             {
                 string status = seat.State == SeatState.Left ? "saiu" : seat.Offline ? "offline" : seat.Alive ? "de pé" : "derrotado";
                 // A challenge has no personal rating: the PvE rating stands in its columns.
+                // Arena balanceada: the class each one played, and whether their kit diverged.
+                string cls = match.Balanced ? _t.ClassOf(seat.ClassId)?.Name ?? seat.ClassId : "";
+                string kit = seat.KitProblem != null ? "1" : "0";
                 lines.Add(match.IsChallenge
                     ? Record("U", I(seat.Side), seat.Name, I(seat.Kos), status, I(seat.PveBefore), I(seat.PveChange))
-                    : Record("U", I(seat.Side), seat.Name, I(seat.Kos), status, I(seat.PersonalBefore), I(seat.PersonalChange)));
+                    : Record("U", I(seat.Side), seat.Name, I(seat.Kos), status, I(seat.PersonalBefore), I(seat.PersonalChange), cls, kit));
             }
             return Lines(lines);
         }
@@ -2025,15 +2293,24 @@ namespace NpcValheim.Arena
             if (now >= _nextRatedUpdate)
             {
                 _nextRatedUpdate = now + Mathf.Max(1f, _t.RatedUpdateSeconds);
-                foreach (int size in _t.ActiveBrackets) MatchRated(size);
+                foreach (int size in _t.ActiveBrackets)
+                {
+                    MatchRated(size, false);
+                    MatchRated(size, true);
+                }
             }
 
             if (now >= _nextSlowTick)
             {
                 _nextSlowTick = now + 1f;
                 SlowTick();
-                foreach (int size in _t.ActiveBrackets) MatchSkirmish(size);
-                MatchFfa();
+                foreach (int size in _t.ActiveBrackets)
+                {
+                    MatchSkirmish(size, false);
+                    MatchSkirmish(size, true);
+                }
+                MatchFfa(false);
+                MatchFfa(true);
             }
 
             foreach (var match in _matches.Values.ToList()) UpdateMatch(match);
@@ -2070,6 +2347,7 @@ namespace NpcValheim.Arena
             foreach (var match in _matches.Values.ToList())
             {
                 if (match.Status != MatchStatus.WaitJoin && match.Status != MatchStatus.InProgress) continue;
+                CheckKits(match);
                 bool changed = false;
                 if (match.IsChallenge && match.Status == MatchStatus.InProgress && match.CreatureSpawned && !match.CreatureDead)
                 {
@@ -2199,6 +2477,7 @@ namespace NpcValheim.Arena
         {
             match.Status = MatchStatus.Closed;
             DespawnCreature(match);
+            _host.ClearMonsters(match.Map);
             _matches.Remove(match.Id);
             if (why != null) _host.Log($"Arena: partida #{match.Id} cancelada: {why}");
             foreach (var seat in match.Seats) SendState(seat.PlayerId);
@@ -2361,11 +2640,25 @@ namespace NpcValheim.Arena
         private void SendLadder(long playerId, int size)
         {
             if (size == ArenaRules.PveLadder) { SendPveLadder(playerId); return; }
+            if (ArenaRules.IsBalancedLadder(size)) { SendBalancedLadder(playerId, size); return; }
             var rows = new List<string> { Record("L", I(size)) };
             foreach (var team in _teams.Values.Where(t => t.Size == size)
                          .OrderByDescending(t => t.Rating).ThenBy(t => t.Name, StringComparer.OrdinalIgnoreCase).Take(100))
                 rows.Add(Record("T", I(RankOf(team)), team.Name, I(team.Rating), I(team.SeasonGames), I(team.SeasonWins),
                     I(team.Id), team.Member(playerId) != null ? "1" : "0"));
+            _host.Send(playerId, ArenaWire.Ladder, Lines(rows));
+        }
+
+        /// <summary>The ladder of the Arena balanceada when its rating is apart: the teams of the
+        /// bracket that played it, by their balanced rating, as the normal ladder's T rows.</summary>
+        private void SendBalancedLadder(long playerId, int ladder)
+        {
+            int size = ArenaRules.BracketOfLadder(ladder);
+            var rows = new List<string> { Record("L", I(ladder)) };
+            var played = _teams.Values.Where(t => t.Size == size && t.BalancedStarted).ToList();
+            foreach (var team in played.OrderByDescending(t => t.BalancedRating).ThenBy(t => t.Name, StringComparer.OrdinalIgnoreCase).Take(100))
+                rows.Add(Record("T", I(1 + played.Count(t => t.BalancedRating > team.BalancedRating)), team.Name, I(team.BalancedRating),
+                    I(team.BalancedGames), I(team.BalancedWins), I(team.Id), team.Member(playerId) != null ? "1" : "0"));
             _host.Send(playerId, ArenaWire.Ladder, Lines(rows));
         }
 
@@ -2401,9 +2694,11 @@ namespace NpcValheim.Arena
 
             foreach (var team in _teams.Values.Where(t => t.Member(playerId) != null).OrderBy(t => t.Size))
             {
+                // The balanced rating last, -1 while it is not apart.
                 lines.Add(Record("T", I(team.Id), I(team.Size), team.Name, L(team.CaptainId), I(team.Rating), I(RankOf(team)),
                     I(team.WeekGames), I(team.WeekWins), I(team.SeasonGames), I(team.SeasonWins),
-                    I(PlayerRecord(playerId)?.MmrOf(team.Size, _t.StartMatchmakerRating) ?? _t.StartMatchmakerRating)));
+                    I(PlayerRecord(playerId)?.MmrOf(team.Size, _t.StartMatchmakerRating) ?? _t.StartMatchmakerRating),
+                    I(_t.BalancedSeparateRating ? TeamRating(team, true) : -1)));
                 foreach (var m in team.Members)
                     lines.Add(Record("M", I(team.Id), L(m.PlayerId), m.Name, I(m.PersonalRating), I(m.WeekGames), I(m.WeekWins),
                         I(m.SeasonGames), I(m.SeasonWins), _host.IsOnline(m.PlayerId) ? "1" : "0"));
@@ -2428,10 +2723,10 @@ namespace NpcValheim.Arena
             var pending = PendingOf(playerId);
             var entry = QueueOf(playerId);
             if (pending != null)
-                lines.Add(Record("Q", I(pending.Size), pending.Rated ? "1" : "0", "0", "confirm"));
+                lines.Add(Record("Q", I(pending.Size), pending.Rated ? "1" : "0", "0", "confirm", pending.Balanced ? "1" : "0"));
             else if (entry != null)
                 lines.Add(Record("Q", I(entry.Size), entry.Rated ? "1" : "0",
-                    I(Mathf.RoundToInt((float)(_host.Now - entry.JoinTime))), "queued"));
+                    I(Mathf.RoundToInt((float)(_host.Now - entry.JoinTime))), "queued", entry.Balanced ? "1" : "0"));
 
             var match = MatchOf(playerId) ?? _matches.Values.FirstOrDefault(m =>
                 m.Status == MatchStatus.WaitLeave && m.Seats.Any(s => s.PlayerId == playerId && s.State == SeatState.Entered));
@@ -2459,7 +2754,7 @@ namespace NpcValheim.Arena
                 string mine = seat.State == SeatState.Invited ? "invited" : !seat.Alive ? "ko" : "alive";
                 lines.Add(Record("X", L(match.Id), I(match.Size), match.Rated ? "1" : "0", match.Map.Name, I(seat.Side), phase,
                     I(left < 0 ? -1 : Mathf.Max(0, Mathf.RoundToInt((float)left))), mine, I(match.Winner),
-                    match.IsChallenge ? match.Challenge.Name : ""));
+                    match.IsChallenge ? match.Challenge.Name : "", match.Balanced ? "1" : "0", match.Balanced ? seat.ClassId : ""));
                 if (match.IsChallenge)
                 {
                     // The creature is the Green side's one "player", with its health beside the name.

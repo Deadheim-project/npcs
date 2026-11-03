@@ -106,6 +106,16 @@ namespace NpcValheim.Arena
         /// no team has a size there, everyone is on their own.</summary>
         internal const int FfaSize = 0;
 
-        internal static string BracketName(int size) => size == FfaSize ? "FFA" : size == PveLadder ? "PvE" : $"{size}v{size}";
+        internal static string BracketName(int size) =>
+            size == FfaSize ? "FFA" : size == PveLadder ? "PvE" : IsBalancedLadder(size) ? $"Bal. {BracketOfLadder(size)}v{BracketOfLadder(size)}" : $"{size}v{size}";
+
+        /// <summary>The ladder "size" of the Arena balanceada's own rating, per bracket (101 = 1v1).</summary>
+        internal const int BalancedLadderOffset = 100;
+
+        internal static int BalancedLadder(int size) => BalancedLadderOffset + size;
+
+        internal static bool IsBalancedLadder(int ladder) => ladder > BalancedLadderOffset && ladder <= BalancedLadderOffset + 10;
+
+        internal static int BracketOfLadder(int ladder) => IsBalancedLadder(ladder) ? ladder - BalancedLadderOffset : ladder;
     }
 }

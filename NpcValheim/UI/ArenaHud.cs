@@ -19,6 +19,8 @@ namespace NpcValheim.UI
         private static ArenaHud _instance;
         private GameObject _canvas;
         private TextMeshProUGUI _line;
+        private GameObject _balancedPanel;
+        private TextMeshProUGUI _balanced;
         private GameObject _spectatePanel;
         private TextMeshProUGUI _spectate;
         private float _nextRefresh;
@@ -75,7 +77,10 @@ namespace NpcValheim.UI
                 string watching = SpectateText();
                 _spectate.text = watching ?? "";
                 if (_spectatePanel.activeSelf != (watching != null)) _spectatePanel.SetActive(watching != null);
-                hud &= !string.IsNullOrEmpty(text) || watching != null;
+                string balanced = BalancedText();
+                _balanced.text = balanced ?? "";
+                if (_balancedPanel.activeSelf != (balanced != null)) _balancedPanel.SetActive(balanced != null);
+                hud &= !string.IsNullOrEmpty(text) || watching != null || balanced != null;
                 if (_canvas.activeSelf != hud) _canvas.SetActive(hud);
             }
             else if (!hud && _canvas.activeSelf)
@@ -116,12 +121,25 @@ namespace NpcValheim.UI
             {
                 if (queue.Status == "confirm") return "Arena: confirmando o grupo...";
                 int waited = queue.Waited + Mathf.FloorToInt(Time.realtimeSinceStartup - ArenaClient.SnapshotAt);
-                string kind = queue.Size == ArenaRules.FfaSize ? "" : queue.Rated ? " Ranqueada" : " Escaramuça";
+                string kind = (queue.Size == ArenaRules.FfaSize ? "" : queue.Rated ? " Ranqueada" : " Escaramuça") +
+                              (queue.Balanced ? queue.Size == ArenaRules.FfaSize ? " balanceado" : " balanceada" : "");
                 return $"Na fila: {ArenaRules.BracketName(queue.Size)}{kind}  ·  {waited / 60}:{waited % 60:00}";
             }
 
             if (s.SignRequests.Count > 0 || s.Invite != null)
                 return $"Arena: pedido aguardando resposta  {key}";
+            return null;
+        }
+
+        /// <summary>The band under the line in a balanced match: the class, and that the player's
+        /// own gear comes back at the end. Null outside one.</summary>
+        private static string BalancedText()
+        {
+            var match = ArenaClient.Snapshot.Match;
+            if (ArenaKit.Active && ArenaKit.Class != null)
+                return $"Partida balanceada: <color=#ffe300>{ArenaKit.Class.Name}</color>  ·  teclas 1 a {ArenaKit.Belt.Count} trocam a arma  ·  seu equipamento volta no fim";
+            if (match != null && match.Balanced && match.Phase != "invited" && match.Phase != "ended")
+                return $"Partida balanceada: <color=#ffe300>{ArenaViewBase.ClassName(match.ClassId)}</color>  ·  vestindo o kit da classe...";
             return null;
         }
 
@@ -161,6 +179,21 @@ namespace NpcValheim.UI
             ValheimUi.Stretch((RectTransform)_line.transform, 10f, 2f);
             _line.textWrappingMode = TextWrappingModes.NoWrap;
 
+            var band = ValheimUi.CreateRect("Balanced", _canvas.transform);
+            band.anchorMin = band.anchorMax = new Vector2(0.5f, 1f);
+            band.pivot = new Vector2(0.5f, 1f);
+            band.anchoredPosition = new Vector2(0f, -122f);
+            band.sizeDelta = new Vector2(760f, 28f);
+            var bandBack = band.gameObject.AddComponent<Image>();
+            bandBack.color = new Color(0.08f, 0.05f, 0.01f, 0.78f);
+            bandBack.raycastTarget = false;
+            // The plain font: the display one does not read against a bright sky (found in the game, 03/11).
+            _balanced = ValheimUi.CreateLabel(band, "", 16, ValheimUi.Beige, TextAlignmentOptions.Center);
+            ValheimUi.Stretch((RectTransform)_balanced.transform, 10f, 2f);
+            _balanced.textWrappingMode = TextWrappingModes.NoWrap;
+            _balancedPanel = band.gameObject;
+            _balancedPanel.SetActive(false);
+
             var panel = ValheimUi.CreateRect("Spectate", _canvas.transform);
             panel.anchorMin = panel.anchorMax = new Vector2(0.5f, 0.5f);
             panel.pivot = new Vector2(0.5f, 0.5f);
@@ -181,6 +214,8 @@ namespace NpcValheim.UI
             if (_canvas != null) Destroy(_canvas);
             _canvas = null;
             _line = null;
+            _balancedPanel = null;
+            _balanced = null;
             _spectatePanel = null;
             _spectate = null;
         }

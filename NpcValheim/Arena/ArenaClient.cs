@@ -85,6 +85,8 @@ namespace NpcValheim.Arena
 
         internal static void ResetSession()
         {
+            ArenaKit.Undress();
+            _kitClass = null;
             _lastState = null;
             _lastAttacker = 0L;
             Snapshot = new ArenaSnapshot();
@@ -140,6 +142,16 @@ namespace NpcValheim.Arena
             if (kind == LayoutHash)
             {
                 ArenaLayoutNet.OnHash(payload);
+                return;
+            }
+            if (kind == ArenaWire.Classes)
+            {
+                ArenaClassesNet.Receive(payload);
+                return;
+            }
+            if (kind == ClassesHash)
+            {
+                ArenaClassesNet.OnHash(payload);
                 return;
             }
             var player = Player.m_localPlayer;
@@ -214,8 +226,11 @@ namespace NpcValheim.Arena
                         // left: cleared now, two players still in the arena could hit each
                         // other, get "in combat", and have Deadheim refuse the way home.
                         if (MatchId != 0L) SetPhase(PhaseOut);
-                        // The camera back on the character before it leaves.
+                        // The camera back on the character before it leaves, and the player's
+                        // own gear back before the way home (Arena balanceada).
                         ArenaSpectate.End();
+                        _kitClass = null;
+                        ArenaKit.Undress();
                         QueueTeleport(new Vector3(Float(f, 0), Float(f, 1), Float(f, 2)), Float(f, 3), isReturn: true);
                     }
                     else
@@ -233,10 +248,12 @@ namespace NpcValheim.Arena
 
                 case Confirm:
                     // The leader says I am in their group; my own Groups mod is the only thing
-                    // that can say whether that is true.
+                    // that can say whether that is true. In the Arena balanceada my own panel
+                    // also says which class I play.
                     long leader = Long(f, 1);
                     bool ok = ArenaGroups.InMyGroup(leader);
-                    ArenaNet.Request(ActGroupConfirm, Str(f, 0) + "\n" + (ok ? "1" : "0"));
+                    string myClass = Str(f, 4) == "1" ? BalancedChoice.ClassId : "";
+                    ArenaNet.Request(ActGroupConfirm, Str(f, 0) + "\n" + (ok ? "1" : "0") + "\n" + myClass);
                     break;
 
                 case ArenaWire.Celebrate:
@@ -313,7 +330,37 @@ namespace NpcValheim.Arena
                 Tell("Não foi possível entrar na arena agora. Tente de novo antes do convite expirar.", true);
                 return;
             }
+            // Arena balanceada: the class's kit goes on now, with the teleport already on its way
+            // (a teleport refused above leaves the player as they were).
+            _kitClass = Str(f, 8);
+            if (_kitClass.Length == 0) _kitClass = null;
+            TryDress(player);
             Refill(player);
+        }
+
+        /// <summary>The class the server put this player in for the match, until the kit is on.</summary>
+        private static string _kitClass;
+
+        /// <summary>Puts the kit on as soon as the classes are here, and tells the server, which
+        /// checks it on the ZDO. Retried from the tick while the classes have not arrived.</summary>
+        private static void TryDress(Player player)
+        {
+            if (_kitClass == null || MatchId == 0L || player == null) return;
+            if (ArenaKit.Active && ArenaKit.MatchId == MatchId && ArenaKit.Wears(player)) return;
+            var cls = ArenaClasses.Find(_kitClass);
+            if (cls == null)
+            {
+                ArenaClassesNet.AskIfMissing();
+                return;
+            }
+            if (!ArenaKit.Dress(player, cls, MatchId))
+            {
+                _kitClass = null;
+                Tell($"Não foi possível vestir o kit {cls.Name}: um item da classe não existe neste jogo. Avise um admin.", true);
+                return;
+            }
+            ArenaNet.Request(ActKit, $"{MatchId}\n{cls.Id}");
+            player.Message(MessageHud.MessageType.Center, $"Arena balanceada: você luta de {cls.Name}. Seu equipamento volta no fim.", 0, null);
         }
 
         // -------------------------------------------------------------------- match state
@@ -328,6 +375,8 @@ namespace NpcValheim.Arena
         private static void ClearMatch()
         {
             ArenaSpectate.End();
+            _kitClass = null;
+            ArenaKit.Undress();
             MatchId = 0L;
             Side = ArenaSide.None;
             Phase = PhaseNone;
@@ -413,6 +462,11 @@ namespace NpcValheim.Arena
 
             // A respawned or re-created character starts without the keys.
             if (MatchId != 0L) Publish();
+
+            // Arena balanceada: the kit waits for the classes; and it never outlives the match.
+            if (_kitClass != null && !_pendingTeleport) TryDress(player);
+            if (ArenaKit.StartPending) ArenaKit.EquipStart(player);
+            if (ArenaKit.Active && (MatchId == 0L || !ArenaKit.Wears(player))) ArenaKit.Undress();
 
             ArenaAllies.Update(MatchId != 0L);
 

@@ -17,6 +17,8 @@ namespace NpcValheim.Arena
         public int SeasonGames;
         public int SeasonWins;
         public int Mmr;
+        /// <summary>The team's rating in the Arena balanceada, -1 while it is the same as the normal one.</summary>
+        public int BalancedRating = -1;
         public readonly List<ArenaMemberView> Members = new List<ArenaMemberView>();
     }
 
@@ -63,6 +65,7 @@ namespace NpcValheim.Arena
         public bool Rated;
         public int Waited;
         public string Status;
+        public bool Balanced;
     }
 
     internal sealed class ArenaMatchView
@@ -81,6 +84,9 @@ namespace NpcValheim.Arena
         /// <summary>The challenge's name when the match is one, empty otherwise.</summary>
         public string Challenge = "";
         public bool IsChallenge => !string.IsNullOrEmpty(Challenge);
+        /// <summary>Arena balanceada, and the class this player fights with.</summary>
+        public bool Balanced;
+        public string ClassId = "";
         public int GoldAlive;
         public int GoldTotal;
         public int GreenAlive;
@@ -127,7 +133,7 @@ namespace NpcValheim.Arena
                         {
                             Id = Int(f, 1), Size = Int(f, 2), Name = Str(f, 3), CaptainId = Long(f, 4), Rating = Int(f, 5),
                             Rank = Int(f, 6), WeekGames = Int(f, 7), WeekWins = Int(f, 8), SeasonGames = Int(f, 9),
-                            SeasonWins = Int(f, 10), Mmr = Int(f, 11),
+                            SeasonWins = Int(f, 10), Mmr = Int(f, 11), BalancedRating = Int(f, 12, -1),
                         });
                         break;
                     case "M":
@@ -151,14 +157,17 @@ namespace NpcValheim.Arena
                         s.Invite = new ArenaInviteView { TeamId = Int(f, 1), Size = Int(f, 2), TeamName = Str(f, 3), From = Str(f, 4) };
                         break;
                     case "Q":
-                        s.Queue = new ArenaQueueView { Size = Int(f, 1), Rated = Str(f, 2) == "1", Waited = Int(f, 3), Status = Str(f, 4) };
+                        s.Queue = new ArenaQueueView
+                        {
+                            Size = Int(f, 1), Rated = Str(f, 2) == "1", Waited = Int(f, 3), Status = Str(f, 4), Balanced = Str(f, 5) == "1",
+                        };
                         break;
                     case "X":
                         s.Match = new ArenaMatchView
                         {
                             Id = Long(f, 1), Size = Int(f, 2), Rated = Str(f, 3) == "1", Map = Str(f, 4), Side = Int(f, 5),
                             Phase = Str(f, 6), SecondsLeft = Int(f, 7), Mine = Str(f, 8), Winner = Int(f, 9, -1),
-                            Challenge = Str(f, 10),
+                            Challenge = Str(f, 10), Balanced = Str(f, 11) == "1", ClassId = Str(f, 12),
                         };
                         break;
                     case "A":
@@ -194,6 +203,9 @@ namespace NpcValheim.Arena
         public string Status;
         public int PersonalBefore;
         public int PersonalChange;
+        /// <summary>Arena balanceada: the class's name, and whether the kit diverged in the fight.</summary>
+        public string Class = "";
+        public bool KitDiverged;
     }
 
     /// <summary>The scoreboard at the end of a match.</summary>
@@ -209,6 +221,7 @@ namespace NpcValheim.Arena
         public bool IsChallenge => !string.IsNullOrEmpty(Challenge);
         /// <summary>A challenge won faster than anyone before.</summary>
         public bool Record;
+        public bool Balanced;
         public readonly List<ArenaResultSide> Sides = new List<ArenaResultSide>();
         public readonly List<ArenaResultPlayer> Players = new List<ArenaResultPlayer>();
 
@@ -228,6 +241,7 @@ namespace NpcValheim.Arena
                         r.Duration = Int(f, 6);
                         r.Challenge = Str(f, 7);
                         r.Record = Str(f, 8) == "1";
+                        r.Balanced = Str(f, 9) == "1";
                         break;
                     case "S":
                         r.Sides.Add(new ArenaResultSide
@@ -240,7 +254,7 @@ namespace NpcValheim.Arena
                         r.Players.Add(new ArenaResultPlayer
                         {
                             Side = Int(f, 1), Name = Str(f, 2), Kos = Int(f, 3), Status = Str(f, 4),
-                            PersonalBefore = Int(f, 5, -1), PersonalChange = Int(f, 6),
+                            PersonalBefore = Int(f, 5, -1), PersonalChange = Int(f, 6), Class = Str(f, 7), KitDiverged = Str(f, 8) == "1",
                         });
                         break;
                 }

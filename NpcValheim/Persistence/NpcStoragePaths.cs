@@ -45,6 +45,9 @@ namespace NpcValheim.Persistence
         /// <summary>Every arena and challenge of the server (ArenaLayout).</summary>
         public static string ArenaLayoutFile => Path.Combine(Paths.ConfigPath, "NpcValheim", "arena-locais.json");
 
+        /// <summary>The classes of the Arena balanceada (ArenaClasses).</summary>
+        public static string ArenaClassesFile => Path.Combine(Paths.ConfigPath, "NpcValheim", "arena-classes.json");
+
         public static string DatabaseDirectory
         {
             get

@@ -28,7 +28,7 @@ namespace NpcValheim.Arena
 
             var local = Player.m_localPlayer;
             if (local == null) return;
-            local.Message(MessageHud.MessageType.Center, $"{name} venceu!", 0, null);
+            local.Message(MessageHud.MessageType.Center, $"{name}, o Aesir, venceu a arena!", 0, null);
 
             var winner = Player.GetAllPlayers().FirstOrDefault(p => p != null && p.GetPlayerID() == winnerId);
             if (winner == null) return;
@@ -42,7 +42,68 @@ namespace NpcValheim.Arena
             go.transform.SetParent(winner.transform, false);
             go.transform.localPosition = new Vector3(0f, 2.2f, 0f);
             Build(go, seconds);
-            Object.Destroy(go, seconds + 2f);
+            BuildFireworks(go, seconds);
+            Object.Destroy(go, seconds + 3f);
+        }
+
+        /// <summary>Rockets over the winner: a volley every 0.7 s of gold, cyan and violet sparks
+        /// that shoot up and fall back, on a child object so it has its own renderer.</summary>
+        private static void BuildFireworks(GameObject parent, float seconds)
+        {
+            var go = new GameObject("NpcvArenaFireworks");
+            go.transform.SetParent(parent.transform, false);
+            go.transform.localPosition = new Vector3(0f, 0.5f, 0f);
+            go.transform.localRotation = Quaternion.Euler(-90f, 0f, 0f); // the cone points up
+            var ps = go.AddComponent<ParticleSystem>();
+            ps.Stop(true, ParticleSystemStopBehavior.StopEmittingAndClear);
+
+            var main = ps.main;
+            main.duration = seconds;
+            main.loop = false;
+            main.startLifetime = new ParticleSystem.MinMaxCurve(1.4f, 2.2f);
+            main.startSpeed = new ParticleSystem.MinMaxCurve(6f, 11f);
+            main.startSize = new ParticleSystem.MinMaxCurve(0.12f, 0.28f);
+            main.gravityModifier = 0.9f;
+            main.maxParticles = 300;
+            main.simulationSpace = ParticleSystemSimulationSpace.World;
+            var colors = new Gradient();
+            colors.SetKeys(
+                new[]
+                {
+                    new GradientColorKey(new Color(1f, 0.85f, 0.3f), 0f),
+                    new GradientColorKey(new Color(0.3f, 0.9f, 1f), 0.5f),
+                    new GradientColorKey(new Color(0.8f, 0.4f, 1f), 1f),
+                },
+                new[] { new GradientAlphaKey(1f, 0f), new GradientAlphaKey(1f, 1f) });
+            main.startColor = new ParticleSystem.MinMaxGradient(colors) { mode = ParticleSystemGradientMode.RandomColor };
+
+            var emission = ps.emission;
+            emission.rateOverTime = 0f;
+            emission.SetBursts(new[] { new ParticleSystem.Burst(0f, 28, 28, Mathf.Max(1, (int)(seconds / 0.7f)), 0.7f) });
+
+            var shape = ps.shape;
+            shape.shapeType = ParticleSystemShapeType.Cone;
+            shape.angle = 35f;
+            shape.radius = 0.3f;
+
+            var fade = ps.colorOverLifetime;
+            fade.enabled = true;
+            var g = new Gradient();
+            g.SetKeys(
+                new[] { new GradientColorKey(Color.white, 0f), new GradientColorKey(Color.white, 1f) },
+                new[] { new GradientAlphaKey(1f, 0f), new GradientAlphaKey(1f, 0.5f), new GradientAlphaKey(0f, 1f) });
+            fade.color = g;
+
+            var renderer = go.GetComponent<ParticleSystemRenderer>();
+            var shader = Shader.Find("Sprites/Default") ?? Shader.Find("Legacy Shaders/Particles/Alpha Blended") ??
+                         Shader.Find("Particles/Standard Unlit");
+            if (shader == null)
+            {
+                Object.Destroy(go);
+                return;
+            }
+            renderer.material = new Material(shader);
+            ps.Play();
         }
 
         private static void Build(GameObject go, float seconds)

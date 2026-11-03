@@ -113,7 +113,13 @@ class Program
             Despawned.Add(matchId);
         }
 
+        public int Cleared;
+        public void ClearMonsters(ArenaMapDef map) => Cleared++;
         public void SweepCreatures(IEnumerable<string> prefabs, Func<long, bool> live) => Sweeps++;
+
+        // Arena balanceada: what each character wears on its ZDO (missing = the server cannot see it).
+        public readonly Dictionary<long, ArenaWornKit> Kits = new Dictionary<long, ArenaWornKit>();
+        public bool TryReadKit(long playerId, out ArenaWornKit worn) => Kits.TryGetValue(playerId, out worn);
 
         public string Last(long to, string kind) =>
             Sent.LastOrDefault(s => s.To == to && s.Kind == kind).Payload;
@@ -222,6 +228,11 @@ class Program
             BestiaryKit();
             BestiarySchedule();
             Version090();
+            BalancedClasses();
+            BalancedKitRules();
+            BalancedQueues();
+            BalancedKitCheck();
+            BalancedRating();
         }
         catch (Exception ex)
         {
@@ -232,6 +243,314 @@ class Program
         System.Console.WriteLine();
         System.Console.WriteLine(failed == 0 ? $"ALL {passed} CHECKS PASSED" : $"{failed} FAILED, {passed} passed");
         Environment.Exit(failed == 0 ? 0 : 1);
+    }
+
+    // ------------------------------------------------------------------- Arena balanceada
+
+    /// <summary>The engine with the five classes of a new server and the balanced queue on.</summary>
+    static ArenaTuning BalancedTuning(bool separate = false)
+    {
+        var t = Tuning();
+        t.Classes = ArenaClasses.Defaults();
+        t.BalancedEnabled = true;
+        t.BalancedSeparateRating = separate;
+        t.KitDeadlineSeconds = 20f;
+        return t;
+    }
+
+    /// <summary>What a character wearing this class's kit shows on its ZDO: the armour, and the
+    /// first starting weapon in the right hand.</summary>
+    static ArenaWornKit Worn(ArenaClassDef c)
+    {
+        var weapon = c.Belt.First(b => c.Start.Contains(b.Prefab));
+        return new ArenaWornKit
+        {
+            Right = weapon.Prefab, RightQuality = weapon.Quality,
+            Chest = c.Chest?.Prefab ?? "", Legs = c.Legs?.Prefab ?? "", Helmet = c.Helmet?.Prefab ?? "",
+            Cape = c.Cape?.Prefab ?? "", CapeQuality = c.Cape?.Quality ?? 0, Utility = c.Utility?.Prefab ?? "",
+        };
+    }
+
+    /// <summary>The client's side of entering a balanced match: the kit on the ZDO, and "kit".</summary>
+    static void WearKit(ArenaEngine e, FakeHost h, long who)
+    {
+        var match = e.MatchOf(who);
+        var seat = match.Seat(who);
+        h.Kits[who] = Worn(e.Tuning.ClassOf(seat.ClassId));
+        Do(e, who, "", ArenaWire.ActKit, $"{match.Id}\n{seat.ClassId}");
+    }
+
+    static void BalancedClasses()
+    {
+        Section("Arena balanceada: classes (arena-classes.json)");
+        var defaults = ArenaClasses.Defaults();
+        Check("five classes out of the box", defaults.Select(c => c.Id).SequenceEqual(new[] { "guerreiro", "berserker", "arqueiro", "mago", "assassino" }),
+            string.Join(",", defaults.Select(c => c.Id)));
+        Check("every default class is well formed", defaults.All(c => ArenaClasses.Problems(c).Count == 0),
+            string.Join(" / ", defaults.SelectMany(c => ArenaClasses.Problems(c))));
+        Check("no belt holds more than 8", defaults.All(c => c.Belt.Count <= ArenaClasses.MaxBelt));
+
+        string json = ArenaClasses.ToJson(defaults, indent: true);
+        var problems = new List<string>();
+        bool ok = ArenaClasses.Parse(json, problems, out var back);
+        Check("the file reads back whole", ok && problems.Count == 0 && back.Count == defaults.Count, string.Join(" / ", problems));
+        var g = back.FirstOrDefault(c => c.Id == "guerreiro");
+        Check("armour, belt and qualities survive", g != null && g.Chest.Prefab == "ArmorCarapaceChest" && g.Chest.Quality == 3 &&
+                                                    g.Belt.Count == 5 && g.Belt[0].Prefab == "SwordMistwalker" && g.Belt[0].Quality == 3 &&
+                                                    g.Belt[4].Prefab == "ArrowCarapace" && g.Belt[4].Quality == 1);
+        Check("start, vitals and skills survive", g != null && g.Start.SequenceEqual(new[] { "SwordMistwalker", "ShieldCarapace", "ArrowCarapace" }) &&
+                                                  g.Health == 180f && g.Stamina == 130f && g.SkillOf("Swords") == 35 && g.SkillOf("Sneak") == 20);
+        Check("the same classes give the same JSON", ArenaClasses.ToJson(back) == ArenaClasses.ToJson(defaults));
+        var mago = back.First(c => c.Id == "mago");
+        Check("eitr and an empty utility slot survive", mago.Eitr == 200f && mago.Utility == null);
+
+        var one = ArenaClasses.ParseOne(ArenaClasses.ToJsonOne(defaults[2]), out string bad);
+        Check("one class goes to the server and back", one != null && bad == null && one.Id == "arqueiro" && one.Belt.Count == 8);
+        Check("a class that is not JSON is refused with the reason", ArenaClasses.ParseOne("{nope", out bad) == null && bad != null);
+
+        problems.Clear();
+        Check("a file that is not JSON is refused", !ArenaClasses.Parse("nope", problems, out _) && problems.Count == 1);
+        problems.Clear();
+        ArenaClasses.Parse("{\"classes\":[{\"id\":\"a\",\"nome\":\"A\",\"cinto\":[\"SwordIron\"]},{\"id\":\"a\",\"nome\":\"B\",\"cinto\":[\"AxeIron\"]}]}",
+            problems, out var twice);
+        Check("a repeated id: the second is left out and named", twice.Count == 1 && twice[0].Name == "A" && problems.Count == 1);
+        ArenaClasses.Parse("{\"classes\":[{\"nome\":\"Sem Id\",\"cinto\":[\"SwordIron\",\"a\",\"b\",\"c\",\"d\",\"e\",\"f\",\"g\",\"h\"],\"vida\":5000," +
+                           "\"skills\":\"Swords:250,Bows:x\"}]}", null, out var odd);
+        Check("no id: one is made from the name", odd.Count == 1 && odd[0].Id == "sem_id");
+        Check("the belt stops at 8, health at 1000, a skill at 100, a broken skill is left out",
+            odd[0].Belt.Count == 8 && odd[0].Health == 1000f && odd[0].SkillOf("Swords") == 100 && !odd[0].Skills.ContainsKey("Bows"));
+        Check("an item without a level is level 1, \"Prefab:3\" is 3",
+            ArenaKitItem.Parse("SwordIron").Quality == 1 && ArenaKitItem.Parse("SwordIron:3").Quality == 3 && ArenaKitItem.Parse(" ") == null);
+    }
+
+    static void BalancedKitRules()
+    {
+        Section("Arena balanceada: the kit against the ZDO");
+        var g = ArenaClasses.Defaults().First(c => c.Id == "guerreiro");
+        var worn = Worn(g);
+        Check("the class's own kit matches", ArenaClasses.Mismatch(g, worn) == null, ArenaClasses.Mismatch(g, worn));
+
+        worn = Worn(g);
+        worn.Right = "SwordBlackmetal";
+        worn.RightQuality = 1;
+        Check("a weapon out of the belt is caught", ArenaClasses.Mismatch(g, worn)?.Contains("SwordBlackmetal") == true);
+        worn = Worn(g);
+        worn.RightQuality = 4;
+        Check("a belt weapon at another quality is caught", ArenaClasses.Mismatch(g, worn)?.Contains("nível 4") == true);
+        worn = Worn(g);
+        worn.Right = "";
+        worn.Left = "ShieldCarapace";
+        worn.LeftQuality = 3;
+        worn.RightBack = "MaceDemolisher";
+        worn.RightBackQuality = 3;
+        Check("empty hands, a shield and a weapon on the back from the belt are fine", ArenaClasses.Mismatch(g, worn) == null);
+        worn = Worn(g);
+        worn.Chest = "ArmorPaddedCuirass";
+        Check("another chest is caught", ArenaClasses.Mismatch(g, worn)?.Contains("peito") == true);
+        worn = Worn(g);
+        worn.Helmet = "";
+        Check("a missing helmet is caught", ArenaClasses.Mismatch(g, worn)?.Contains("cabeça") == true);
+        worn = Worn(g);
+        worn.Utility = "BeltStrength";
+        Check("a utility the class has none of is caught", ArenaClasses.Mismatch(g, worn)?.Contains("utilitário") == true);
+        worn = Worn(g);
+        worn.CapeQuality = 2;
+        Check("the cape's quality counts too", ArenaClasses.Mismatch(g, worn)?.Contains("capa") == true);
+        worn = Worn(g);
+        worn.Trinket = "TrinketBronzeHealth";
+        Check("any trinket is caught", ArenaClasses.Mismatch(g, worn)?.Contains("bugiganga") == true);
+        Check("compares ignoring case", ArenaClasses.Mismatch(g, new ArenaWornKit
+        {
+            Right = "swordmistwalker", RightQuality = 3, Chest = "armorcarapacechest", Legs = "ArmorCarapaceLegs", Helmet = "HelmetCarapace", Cape = "CapeFeather", CapeQuality = 3,
+        }) == null);
+
+        var broken = g.Clone();
+        broken.Start.Add("Battleaxe");
+        Check("starting with an item off the belt is a problem", ArenaClasses.Problems(broken).Any(p => p.Contains("Battleaxe")));
+        broken = g.Clone();
+        broken.Belt.Clear();
+        broken.Start.Clear();
+        Check("an empty belt is a problem", ArenaClasses.Problems(broken).Any(p => p.Contains("vazio")));
+        ArenaKitSlot SlotOf(string prefab) =>
+            prefab.StartsWith("Armor") && prefab.EndsWith("Chest") ? ArenaKitSlot.Chest
+            : prefab.StartsWith("Armor") && prefab.EndsWith("Legs") ? ArenaKitSlot.Legs
+            : prefab.StartsWith("Helmet") ? ArenaKitSlot.Helmet : prefab.StartsWith("Cape") ? ArenaKitSlot.Cape
+            : prefab.StartsWith("Shield") ? ArenaKitSlot.Shield : prefab.StartsWith("Arrow") ? ArenaKitSlot.Ammo
+            : prefab == "Nada" ? ArenaKitSlot.Unknown : prefab == "Wood" ? ArenaKitSlot.Other : ArenaKitSlot.Weapon;
+        Check("the default warrior passes the world check", ArenaClasses.Problems(g, SlotOf, _ => 3).Count == 0,
+            string.Join(" / ", ArenaClasses.Problems(g, SlotOf, _ => 3)));
+        broken = g.Clone();
+        broken.Belt.Add(new ArenaKitItem { Prefab = "ArmorIronChest" });
+        broken.Belt.Add(new ArenaKitItem { Prefab = "Nada" });
+        broken.Chest = new ArenaKitItem { Prefab = "HelmetIron" };
+        var found = ArenaClasses.Problems(broken, SlotOf, _ => 3);
+        Check("armour in the belt, an unknown item, a helmet as chest: each named",
+            found.Any(p => p.Contains("ArmorIronChest")) && found.Any(p => p.Contains("Nada")) && found.Any(p => p.StartsWith("peito")), string.Join(" / ", found));
+        Check("a quality above the item's top is named", ArenaClasses.Problems(g, SlotOf, _ => 1).Any(p => p.Contains("nível 1")));
+        Check("a skill the game does not have is named", ArenaClasses.Problems(g, null, null, s => s != "Clubs").Any(p => p.Contains("Clubs")));
+    }
+
+    static void BalancedQueues()
+    {
+        Section("Arena balanceada: a queue of its own");
+        // Two arenas: the balanced match takes one, the normal one the other.
+        var two = BalancedTuning();
+        two.Maps.Add(new ArenaMapDef { Name = "Poço", Gold = new Vector3(300, 30, 100), Green = new Vector3(340, 30, 100), GreenYaw = 180 });
+        var (e, h, _) = NewEngine(two);
+        Do(e, A, ArenaEngine.AtBattlemaster, ArenaWire.ActQueueJoin, "1\n0\n\n1\n");
+        Check("no class chosen: refused, with the reason", e.QueueOf(A) == null && h.Got(A, ArenaWire.Alert, "precisa escolher a classe"));
+        Do(e, A, ArenaEngine.AtBattlemaster, ArenaWire.ActQueueJoin, "1\n0\n\n1\nnao-existe");
+        Check("a class the server does not have: refused", e.QueueOf(A) == null);
+        Do(e, A, ArenaEngine.AtBattlemaster, ArenaWire.ActQueueJoin, "1\n0\n\n1\nguerreiro");
+        Check("with a class: in the balanced queue", e.QueueOf(A)?.Balanced == true && e.QueueOf(A).Classes[A] == "guerreiro");
+        Check("the state says it is the balanced queue", h.Last(A, ArenaWire.State).Contains("Q\t1\t0\t0\tqueued\t1"), h.Last(A, ArenaWire.State));
+        Do(e, B, ArenaEngine.AtBattlemaster, ArenaWire.ActQueueJoin, "1\n0\n");
+        Check("a normal 1v1 skirmish does not meet the balanced one", !e.Matches.Any() && e.QueueOf(B)?.Balanced == false);
+        Do(e, C, ArenaEngine.AtBattlemaster, ArenaWire.ActQueueJoin, "1\n0\n\n1\narqueiro");
+        var m = e.Matches.SingleOrDefault();
+        Check("two balanced players make a balanced match", m != null && m.Balanced && m.Seat(A) != null && m.Seat(C) != null && m.Seat(B) == null);
+        Check("each seat keeps its class", m?.Seat(A).ClassId == "guerreiro" && m?.Seat(C).ClassId == "arqueiro");
+        Check("the invitation says balanced and the class", h.Last(C, ArenaWire.State).Contains("\t1\tarqueiro"), h.Last(C, ArenaWire.State));
+        Do(e, D, ArenaEngine.AtBattlemaster, ArenaWire.ActQueueJoin, "1\n0\n");
+        Check("and the normal queue matches on its own", e.Matches.Count(x => !x.Balanced) == 1);
+        EnterAll(e, m);
+        Check("enter carries the class", h.Last(A, ArenaWire.Enter).Split('\t')[8] == "guerreiro" && h.Last(C, ArenaWire.Enter).Split('\t')[8] == "arqueiro");
+        var normal = e.Matches.First(x => !x.Balanced);
+        EnterAll(e, normal);
+        Check("a normal match's enter carries no class", h.Last(B, ArenaWire.Enter).Split('\t')[8] == "");
+
+        (e, h, _) = NewEngine(BalancedTuning());
+        Do(e, A, ArenaEngine.AtBattlemaster, ArenaWire.ActQueueJoin, $"2\n0\n{B + 1000000}\n1\nguerreiro");
+        var pending = e.PendingOf(A);
+        Check("a group asks every member to confirm, saying it is balanced", pending != null && pending.Balanced && h.Last(B, ArenaWire.Confirm).EndsWith("\t1"));
+        Do(e, B, "", ArenaWire.ActGroupConfirm, $"{pending.Ticket}\n1\n");
+        Check("a member with no class stops the group, named to both",
+            e.PendingOf(A) == null && e.QueueOf(A) == null && h.Got(A, ArenaWire.Alert, "Bravo precisa escolher a classe") && h.Got(B, ArenaWire.Alert, "precisa escolher"));
+        Do(e, A, ArenaEngine.AtBattlemaster, ArenaWire.ActQueueJoin, $"2\n0\n{B + 1000000}\n1\nguerreiro");
+        pending = e.PendingOf(A);
+        Do(e, B, "", ArenaWire.ActGroupConfirm, $"{pending.Ticket}\n1\nmago");
+        var entry = e.QueueOf(A);
+        Check("each member goes in with the class of their own panel", entry != null && entry.Balanced && entry.Classes[A] == "guerreiro" && entry.Classes[B] == "mago");
+
+        (e, h, _) = NewEngine(BalancedTuning());
+        e.Tuning.BalancedEnabled = false;
+        Do(e, A, ArenaEngine.AtBattlemaster, ArenaWire.ActQueueJoin, "1\n0\n\n1\nguerreiro");
+        Check("switched off: refused", e.QueueOf(A) == null && h.Got(A, ArenaWire.Alert, "desligada"));
+
+        var ffa = FfaTuning();
+        ffa.Classes = ArenaClasses.Defaults();
+        (e, h, _) = NewEngine(ffa);
+        foreach (var p in new[] { A, B, C }) Do(e, p, ArenaEngine.AtBattlemaster, ArenaWire.ActFfaJoin, "1\nassassino");
+        Do(e, D, ArenaEngine.AtBattlemaster, ArenaWire.ActFfaJoin);
+        Advance(e, h, 61);
+        var bal = e.Matches.FirstOrDefault(x => x.Balanced);
+        Check("the balanced FFA fills on its own, with each one's class",
+            bal != null && bal.IsFfa && bal.Seats.Count == 3 && bal.Seats.All(s => s.ClassId == "assassino") && e.QueueOf(D) != null);
+        ffa = FfaTuning();
+        ffa.Classes = ArenaClasses.Defaults();
+        ffa.BalancedFfa = false;
+        (e, h, _) = NewEngine(ffa);
+        Do(e, A, ArenaEngine.AtBattlemaster, ArenaWire.ActFfaJoin, "1\nassassino");
+        Check("the balanced FFA switched off: refused", e.QueueOf(A) == null && h.Got(A, ArenaWire.Alert, "FFA balanceado"));
+    }
+
+    /// <summary>Two balanced players (Alfa guerreiro, Charlie arqueiro) in a 1v1, both entered.</summary>
+    static (ArenaEngine, FakeHost, ArenaMatch) BalancedDuel(bool rated = false, bool separate = false)
+    {
+        var (e, h, _) = NewEngine(BalancedTuning(separate));
+        Do(e, A, ArenaEngine.AtBattlemaster, ArenaWire.ActQueueJoin, $"1\n{(rated ? 1 : 0)}\n\n1\nguerreiro");
+        Do(e, C, ArenaEngine.AtBattlemaster, ArenaWire.ActQueueJoin, $"1\n{(rated ? 1 : 0)}\n\n1\narqueiro");
+        var m = e.Matches.Single();
+        EnterAll(e, m);
+        return (e, h, m);
+    }
+
+    static void BalancedKitCheck()
+    {
+        Section("Arena balanceada: the kit check");
+        var (e, h, m) = BalancedDuel();
+        WearKit(e, h, A);
+        Check("the kit the ZDO shows is accepted at once", m.Seat(A).KitOk);
+        h.Kits[C] = Worn(e.Tuning.ClassOf("arqueiro"));
+        h.Kits[C].Chest = "ArmorPaddedCuirass";
+        Do(e, C, "", ArenaWire.ActKit, $"{m.Id}\narqueiro");
+        Check("a kit the ZDO does not show is not accepted", !m.Seat(C).KitOk);
+        Advance(e, h, 10);
+        Check("not yet thrown out before the deadline", m.Seat(C).State == SeatState.Entered);
+        h.Kits[C] = Worn(e.Tuning.ClassOf("arqueiro"));
+        Advance(e, h, 3);
+        Check("a ZDO that catches up within the deadline is accepted", m.Seat(C).KitOk);
+        h.Kits[A].Right = "SwordBlackmetal";
+        Advance(e, h, 3);
+        Check("a kit that changes during the preparation takes the player out",
+            m.Seat(A).State == SeatState.Left && h.Got(A, ArenaWire.Alert, "o kit mudou") && h.Got(A, ArenaWire.Return));
+        Advance(e, h, 60);
+        Check("a side left empty by the kit check calls the match off, no walk-over",
+            e.MatchOf(C) == null && m.Status == MatchStatus.Closed && h.Got(C, ArenaWire.Alert, "cancelada") && m.Winner == -1);
+
+        (e, h, m) = BalancedDuel();
+        WearKit(e, h, A);
+        Do(e, C, "", ArenaWire.ActKit, $"{m.Id}\nmago");
+        Check("a kit of another class than the queue's is not taken", !m.Seat(C).KitClaimed);
+        Advance(e, h, 21);
+        Check("no kit by the deadline: out before the gates open, with no rating at stake",
+            m.Seat(C).State == SeatState.Left && h.Got(C, ArenaWire.Alert, "sem perder rating") && m.Seat(A).State == SeatState.Entered);
+
+        (e, h, m) = BalancedDuel();
+        WearKit(e, h, A);
+        WearKit(e, h, C);
+        Advance(e, h, 61);
+        Check("both kits seen: the gates open", m.Status == MatchStatus.InProgress);
+        h.Kits[C].Right = "SwordBlackmetal";
+        Advance(e, h, 3);
+        Check("a kit that changes during the fight does not throw anyone out", m.Seat(C).State == SeatState.Entered && m.Status == MatchStatus.InProgress);
+        Check("but goes to the log", h.Logs.Any(l => l.Contains("divergiu na luta") && l.Contains("SwordBlackmetal")));
+        Do(e, C, "", ArenaWire.ActKo, A.ToString());
+        var result = h.Last(A, ArenaWire.Result);
+        Check("and to the scoreboard, with each one's class",
+            result.Contains("\tGuerreiro\t0") && result.Contains("\tArqueiro\t1") && result.Split('\n')[0].EndsWith("\t1"), result);
+    }
+
+    static void BalancedRating()
+    {
+        Section("Arena balanceada: rating Misturado x Separado");
+        var (e, h, m) = BalancedDuel(rated: true);
+        Check("a balanced rated 1v1 is made", m.Rated && m.Balanced);
+        WearKit(e, h, A);
+        WearKit(e, h, C);
+        Advance(e, h, 61);
+        Do(e, C, "", ArenaWire.ActKo, A.ToString());
+        var team = e.TeamOf(A, 1);
+        Check("Misturado: the win moves the normal rating", team.Rating > 0 && !team.BalancedStarted && team.SeasonGames == 1,
+            $"rating {team.Rating}, balanced {team.BalancedRating}");
+        Check("and the normal hidden rating", e.PlayerRecord(A).MmrOf(1, 1500) > 1500 && !e.PlayerRecord(A).Mmr.ContainsKey("b1"));
+
+        (e, h, m) = BalancedDuel(rated: true, separate: true);
+        WearKit(e, h, A);
+        WearKit(e, h, C);
+        Advance(e, h, 61);
+        Do(e, C, "", ArenaWire.ActKo, A.ToString());
+        team = e.TeamOf(A, 1);
+        var loser = e.TeamOf(C, 1);
+        Check("Separado: the normal rating stays where it was", team.Rating == 0 && team.SeasonGames == 0 && team.WeekGames == 0);
+        Check("the balanced rating moves instead", team.BalancedStarted && team.BalancedRating > 0 && team.BalancedGames == 1 && team.BalancedWins == 1 &&
+                                                   loser.BalancedStarted && loser.BalancedGames == 1 && loser.BalancedWins == 0);
+        Check("the personal one too, apart", team.Member(A).BalancedPersonal > 0 && team.Member(A).PersonalRating == 0 && team.Member(A).BalancedWins == 1);
+        Check("and the hidden one under its own key", e.PlayerRecord(A).MmrOf("b1", 1500) > 1500 && e.PlayerRecord(A).MmrOf(1, 1500) == 1500 &&
+                                                      e.PlayerRecord(C).MmrOf("b1", 1500) < 1500);
+        Check("the scoreboard shows the balanced rating", h.Last(A, ArenaWire.Result).Contains($"\t0\t{team.BalancedRating}\t"),
+            h.Last(A, ArenaWire.Result));
+        Do(e, A, "", ArenaWire.ActLadder, ArenaRules.BalancedLadder(1).ToString());
+        string ladder = h.Last(A, ArenaWire.Ladder);
+        Check("the balanced ladder lists the teams by it", ladder.StartsWith("L\t101") && ladder.Contains($"T\t1\t{team.Name}\t{team.BalancedRating}\t1\t1"), ladder);
+        Check("its tab has a name", ArenaRules.BracketName(ArenaRules.BalancedLadder(2)) == "Bal. 2v2" && ArenaRules.BracketOfLadder(102) == 2);
+        Check("the team frame carries the balanced rating", h.Last(A, ArenaWire.State).Contains($"\t{team.BalancedRating}\nM"), h.Last(A, ArenaWire.State));
+
+        (e, h, m) = BalancedDuel(rated: true, separate: true);
+        WearKit(e, h, A);
+        Advance(e, h, 61);
+        Check("Separado or not, a rated balanced match called off by the kit check moves no rating",
+            m.Status == MatchStatus.Closed && !e.TeamOf(A, 1).BalancedStarted && e.TeamOf(A, 1).Rating == 0);
     }
 
     // ----------------------------------------------------------------------- rules
@@ -1664,7 +1983,7 @@ class Program
                                                              e.PlayerRecord(A).PveRating == 1028 && e.PlayerRecord(B).PveRating == 1028 &&
                                                              e.PlayerRecord(A).PveGames == 1 && e.PlayerRecord(A).PveWins == 1);
         var result = h.Last(A, ArenaWire.Result) ?? "";
-        Check("the result: first time is a record, PvE before and change", result.Split('\n')[0].Split('\t').Last() == "1" &&
+        Check("the result: first time is a record, PvE before and change", result.Split('\n')[0].Split('\t')[8] == "1" &&
                                                                          result.Contains("Bravo\t0\tderrotado\t1000\t28"), result);
         Check("the best time is kept", e.BestTimes("troll_furioso").Count == 1 && e.BestTimes("troll_furioso")[0].Names == "Alfa, Bravo");
         Advance(e, h, 121);
