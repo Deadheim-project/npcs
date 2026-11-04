@@ -77,6 +77,7 @@ namespace NpcValheim.Arena
                 try
                 {
                     if (hit == null || !(__instance is Player victim) || victim != Player.m_localPlayer) return true;
+                    if (ArenaWisp.IsWisp(victim)) return false; // defeated and watching: nobody hurts a ghost
                     var attacker = PlayerZdo(hit.m_attacker);
                     var self = ZdoOf(victim);
                     if (attacker == null || attacker == self) return true;

@@ -214,6 +214,7 @@ namespace NpcValheim.Arena
                     if (Str(f, 4) == "1")
                     {
                         ArenaSpectate.Begin(new Vector3(Float(f, 6), spot.y, Float(f, 7)), Float(f, 8), Str(f, 5));
+                        ArenaWisp.SetLocal(true);
                         if (player != null && PlaceAt(player, spot, Float(f, 3))) break;
                     }
                     QueueTeleport(spot, Float(f, 3), isReturn: false);
@@ -229,6 +230,7 @@ namespace NpcValheim.Arena
                         // The camera back on the character before it leaves, and the player's
                         // own gear back before the way home (Arena balanceada).
                         ArenaSpectate.End();
+                        ArenaWisp.SetLocal(false);
                         _kitClass = null;
                         ArenaKit.Undress();
                         QueueTeleport(new Vector3(Float(f, 0), Float(f, 1), Float(f, 2)), Float(f, 3), isReturn: true);
@@ -375,6 +377,7 @@ namespace NpcValheim.Arena
         private static void ClearMatch()
         {
             ArenaSpectate.End();
+            ArenaWisp.SetLocal(false);
             _kitClass = null;
             ArenaKit.Undress();
             MatchId = 0L;
