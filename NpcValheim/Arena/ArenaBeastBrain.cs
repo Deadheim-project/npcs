@@ -195,7 +195,7 @@ namespace NpcValheim.Arena
             var here = transform.position;
             foreach (var player in Player.GetAllPlayers())
             {
-                if (player == null || player.IsDead() || player.IsTeleporting()) continue;
+                if (player == null || player.IsDead() || player.IsTeleporting() || ArenaWisp.IsWisp(player)) continue;
                 float distance = Vector3.Distance(player.transform.position, here);
                 if (match == 0L)
                 {

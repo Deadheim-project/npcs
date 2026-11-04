@@ -20,12 +20,41 @@ namespace NpcValheim.Arena
         internal static void SetLocal(bool on)
         {
             var player = Player.m_localPlayer;
-            var nview = player != null ? player.GetComponent<ZNetView>() : null;
-            if (nview == null || !nview.IsValid() || !nview.IsOwner()) return;
-            var zdo = nview.GetZDO();
-            if (zdo.GetInt(ZdoWisp, 0) != (on ? 1 : 0)) zdo.Set(ZdoWisp, on ? 1 : 0);
+            if (player == null) return;
+            var nview = player.GetComponent<ZNetView>();
+            if (nview != null && nview.IsValid() && nview.IsOwner())
+            {
+                var zdo = nview.GetZDO();
+                if (zdo.GetInt(ZdoWisp, 0) != (on ? 1 : 0)) zdo.Set(ZdoWisp, on ? 1 : 0);
+            }
             // Local player: at once, without waiting for the next Update.
             Apply(player, on);
+        }
+
+        /// <summary>True for a defeated player still watching (any client reads it off the ZDO).</summary>
+        internal static bool IsWisp(Character character)
+        {
+            if (!(character is Player player) || player == null) return false;
+            var nview = player.GetComponent<ZNetView>();
+            return nview != null && nview.IsValid() && nview.GetZDO().GetInt(ZdoWisp, 0) == 1;
+        }
+
+        internal static bool LocalIsWisp => IsWisp(Player.m_localPlayer);
+
+        /// <summary>Flies the local wisp to <paramref name="eye"/> (where its free camera is).
+        /// Physics is off for it (see FixedPatch), so the position is ours alone.</summary>
+        internal static void Follow(Vector3 eye)
+        {
+            var player = Player.m_localPlayer;
+            if (player == null || !LocalIsWisp) return;
+            var pos = eye - Vector3.up * 1f;
+            player.transform.position = pos;
+            var body = player.GetComponent<Rigidbody>();
+            if (body != null)
+            {
+                body.position = pos;
+                body.velocity = Vector3.zero;
+            }
         }
 
         private static void Apply(Player player, bool on)
@@ -47,7 +76,10 @@ namespace NpcValheim.Arena
         private sealed class WispState : MonoBehaviour
         {
             private readonly List<Renderer> _hidden = new List<Renderer>();
+            private readonly List<Collider> _off = new List<Collider>();
             private GameObject _visual;
+            private Rigidbody _body;
+            private bool _gravity;
 
             internal void Show(Player player)
             {
@@ -55,6 +87,19 @@ namespace NpcValheim.Arena
                 var scene = ZNetScene.instance;
                 var prefab = scene != null ? scene.GetPrefab(PrefabName) : null;
                 if (prefab == null) return; // the model stays: better visible than a ghost with nothing
+
+                // Nothing to bump into, hit or be hit by: every collider off, on every client.
+                foreach (var c in player.GetComponentsInChildren<Collider>(true))
+                {
+                    if (c == null || !c.enabled) continue;
+                    c.enabled = false;
+                    _off.Add(c);
+                }
+                if (player == Player.m_localPlayer)
+                {
+                    _body = player.GetComponent<Rigidbody>();
+                    if (_body != null) { _gravity = _body.useGravity; _body.useGravity = false; }
+                }
 
                 foreach (var r in player.GetComponentsInChildren<Renderer>(false))
                 {
@@ -71,6 +116,8 @@ namespace NpcValheim.Arena
                 _visual.transform.localPosition = Vector3.up * 1f;
                 _visual.transform.localRotation = Quaternion.identity;
                 Strip(_visual);
+                // The local camera sits where the wisp is: it would only block the view.
+                if (player == Player.m_localPlayer) _visual.SetActive(false);
             }
 
             internal void Restore()
@@ -78,6 +125,11 @@ namespace NpcValheim.Arena
                 foreach (var r in _hidden)
                     if (r != null) r.enabled = true;
                 _hidden.Clear();
+                foreach (var c in _off)
+                    if (c != null) c.enabled = true;
+                _off.Clear();
+                if (_body != null) _body.useGravity = _gravity;
+                _body = null;
                 if (_visual != null) Object.Destroy(_visual);
                 _visual = null;
             }
@@ -93,6 +145,49 @@ namespace NpcValheim.Arena
                     if (c != null) Object.Destroy(c);
                 foreach (var rb in go.GetComponentsInChildren<Rigidbody>(true))
                     if (rb != null) Object.Destroy(rb);
+            }
+        }
+
+        /// <summary>The local wisp is moved by hand (Follow): the game's own physics for it stops.</summary>
+        [HarmonyPatch(typeof(Character), "FixedUpdate")]
+        private static class FixedPatch
+        {
+            private static bool Prefix(Character __instance) =>
+                __instance != Player.m_localPlayer || !LocalIsWisp;
+        }
+
+        /// <summary>A wisp cannot use or equip anything, from the hotbar or the inventory.</summary>
+        [HarmonyPatch(typeof(Humanoid), nameof(Humanoid.UseItem))]
+        private static class UseItemPatch
+        {
+            private static bool Prefix(Humanoid __instance) => !IsWisp(__instance);
+        }
+
+        [HarmonyPatch(typeof(Humanoid), nameof(Humanoid.EquipItem))]
+        private static class EquipItemPatch
+        {
+            private static bool Prefix(Humanoid __instance) => !IsWisp(__instance);
+        }
+
+        [HarmonyPatch(typeof(Player), nameof(Player.ConsumeItem))]
+        private static class ConsumeItemPatch
+        {
+            private static bool Prefix(Player __instance) => !IsWisp(__instance);
+        }
+
+        [HarmonyPatch(typeof(Player), "AutoPickup")]
+        private static class AutoPickupPatch
+        {
+            private static bool Prefix(Player __instance) => !IsWisp(__instance);
+        }
+
+        /// <summary>Monsters (vanilla AI) never take a wisp for an enemy.</summary>
+        [HarmonyPatch(typeof(BaseAI), nameof(BaseAI.IsEnemy), typeof(Character), typeof(Character))]
+        private static class EnemyPatch
+        {
+            private static void Postfix(Character a, Character b, ref bool __result)
+            {
+                if (__result && (IsWisp(a) || IsWisp(b))) __result = false;
             }
         }
 

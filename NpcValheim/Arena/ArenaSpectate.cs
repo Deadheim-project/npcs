@@ -65,6 +65,7 @@ namespace NpcValheim.Arena
             if (ArenaClient.MatchId == 0L || Player.m_localPlayer == null)
             {
                 End();
+                ArenaWisp.SetLocal(false);
                 return;
             }
             if (!LeaveAsked && Input.GetKeyDown(LeaveKey) && !UI.UiInputBlocker.IsTyping && !Console.IsVisible())
@@ -127,6 +128,7 @@ namespace NpcValheim.Arena
                 }
                 pos.y = Mathf.Clamp(pos.y, _center.y - 20f, _center.y + MaxHeight);
                 t.position = pos;
+                ArenaWisp.Follow(pos); // the wisp flies where the camera is
                 return false;
             }
         }
