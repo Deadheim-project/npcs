@@ -48,10 +48,16 @@ namespace NpcValheim.Arena
         private static void OnRequest(long sender, string action, string payload)
         {
             if (ZNet.instance == null || !ZNet.instance.IsServer()) return;
-            // Nothing that has to happen at an NPC may come this way.
-            if (action == ArenaWire.ActCharterBuy || action == ArenaWire.ActCharterTurnIn ||
-                action == ArenaWire.ActQueueJoin || action == ArenaWire.ActChallengeJoin || action == ArenaWire.ActFfaJoin ||
-                action == ArenaWire.ActVendorBuy) return;
+            // Nothing that has to happen at an NPC may come this way...
+            if (action == ArenaWire.ActCharterBuy || action == ArenaWire.ActCharterTurnIn || action == ArenaWire.ActVendorBuy) return;
+            // ...except joining a queue, which an Aesir (VIP) may do from the TAB panel. The VIP is
+            // checked here on the server, and `where` is set here: the client cannot claim it.
+            if (action == ArenaWire.ActQueueJoin || action == ArenaWire.ActChallengeJoin || action == ArenaWire.ActFfaJoin)
+            {
+                if (!UI.VipShopShortcut.SenderIsVip(sender)) return;
+                ArenaServer.Handle(sender, ArenaEngine.AtVip, action, payload);
+                return;
+            }
             ArenaServer.Handle(sender, "", action, payload);
         }
 

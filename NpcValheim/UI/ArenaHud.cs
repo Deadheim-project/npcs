@@ -42,12 +42,15 @@ namespace NpcValheim.UI
             }
             if (UiInputBlocker.IsOpen || UiInputBlocker.IsTyping || Player.m_localPlayer == null) return;
             ArenaClient.RequestData();
-            UiRoot.OpenStandalone(PanelTitle, new List<(string, NpcViewBase)>
+            var pages = new List<(string, NpcViewBase)>
             {
                 ("Arena", new ArenaStatusView()),
                 ("Times", new ArenaTeamsView()),
                 ("Ranking", new ArenaLadderView()),
-            }, Player.m_localPlayer);
+            };
+            // The Aesir (VIP) queues from here, without the Mestre da Arena; the server checks the VIP again.
+            if (VipList.VipListApi.IsLocalPlayerVip()) pages.Insert(1, ("Fila", new ArenaQueueView()));
+            UiRoot.OpenStandalone(PanelTitle, pages, Player.m_localPlayer);
         }
 
         private void Update()
