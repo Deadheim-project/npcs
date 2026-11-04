@@ -207,6 +207,13 @@ namespace NpcValheim.Arena
         /// server takes a charter, a queue or a purchase through any of the three.</summary>
         internal static bool IsDesk(string where) => where == AtOrganizer || where == AtBattlemaster || where == AtVendor;
 
+        /// <summary>Marks a request the server vouched for as coming from a VIP (Aesir) through the
+        /// TAB panel: it may queue without standing at the Mestre da Arena. Never set by the client.</summary>
+        internal const string AtVip = "vip";
+
+        /// <summary>Where a queue, FFA or challenge may be joined: any arena NPC, or the Aesir's panel.</summary>
+        internal static bool CanQueue(string where) => IsDesk(where) || where == AtVip;
+
         private const float InviteLifetime = 300f;
         private const float PresenceGrace = 25f;
 
@@ -336,11 +343,11 @@ namespace NpcValheim.Arena
                 case ActTeamCaptain: PromoteCaptain(me, Int(f, 0), Long(f, 1)); return;
                 case ActTeamDisband: Disband(me, Int(f, 0)); return;
                 case ActQueueJoin:
-                    if (!IsDesk(where)) return;
+                    if (!CanQueue(where)) return;
                     JoinQueue(me, Int(f, 0), Int(f, 1) == 1, Str(f, 2), Int(f, 3) == 1, Str(f, 4));
                     return;
                 case ActChallengeJoin:
-                    if (!IsDesk(where)) return;
+                    if (!CanQueue(where)) return;
                     JoinChallenge(me, Str(f, 0), Str(f, 1));
                     return;
                 // The admin page's "Testar agora": the same challenge, from anywhere, for an admin.
@@ -349,7 +356,7 @@ namespace NpcValheim.Arena
                     JoinChallenge(me, Str(f, 0), Str(f, 1));
                     return;
                 case ActFfaJoin:
-                    if (!IsDesk(where)) return;
+                    if (!CanQueue(where)) return;
                     JoinFfa(me, Int(f, 0) == 1, Str(f, 1));
                     return;
                 case ActQueueLeave: LeaveQueue(playerId); return;
