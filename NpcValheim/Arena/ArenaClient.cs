@@ -342,14 +342,26 @@ namespace NpcValheim.Arena
 
         /// <summary>The class the server put this player in for the match, until the kit is on.</summary>
         private static string _kitClass;
+        private static float _nextKitClaim;
 
         /// <summary>Puts the kit on as soon as the classes are here, and tells the server, which
         /// checks it on the ZDO. Retried from the tick while the classes have not arrived.</summary>
         private static void TryDress(Player player)
         {
             if (_kitClass == null || MatchId == 0L || player == null) return;
-            if (ArenaKit.Active && ArenaKit.MatchId == MatchId && ArenaKit.Wears(player)) return;
             var cls = ArenaClasses.Find(_kitClass);
+            if (ArenaKit.Active && ArenaKit.MatchId == MatchId && ArenaKit.Wears(player))
+            {
+                // The single claim sent at dress time can be lost (the request leaves while the
+                // teleport is loading) and the server then kicks for a kit that is on: repeat it
+                // until the gates open. The server takes it as many times as it comes.
+                if (cls != null && Phase == PhasePrep && Time.realtimeSinceStartup >= _nextKitClaim)
+                {
+                    _nextKitClaim = Time.realtimeSinceStartup + 2f;
+                    ArenaNet.Request(ActKit, $"{MatchId}\n{cls.Id}");
+                }
+                return;
+            }
             if (cls == null)
             {
                 ArenaClassesNet.AskIfMissing();
@@ -362,6 +374,7 @@ namespace NpcValheim.Arena
                 return;
             }
             ArenaNet.Request(ActKit, $"{MatchId}\n{cls.Id}");
+            _nextKitClaim = Time.realtimeSinceStartup + 2f;
             player.Message(MessageHud.MessageType.Center, $"Arena balanceada: você luta de {cls.Name}. Seu equipamento volta no fim.", 0, null);
         }
 
