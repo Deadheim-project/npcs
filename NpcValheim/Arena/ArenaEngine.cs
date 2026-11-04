@@ -1220,6 +1220,33 @@ namespace NpcValheim.Arena
             }
         }
 
+        /// <summary>
+        /// Arena balanceada: the same rule as PayMatchPoints (whoever finished inside the arena, the
+        /// winners' reward or the losers', a draw or a walk-over pays the loss) but with the table of
+        /// its own (BalancedRewards) and as an item by mail, like the challenges' rewards. It pays no
+        /// Arena Points, so the daily cap does not apply.
+        /// </summary>
+        private void PayBalancedRewards(ArenaMatch match, int winner)
+        {
+            string mode = ArenaSettingsParser.MatchPointsMode(false, match.Size);
+            if (!_t.BalancedRewards.TryGetValue(mode, out var pay) || (pay.Win.IsNone && pay.Loss.IsNone)) return;
+            bool walkover = winner != ArenaSide.None &&
+                            !match.Seats.Any(s => s.Side != winner && s.State == SeatState.Entered && !s.Offline && !s.Alive);
+            var paid = new List<string>();
+            foreach (var seat in match.Seats.Where(s => s.State == SeatState.Entered && !s.Offline))
+            {
+                bool won = winner != ArenaSide.None && winner == seat.Side;
+                bool win = won && !walkover;
+                var reward = win ? pay.Win : pay.Loss;
+                if (reward.IsNone) continue;
+                _host.MailItem(seat.PlayerId, "Arena balanceada: " + (win ? "vitória" : "participação"), reward.Item, reward.Amount);
+                Say(seat.PlayerId, $"Recompensa da Arena balanceada ({reward.Amount}x {reward.Item}) enviada pelo correio" +
+                    (won && walkover ? " (vitória sem luta paga como derrota)." : "."));
+                paid.Add(seat.Name);
+            }
+            if (paid.Count > 0) _host.Log($"Arena: partida #{match.Id} balanceada ({mode}) pagou recompensa a {string.Join(", ", paid)}");
+        }
+
         private void DespawnCreature(ArenaMatch match)
         {
             if (!match.IsChallenge || !match.CreatureSpawned || match.CreatureDead) return;
@@ -1966,6 +1993,11 @@ namespace NpcValheim.Arena
         private void PayMatchPoints(ArenaMatch match, int winner)
         {
             if (match.StartedAt <= 0 || (match.IsChallenge && !match.CreatureSpawned)) return;
+            if (match.Balanced && !match.IsChallenge)
+            {
+                PayBalancedRewards(match, winner);
+                return;
+            }
             string mode = ArenaSettingsParser.MatchPointsMode(match.IsChallenge, match.Size);
             if (!_t.MatchPoints.TryGetValue(mode, out var pay) || (pay.Win == 0 && pay.Loss == 0)) return;
             bool walkover = !match.IsChallenge && winner != ArenaSide.None &&

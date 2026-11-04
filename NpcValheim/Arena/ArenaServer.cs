@@ -189,7 +189,8 @@ namespace NpcValheim.Arena
                     action == ArenaWire.ActAdminOfferSet || action == ArenaWire.ActAdminOfferRemove ||
                     action == ArenaWire.ActAdminPointsSet || action == ArenaWire.ActAdminChallengeSet ||
                     action == ArenaWire.ActAdminChallengeRemove || action == ArenaWire.ActAdminClassSet ||
-                    action == ArenaWire.ActAdminClassRemove || action == ArenaWire.ActAdminBalancedSet)
+                    action == ArenaWire.ActAdminClassRemove || action == ArenaWire.ActAdminBalancedSet ||
+                    action == ArenaWire.ActAdminBalancedRewardsSet)
                 {
                     HandleCfgEdit(sender, name, admin, action, payload ?? "");
                     return;
@@ -594,6 +595,32 @@ namespace NpcValheim.Arena
                     ArenaConfig.KitDeadlineSeconds.Value = Mathf.Clamp(deadline, 10f, 60f);
                     done = $"Arena balanceada {(ArenaConfig.BalancedEnabled.Value ? "ligada" : "desligada")} · FFA {(ArenaConfig.BalancedFfa.Value ? "sim" : "não")} · " +
                            $"rating {ArenaConfig.BalancedRatingMode.Value} · prazo do kit {ArenaConfig.KitDeadlineSeconds.Value:0} s.";
+                    break;
+                }
+                case ArenaWire.ActAdminBalancedRewardsSet:
+                {
+                    // "1v1=Coins:150/Coins:30|...": the rewards of the Arena balanceada, per mode.
+                    var rewards = ArenaSettingsParser.ParseBalancedRewards(payload.Trim(), problems);
+                    if (problems.Count > 0)
+                    {
+                        ArenaNet.Send(sender, ArenaWire.Notice, problems[0]);
+                        return;
+                    }
+                    foreach (var pair in rewards)
+                        foreach (var reward in new[] { pair.Value.Win, pair.Value.Loss })
+                        {
+                            if (reward.IsNone) continue;
+                            int max = ItemSpawner.MaxDeliverableAmount(reward.Item);
+                            if (max <= 0 || reward.Amount > max)
+                            {
+                                ArenaNet.Send(sender, ArenaWire.Notice, max <= 0
+                                    ? $"{pair.Key}: '{reward.Item}' não é um item do jogo."
+                                    : $"{pair.Key}: {reward.Item} — no máximo {max} por entrega.");
+                                return;
+                            }
+                        }
+                    ArenaConfig.BalancedRewards.Value = ArenaSettingsParser.FormatBalancedRewards(rewards);
+                    done = $"Recompensas da Arena balanceada: {ArenaConfig.BalancedRewards.Value}.";
                     break;
                 }
                 case ArenaWire.ActAdminClassRemove:

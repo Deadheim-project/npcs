@@ -63,7 +63,8 @@ namespace NpcValheim.UI
             ["cap"] = ("Máximo por dia", "O máximo de pontos que uma pessoa ganha em partidas por dia. 0 = sem máximo."),
             ["grant"] = ("Dar pontos", "Dá (ou tira, com número negativo) pontos de arena a um jogador pelo nome."),
             ["balanced"] = ("Arena balanceada", "Fila separada (ranqueada, escaramuça e FFA) em que o equipamento, a comida e as skills de cada um não contam: todos lutam com o kit de uma classe. O inventário não é tocado e o equipamento volta no fim."),
-            ["balancedRating"] = ("Rating", "Misturado: a ranqueada balanceada mexe no mesmo rating da normal. Separado: rating próprio (do time, pessoal e MMR), com aba própria no Ranking."),
+            ["balancedRewards"] = ("Recompensas da balanceada", "Item (prefab) e quantidade por vitória e por derrota, em cada modo, pelo correio. Quantidade 0 = nada. Vale já na próxima partida."),
+            ["balancedRating"] =("Rating", "Misturado: a ranqueada balanceada mexe no mesmo rating da normal. Separado: rating próprio (do time, pessoal e MMR), com aba própria no Ranking."),
             ["kitDeadline"] = ("Prazo do kit", "Segundos, depois de entrar, para o jogo vestir o kit e o servidor ver. Sem isso o jogador sai antes de começar, sem perder rating."),
             ["armor"] = ("Armadura", "Fixa da classe: o nome do item no jogo e o nível depois de dois-pontos, como ArmorIronChest:2. Vazio = nada nesse lugar."),
             ["belt"] = ("Cinto", "Até 8 armas, escudos, cajados e munições, trocados pelas teclas 1 a 8 na partida. Item:nível, como SwordIron:2."),
@@ -99,6 +100,10 @@ namespace NpcValheim.UI
         private static string _cap = "";
         private static bool _pointsDirty;
         private static string _seenPoints;
+        // Balanceada > recompensas: per mode (1v1, 2v2, 3v3, ffa) win item, win amount, loss item, loss amount.
+        private static readonly string[,] _rewards = new string[4, 4];
+        private static bool _rewardsDirty;
+        private static string _seenRewards;
         private static string _grantName = "", _grantPoints = "100";
 
         private RectTransform _side, _sideList, _pane, _area, _shop;
@@ -219,7 +224,8 @@ namespace NpcValheim.UI
             $"{_sub}:{_selArena}:{_selChallenge}:{_arenas.Count}:{_challenges.Count}:" + ArenaConfig.MapsText() + ":" + ArenaDeadheim.ZonesText + ":" +
             ArenaConfig.MatchPoints?.Value + ":" + ArenaConfig.MatchPointsDailyCap?.Value + ":" +
             ArenaConfig.VendorItems?.Value + ":" + ArenaBestiary.Revision + ":" + ArenaClasses.Revision + ":" + _selClass + ":" + _classes.Count + ":" +
-            ArenaConfig.BalancedEnabled?.Value + ArenaConfig.BalancedFfa?.Value + ArenaConfig.BalancedRatingMode?.Value + ArenaConfig.KitDeadlineSeconds?.Value;
+            ArenaConfig.BalancedEnabled?.Value + ArenaConfig.BalancedFfa?.Value + ArenaConfig.BalancedRatingMode?.Value + ArenaConfig.KitDeadlineSeconds?.Value +
+            ArenaConfig.BalancedRewards?.Value;
 
         // ------------------------------------------------------------------ the copies
 
@@ -325,6 +331,22 @@ namespace NpcValheim.UI
                 _classes.AddRange(merged);
                 int at = selectedId != null ? _classes.FindIndex(c => Eq(c.Id, selectedId)) : -1;
                 _selClass = Mathf.Clamp(at >= 0 ? at : _selClass, -1, _classes.Count - 1);
+            }
+
+            string rewards = ArenaConfig.BalancedRewards?.Value ?? "";
+            if (rewards != _seenRewards && (!_rewardsDirty || RewardsMatch()))
+            {
+                _seenRewards = rewards;
+                _rewardsDirty = false;
+                var parsedRewards = ArenaSettingsParser.ParseBalancedRewards(rewards, null);
+                for (int m = 0; m < ArenaSettingsParser.BalancedRewardModes.Length; m++)
+                {
+                    parsedRewards.TryGetValue(ArenaSettingsParser.BalancedRewardModes[m], out var r);
+                    _rewards[m, 0] = r.Win.IsNone ? "" : r.Win.Item;
+                    _rewards[m, 1] = r.Win.IsNone ? "0" : r.Win.Amount.ToString(Inv);
+                    _rewards[m, 2] = r.Loss.IsNone ? "" : r.Loss.Item;
+                    _rewards[m, 3] = r.Loss.IsNone ? "0" : r.Loss.Amount.ToString(Inv);
+                }
             }
 
             string points = ArenaConfig.MatchPoints?.Value + ":" + ArenaConfig.MatchPointsDailyCap?.Value;
@@ -768,6 +790,39 @@ namespace NpcValheim.UI
             Say($"Salvando a classe \"{c.Name.Trim()}\"...");
         }
 
+        private bool RewardsMatch()
+        {
+            var parsed = ArenaSettingsParser.ParseBalancedRewards(ArenaConfig.BalancedRewards?.Value, null);
+            for (int m = 0; m < ArenaSettingsParser.BalancedRewardModes.Length; m++)
+            {
+                parsed.TryGetValue(ArenaSettingsParser.BalancedRewardModes[m], out var r);
+                if (_rewards[m, 0] != (r.Win.IsNone ? "" : r.Win.Item) || _rewards[m, 1] != (r.Win.IsNone ? "0" : r.Win.Amount.ToString(Inv)) ||
+                    _rewards[m, 2] != (r.Loss.IsNone ? "" : r.Loss.Item) || _rewards[m, 3] != (r.Loss.IsNone ? "0" : r.Loss.Amount.ToString(Inv)))
+                    return false;
+            }
+            return true;
+        }
+
+        private void SaveRewards()
+        {
+            var rewards = new Dictionary<string, (ArenaReward Win, ArenaReward Loss)>();
+            for (int m = 0; m < ArenaSettingsParser.BalancedRewardModes.Length; m++)
+            {
+                if (!int.TryParse((_rewards[m, 1] ?? "").Trim(), NumberStyles.Integer, Inv, out int winAmount) || winAmount < 0 ||
+                    !int.TryParse((_rewards[m, 3] ?? "").Trim(), NumberStyles.Integer, Inv, out int lossAmount) || lossAmount < 0)
+                {
+                    Say($"{ModeLabel(m)}: a quantidade precisa ser um número (0 ou mais).");
+                    return;
+                }
+                string winItem = (_rewards[m, 0] ?? "").Trim(), lossItem = (_rewards[m, 2] ?? "").Trim();
+                rewards[ArenaSettingsParser.BalancedRewardModes[m]] = (
+                    winItem.Length > 0 && winAmount > 0 ? new ArenaReward { Item = winItem, Amount = winAmount } : default,
+                    lossItem.Length > 0 && lossAmount > 0 ? new ArenaReward { Item = lossItem, Amount = lossAmount } : default);
+            }
+            Ask(ArenaWire.ActAdminBalancedRewardsSet, ArenaSettingsParser.FormatBalancedRewards(rewards));
+            Say("Salvando as recompensas da balanceada...");
+        }
+
         private void SaveBalanced(bool enabled, bool ffa, bool separate, float deadline)
         {
             Ask(ArenaWire.ActAdminBalancedSet, string.Join("\n", enabled ? "1" : "0", ffa ? "1" : "0", separate ? "1" : "0",
@@ -1200,6 +1255,27 @@ namespace NpcValheim.UI
             var kit = Field("Prazo do kit", "kitDeadline");
             Step(kit, $"{deadline:0} s", 70f, d => SaveBalanced(enabled, ffa, separate, deadline + d * 5f));
             Fill(kit);
+            Gap();
+
+            Heading("Recompensas por partida");
+            Line("Pagas pelo correio a quem termina dentro da arena (empate e vitória sem luta pagam a derrota), como na normal, mas com valores próprios. " +
+                 "A balanceada não paga Pontos de Arena. Item é o nome do prefab (ex.: Coins); quantidade 0 = nada. A próxima partida já usa o valor salvo.",
+                13, ValheimUi.Muted, 54f);
+            for (int m = 0; m < ArenaSettingsParser.BalancedRewardModes.Length; m++)
+            {
+                int mode = m;
+                var row = Field(ModeLabel(m), "balancedRewards");
+                Cell(row, "vitória", 13, ValheimUi.Muted, 56f);
+                Text(row, _rewards[m, 0], 120f, v => { _rewards[mode, 0] = v; _rewardsDirty = true; });
+                Text(row, _rewards[m, 1], 60f, v => { _rewards[mode, 1] = v; _rewardsDirty = true; });
+                Cell(row, "derrota", 13, ValheimUi.Muted, 60f);
+                Text(row, _rewards[m, 2], 120f, v => { _rewards[mode, 2] = v; _rewardsDirty = true; });
+                Text(row, _rewards[m, 3], 60f, v => { _rewards[mode, 3] = v; _rewardsDirty = true; });
+                Fill(row);
+            }
+            var saveRow = Field("", "balancedRewards");
+            Tip(Btn(saveRow, "Salvar recompensas", 170f, SaveRewards), "balancedRewards");
+            Fill(saveRow);
             Gap();
 
             Heading("O que falta para funcionar");

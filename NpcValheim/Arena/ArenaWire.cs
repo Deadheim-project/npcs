@@ -88,6 +88,7 @@ namespace NpcValheim.Arena
         internal const string ActAdminClassSet = "admin.class.set";
         internal const string ActAdminClassRemove = "admin.class.del";
         internal const string ActAdminBalancedSet = "admin.balanced.set";
+        internal const string ActAdminBalancedRewardsSet = "admin.balanced.rewards";
 
         internal static string Clean(string text) =>
             string.IsNullOrEmpty(text) ? "" : text.Replace('\t', ' ').Replace('\n', ' ').Replace('\r', ' ');

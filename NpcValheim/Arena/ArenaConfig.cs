@@ -86,6 +86,7 @@ namespace NpcValheim.Arena
         internal static ConfigEntry<bool> BalancedFfa;
         internal static ConfigEntry<BalancedRating> BalancedRatingMode;
         internal static ConfigEntry<float> KitDeadlineSeconds;
+        internal static ConfigEntry<string> BalancedRewards;
 
         /// <summary>The kinds of match an arena may host, as the usage text and the layout file
         /// write them.</summary>
@@ -256,6 +257,11 @@ namespace NpcValheim.Arena
             BalancedRatingMode = S(config, balanced, "Rating", BalancedRating.Misturado,
                 "Misturado = a ranqueada balanceada mexe no mesmo rating da ranqueada normal. Separado = rating proprio " +
                 "(do time, pessoal e MMR), com aba propria no Ranking.");
+            BalancedRewards = S(config, balanced, "Recompensas", ArenaSettingsParser.DefaultBalancedRewards,
+                "Recompensa de cada partida balanceada, por modo: modo=vitoria/derrota separados por |, cada lado item:quantidade " +
+                "(vazio = nada). Modos: 1v1, 2v2, 3v3, ffa. Mesma regra de pagamento da normal (so quem terminou dentro da arena; empate e " +
+                "vitoria sem luta pagam a derrota), mas valores proprios. O item vai pelo correio. A balanceada nao paga Pontos de Arena. " +
+                "Tambem se edita no Painel de Admin, aba Arena > Balanceada.");
             KitDeadlineSeconds = S(config, balanced, "PrazoKit", 20f,
                 "Segundos, depois de entrar, para o jogo vestir o kit da classe e o servidor ver. Sem isso o jogador sai da partida " +
                 "antes de comecar, sem perder rating (10 a 60).");
@@ -617,6 +623,16 @@ namespace NpcValheim.Arena
             t.BalancedFfa = BalancedFfa.Value;
             t.BalancedSeparateRating = BalancedRatingMode.Value == BalancedRating.Separado;
             t.KitDeadlineSeconds = Mathf.Clamp(KitDeadlineSeconds.Value, 10f, 60f);
+            t.BalancedRewards = ArenaSettingsParser.ParseBalancedRewards(BalancedRewards.Value, problems);
+            if (checkWorld && ObjectDB.instance != null)
+                foreach (var pair in t.BalancedRewards)
+                    foreach (var reward in new[] { pair.Value.Win, pair.Value.Loss })
+                    {
+                        if (reward.IsNone) continue;
+                        int max = ItemSpawner.MaxDeliverableAmount(reward.Item);
+                        if (max <= 0) problems.Add($"Balanceada/Recompensas {pair.Key}: '{reward.Item}' nao e um item que o jogo conhece");
+                        else if (reward.Amount > max) problems.Add($"Balanceada/Recompensas {pair.Key}: {reward.Item} x{reward.Amount} e mais do que uma entrega carrega ({max})");
+                    }
             t.Classes = ClassDefs(problems, checkWorld);
             if (t.BalancedEnabled && t.Classes.Count == 0)
                 problems.Add("Arena balanceada: nenhuma classe ligada e sem problemas (Painel de Admin, aba Arena > Balanceada)");
