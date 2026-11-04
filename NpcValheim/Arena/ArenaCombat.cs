@@ -150,8 +150,7 @@ namespace NpcValheim.Arena
                 if (player.IsDead() || player.GetHealth() > 0f) return true;
                 try
                 {
-                    ArenaClient.KnockOut(player, ___m_lastHit);
-                    return false;
+                    return !ArenaClient.KnockOut(player, ___m_lastHit);
                 }
                 catch (Exception e)
                 {

@@ -427,11 +427,13 @@ namespace NpcValheim.Arena
         /// respawn the player at home. The character is knocked out instead -- back to full,
         /// out of the fight, and reported to the server, which decides what it means.
         /// </summary>
-        internal static void KnockOut(Player player, HitData lastHit)
+        internal static bool KnockOut(Player player, HitData lastHit)
         {
-            Refill(player);
-            if (Phase != PhaseLive) return;
+            // Outside the live phase nothing is knocked out: the caller must let the death
+            // proceed, otherwise the player would be left immortal at 0 health.
+            if (Phase != PhaseLive) return false;
 
+            Refill(player);
             SetPhase(PhaseOut);
             long attacker = 0L;
             if (lastHit != null && !lastHit.m_attacker.IsNone() && ZDOMan.instance != null)
@@ -444,6 +446,7 @@ namespace NpcValheim.Arena
             _lastAttacker = 0L;
             ArenaNet.Request(ActKo, attacker.ToString());
             player.Message(MessageHud.MessageType.Center, "Você foi derrotado!", 0, null);
+            return true;
         }
 
         // ------------------------------------------------------------------------- ticking
