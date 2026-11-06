@@ -189,7 +189,8 @@ namespace NpcValheim.Arena
                     action == ArenaWire.ActAdminOfferSet || action == ArenaWire.ActAdminOfferRemove ||
                     action == ArenaWire.ActAdminPointsSet || action == ArenaWire.ActAdminChallengeSet ||
                     action == ArenaWire.ActAdminChallengeRemove || action == ArenaWire.ActAdminClassSet ||
-                    action == ArenaWire.ActAdminClassRemove || action == ArenaWire.ActAdminBalancedSet)
+                    action == ArenaWire.ActAdminClassRemove || action == ArenaWire.ActAdminBalancedSet ||
+                    action == ArenaWire.ActAdminBalancedRewardsSet)
                 {
                     HandleCfgEdit(sender, name, admin, action, payload ?? "");
                     return;
@@ -438,9 +439,20 @@ namespace NpcValheim.Arena
                         ArenaNet.Send(sender, ArenaWire.Notice, "Teto diário inválido (0 = sem teto).");
                         return;
                     }
+                    // A third line, when there: [Arena - Desafio] RecompensasPorDia.
+                    int challengeCap = ArenaConfig.ChallengeRewardsDailyCap.Value;
+                    if (lines.Length > 2 && lines[2].Trim().Length > 0 &&
+                        (!int.TryParse(lines[2].Trim(), System.Globalization.NumberStyles.Integer,
+                            System.Globalization.CultureInfo.InvariantCulture, out challengeCap) || challengeCap < 0))
+                    {
+                        ArenaNet.Send(sender, ArenaWire.Notice, "Recompensas de desafio por dia inválido (0 = sem teto).");
+                        return;
+                    }
                     ArenaConfig.MatchPoints.Value = ArenaSettingsParser.FormatMatchPoints(points);
                     ArenaConfig.MatchPointsDailyCap.Value = cap;
-                    done = $"Pontos por partida: {ArenaConfig.MatchPoints.Value} · teto diário {(cap > 0 ? cap.ToString() : "nenhum")}.";
+                    ArenaConfig.ChallengeRewardsDailyCap.Value = challengeCap;
+                    done = $"Pontos por partida: {ArenaConfig.MatchPoints.Value} · teto diário {(cap > 0 ? cap.ToString() : "nenhum")} · " +
+                           $"recompensas de desafio por dia {(challengeCap > 0 ? challengeCap.ToString() : "sem teto")}.";
                     break;
                 }
                 case ArenaWire.ActAdminChallengeSet:
@@ -594,6 +606,53 @@ namespace NpcValheim.Arena
                     ArenaConfig.KitDeadlineSeconds.Value = Mathf.Clamp(deadline, 10f, 60f);
                     done = $"Arena balanceada {(ArenaConfig.BalancedEnabled.Value ? "ligada" : "desligada")} · FFA {(ArenaConfig.BalancedFfa.Value ? "sim" : "não")} · " +
                            $"rating {ArenaConfig.BalancedRatingMode.Value} · prazo do kit {ArenaConfig.KitDeadlineSeconds.Value:0} s.";
+                    break;
+                }
+                case ArenaWire.ActAdminBalancedRewardsSet:
+                {
+                    // "points\npointsCap\nrewards\nrewardsCap": the Arena balanceada's Arena Points per
+                    // mode ("1v1=15/5|..."), their daily cap, its rewards by mail ("1v1=Coins:150/Coins:30|...")
+                    // and their daily cap (0 = none).
+                    var lines = payload.Split('\n');
+                    if (lines.Length < 4)
+                    {
+                        ArenaNet.Send(sender, ArenaWire.Notice, "Pedido incompleto: atualize o mod.");
+                        return;
+                    }
+                    var balancedPoints = ArenaSettingsParser.ParseBalancedMatchPoints(lines[0].Trim(), problems);
+                    var rewards = ArenaSettingsParser.ParseBalancedRewards(lines[2].Trim(), problems);
+                    if (problems.Count > 0)
+                    {
+                        ArenaNet.Send(sender, ArenaWire.Notice, problems[0]);
+                        return;
+                    }
+                    if (!int.TryParse(lines[1].Trim(), System.Globalization.NumberStyles.Integer,
+                            System.Globalization.CultureInfo.InvariantCulture, out int pointsCap) || pointsCap < 0 ||
+                        !int.TryParse(lines[3].Trim(), System.Globalization.NumberStyles.Integer,
+                            System.Globalization.CultureInfo.InvariantCulture, out int rewardsCap) || rewardsCap < 0)
+                    {
+                        ArenaNet.Send(sender, ArenaWire.Notice, "Teto diário inválido (0 = sem teto).");
+                        return;
+                    }
+                    foreach (var pair in rewards)
+                        foreach (var reward in new[] { pair.Value.Win, pair.Value.Loss })
+                        {
+                            if (reward.IsNone) continue;
+                            int max = ItemSpawner.MaxDeliverableAmount(reward.Item);
+                            if (max <= 0 || reward.Amount > max)
+                            {
+                                ArenaNet.Send(sender, ArenaWire.Notice, max <= 0
+                                    ? $"{pair.Key}: '{reward.Item}' não é um item do jogo."
+                                    : $"{pair.Key}: {reward.Item} — no máximo {max} por entrega.");
+                                return;
+                            }
+                        }
+                    ArenaConfig.BalancedMatchPoints.Value = ArenaSettingsParser.FormatMatchPoints(balancedPoints);
+                    ArenaConfig.BalancedMatchPointsDailyCap.Value = pointsCap;
+                    ArenaConfig.BalancedRewards.Value = ArenaSettingsParser.FormatBalancedRewards(rewards);
+                    ArenaConfig.BalancedRewardsDailyCap.Value = rewardsCap;
+                    done = $"Arena balanceada: pontos {ArenaConfig.BalancedMatchPoints.Value} (teto {(pointsCap > 0 ? pointsCap.ToString() : "nenhum")}) · " +
+                           $"recompensas {ArenaConfig.BalancedRewards.Value} (teto {(rewardsCap > 0 ? rewardsCap.ToString() : "nenhum")}).";
                     break;
                 }
                 case ArenaWire.ActAdminClassRemove:

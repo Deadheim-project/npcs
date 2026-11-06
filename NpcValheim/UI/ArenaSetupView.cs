@@ -61,8 +61,13 @@ namespace NpcValheim.UI
             ["test"] = ("Testar agora", "Chama este desafio para você (e o seu grupo, se for o líder), de qualquer lugar. Salve e ligue antes. Depois abra a Arena (Tab > Arena) e clique Entrar."),
             ["points"] = ("Pontos por partida", "Quanto cada tipo de partida dá a quem termina dentro da arena. Empate paga a derrota."),
             ["cap"] = ("Máximo por dia", "O máximo de pontos que uma pessoa ganha em partidas por dia. 0 = sem máximo."),
+            ["challengeCap"] = ("Desafios por dia", "Quantas recompensas de desafio (vitórias pagas) uma pessoa recebe por dia, somando todos os desafios, além da espera de cada desafio. 0 = sem máximo."),
             ["grant"] = ("Dar pontos", "Dá (ou tira, com número negativo) pontos de arena a um jogador pelo nome."),
             ["balanced"] = ("Arena balanceada", "Fila separada (ranqueada, escaramuça e FFA) em que o equipamento, a comida e as skills de cada um não contam: todos lutam com o kit de uma classe. O inventário não é tocado e o equipamento volta no fim."),
+            ["balancedRewards"] = ("Recompensas da balanceada", "Item (prefab) e quantidade por vitória e por derrota, em cada modo, pelo correio, além dos pontos. Quantidade 0 = nada. Vale já na próxima partida."),
+            ["balancedRewardsCap"] = ("Máximo por dia", "O máximo de itens (coins) das recompensas da balanceada que uma pessoa recebe por dia, à parte dos pontos. 0 = sem máximo."),
+            ["balancedPoints"] = ("Pontos da balanceada", "Pontos de Arena que cada partida balanceada dá, por vitória e por derrota, com valores próprios."),
+            ["balancedPointsCap"] = ("Máximo por dia", "O máximo de pontos que uma pessoa ganha por dia quando a partida é balanceada. O que já ganhou hoje na normal conta. 0 = sem máximo."),
             ["balancedRating"] = ("Rating", "Misturado: a ranqueada balanceada mexe no mesmo rating da normal. Separado: rating próprio (do time, pessoal e MMR), com aba própria no Ranking."),
             ["kitDeadline"] = ("Prazo do kit", "Segundos, depois de entrar, para o jogo vestir o kit e o servidor ver. Sem isso o jogador sai antes de começar, sem perder rating."),
             ["armor"] = ("Armadura", "Fixa da classe: o nome do item no jogo e o nível depois de dois-pontos, como ArmorIronChest:2. Vazio = nada nesse lugar."),
@@ -96,9 +101,16 @@ namespace NpcValheim.UI
         private static int _seenClasses = -1;
 
         private static readonly string[,] _points = new string[5, 2];
-        private static string _cap = "";
+        private static string _cap = "", _challengeCap = "";
         private static bool _pointsDirty;
         private static string _seenPoints;
+        // Balanceada > pontos e recompensas: per mode (1v1, 2v2, 3v3, ffa) the Arena Points (win, loss)
+        // and the reward (win item, win amount, loss item, loss amount), each with its daily cap.
+        private static readonly string[,] _bPoints = new string[4, 2];
+        private static string _bPointsCap = "", _bRewardsCap = "";
+        private static readonly string[,] _rewards = new string[4, 4];
+        private static bool _rewardsDirty;
+        private static string _seenRewards;
         private static string _grantName = "", _grantPoints = "100";
 
         private RectTransform _side, _sideList, _pane, _area, _shop;
@@ -219,7 +231,8 @@ namespace NpcValheim.UI
             $"{_sub}:{_selArena}:{_selChallenge}:{_arenas.Count}:{_challenges.Count}:" + ArenaConfig.MapsText() + ":" + ArenaDeadheim.ZonesText + ":" +
             ArenaConfig.MatchPoints?.Value + ":" + ArenaConfig.MatchPointsDailyCap?.Value + ":" +
             ArenaConfig.VendorItems?.Value + ":" + ArenaBestiary.Revision + ":" + ArenaClasses.Revision + ":" + _selClass + ":" + _classes.Count + ":" +
-            ArenaConfig.BalancedEnabled?.Value + ArenaConfig.BalancedFfa?.Value + ArenaConfig.BalancedRatingMode?.Value + ArenaConfig.KitDeadlineSeconds?.Value;
+            ArenaConfig.BalancedEnabled?.Value + ArenaConfig.BalancedFfa?.Value + ArenaConfig.BalancedRatingMode?.Value + ArenaConfig.KitDeadlineSeconds?.Value +
+            BalancedPaySeen();
 
         // ------------------------------------------------------------------ the copies
 
@@ -327,7 +340,29 @@ namespace NpcValheim.UI
                 _selClass = Mathf.Clamp(at >= 0 ? at : _selClass, -1, _classes.Count - 1);
             }
 
-            string points = ArenaConfig.MatchPoints?.Value + ":" + ArenaConfig.MatchPointsDailyCap?.Value;
+            string rewards = BalancedPaySeen();
+            if (rewards != _seenRewards && (!_rewardsDirty || RewardsMatch()))
+            {
+                _seenRewards = rewards;
+                _rewardsDirty = false;
+                var parsedPoints = ArenaSettingsParser.ParseBalancedMatchPoints(ArenaConfig.BalancedMatchPoints?.Value, null);
+                var parsedRewards = ArenaSettingsParser.ParseBalancedRewards(ArenaConfig.BalancedRewards?.Value, null);
+                for (int m = 0; m < ArenaSettingsParser.BalancedRewardModes.Length; m++)
+                {
+                    parsedPoints.TryGetValue(ArenaSettingsParser.BalancedRewardModes[m], out var bp);
+                    _bPoints[m, 0] = bp.Win.ToString(Inv);
+                    _bPoints[m, 1] = bp.Loss.ToString(Inv);
+                    parsedRewards.TryGetValue(ArenaSettingsParser.BalancedRewardModes[m], out var r);
+                    _rewards[m, 0] = r.Win.IsNone ? "" : r.Win.Item;
+                    _rewards[m, 1] = r.Win.IsNone ? "0" : r.Win.Amount.ToString(Inv);
+                    _rewards[m, 2] = r.Loss.IsNone ? "" : r.Loss.Item;
+                    _rewards[m, 3] = r.Loss.IsNone ? "0" : r.Loss.Amount.ToString(Inv);
+                }
+                _bPointsCap = (ArenaConfig.BalancedMatchPointsDailyCap?.Value ?? 0).ToString(Inv);
+                _bRewardsCap = (ArenaConfig.BalancedRewardsDailyCap?.Value ?? 0).ToString(Inv);
+            }
+
+            string points = ArenaConfig.MatchPoints?.Value + ":" + ArenaConfig.MatchPointsDailyCap?.Value + ":" + ArenaConfig.ChallengeRewardsDailyCap?.Value;
             if (points != _seenPoints && (!_pointsDirty || PointsMatch()))
             {
                 _seenPoints = points;
@@ -340,6 +375,7 @@ namespace NpcValheim.UI
                     _points[m, 1] = p.Loss.ToString(Inv);
                 }
                 _cap = (ArenaConfig.MatchPointsDailyCap?.Value ?? 0).ToString(Inv);
+                _challengeCap = (ArenaConfig.ChallengeRewardsDailyCap?.Value ?? 0).ToString(Inv);
             }
         }
 
@@ -768,6 +804,65 @@ namespace NpcValheim.UI
             Say($"Salvando a classe \"{c.Name.Trim()}\"...");
         }
 
+        /// <summary>The balanced pay as the cfg has it (points, their cap, rewards, their cap).</summary>
+        private static string BalancedPaySeen() =>
+            ArenaConfig.BalancedMatchPoints?.Value + ":" + ArenaConfig.BalancedMatchPointsDailyCap?.Value + ":" +
+            ArenaConfig.BalancedRewards?.Value + ":" + ArenaConfig.BalancedRewardsDailyCap?.Value;
+
+        private bool RewardsMatch()
+        {
+            var parsedPoints = ArenaSettingsParser.ParseBalancedMatchPoints(ArenaConfig.BalancedMatchPoints?.Value, null);
+            var parsed = ArenaSettingsParser.ParseBalancedRewards(ArenaConfig.BalancedRewards?.Value, null);
+            if (_bPointsCap != (ArenaConfig.BalancedMatchPointsDailyCap?.Value ?? 0).ToString(Inv) ||
+                _bRewardsCap != (ArenaConfig.BalancedRewardsDailyCap?.Value ?? 0).ToString(Inv))
+                return false;
+            for (int m = 0; m < ArenaSettingsParser.BalancedRewardModes.Length; m++)
+            {
+                parsedPoints.TryGetValue(ArenaSettingsParser.BalancedRewardModes[m], out var bp);
+                if (_bPoints[m, 0] != bp.Win.ToString(Inv) || _bPoints[m, 1] != bp.Loss.ToString(Inv)) return false;
+                parsed.TryGetValue(ArenaSettingsParser.BalancedRewardModes[m], out var r);
+                if (_rewards[m, 0] != (r.Win.IsNone ? "" : r.Win.Item) || _rewards[m, 1] != (r.Win.IsNone ? "0" : r.Win.Amount.ToString(Inv)) ||
+                    _rewards[m, 2] != (r.Loss.IsNone ? "" : r.Loss.Item) || _rewards[m, 3] != (r.Loss.IsNone ? "0" : r.Loss.Amount.ToString(Inv)))
+                    return false;
+            }
+            return true;
+        }
+
+        private void SaveRewards()
+        {
+            var points = new Dictionary<string, (int Win, int Loss)>();
+            var rewards = new Dictionary<string, (ArenaReward Win, ArenaReward Loss)>();
+            for (int m = 0; m < ArenaSettingsParser.BalancedRewardModes.Length; m++)
+            {
+                if (!int.TryParse((_bPoints[m, 0] ?? "").Trim(), NumberStyles.Integer, Inv, out int winPoints) || winPoints < 0 ||
+                    !int.TryParse((_bPoints[m, 1] ?? "").Trim(), NumberStyles.Integer, Inv, out int lossPoints) || lossPoints < 0)
+                {
+                    Say($"{ModeLabel(m)}: os pontos de vitória e derrota precisam ser números (0 ou mais).");
+                    return;
+                }
+                points[ArenaSettingsParser.BalancedRewardModes[m]] = (winPoints, lossPoints);
+                if (!int.TryParse((_rewards[m, 1] ?? "").Trim(), NumberStyles.Integer, Inv, out int winAmount) || winAmount < 0 ||
+                    !int.TryParse((_rewards[m, 3] ?? "").Trim(), NumberStyles.Integer, Inv, out int lossAmount) || lossAmount < 0)
+                {
+                    Say($"{ModeLabel(m)}: a quantidade precisa ser um número (0 ou mais).");
+                    return;
+                }
+                string winItem = (_rewards[m, 0] ?? "").Trim(), lossItem = (_rewards[m, 2] ?? "").Trim();
+                rewards[ArenaSettingsParser.BalancedRewardModes[m]] = (
+                    winItem.Length > 0 && winAmount > 0 ? new ArenaReward { Item = winItem, Amount = winAmount } : default,
+                    lossItem.Length > 0 && lossAmount > 0 ? new ArenaReward { Item = lossItem, Amount = lossAmount } : default);
+            }
+            if (!int.TryParse((_bPointsCap ?? "").Trim(), NumberStyles.Integer, Inv, out int pointsCap) || pointsCap < 0 ||
+                !int.TryParse((_bRewardsCap ?? "").Trim(), NumberStyles.Integer, Inv, out int rewardsCap) || rewardsCap < 0)
+            {
+                Say("Máximo por dia: um número, 0 = sem máximo.");
+                return;
+            }
+            Ask(ArenaWire.ActAdminBalancedRewardsSet, string.Join("\n", ArenaSettingsParser.FormatMatchPoints(points), pointsCap.ToString(Inv),
+                ArenaSettingsParser.FormatBalancedRewards(rewards), rewardsCap.ToString(Inv)));
+            Say("Salvando os pontos e as recompensas da balanceada...");
+        }
+
         private void SaveBalanced(bool enabled, bool ffa, bool separate, float deadline)
         {
             Ask(ArenaWire.ActAdminBalancedSet, string.Join("\n", enabled ? "1" : "0", ffa ? "1" : "0", separate ? "1" : "0",
@@ -785,7 +880,8 @@ namespace NpcValheim.UI
                 parsed.TryGetValue(ArenaSettingsParser.MatchPointModes[m], out var p);
                 if (_points[m, 0] != p.Win.ToString(Inv) || _points[m, 1] != p.Loss.ToString(Inv)) return false;
             }
-            return _cap == (ArenaConfig.MatchPointsDailyCap?.Value ?? 0).ToString(Inv);
+            return _cap == (ArenaConfig.MatchPointsDailyCap?.Value ?? 0).ToString(Inv) &&
+                   _challengeCap == (ArenaConfig.ChallengeRewardsDailyCap?.Value ?? 0).ToString(Inv);
         }
 
         private void SavePoints()
@@ -806,7 +902,12 @@ namespace NpcValheim.UI
                 Say("Máximo por dia: um número, 0 = sem máximo.");
                 return;
             }
-            Ask(ArenaWire.ActAdminPointsSet, ArenaSettingsParser.FormatMatchPoints(points) + "\n" + cap.ToString(Inv));
+            if (!int.TryParse((_challengeCap ?? "").Trim(), NumberStyles.Integer, Inv, out int challengeCap) || challengeCap < 0)
+            {
+                Say("Recompensas de desafio por dia: um número, 0 = sem máximo.");
+                return;
+            }
+            Ask(ArenaWire.ActAdminPointsSet, ArenaSettingsParser.FormatMatchPoints(points) + "\n" + cap.ToString(Inv) + "\n" + challengeCap.ToString(Inv));
             Say("Salvando os pontos...");
         }
 
@@ -1202,6 +1303,48 @@ namespace NpcValheim.UI
             Fill(kit);
             Gap();
 
+            Heading("Pontos de arena por partida (balanceada)");
+            Line("Como os da aba Pontos, mas para a balanceada, com valores próprios. O máximo por dia conta junto com o da normal: o que a pessoa já ganhou hoje na normal entra na conta.",
+                13, ValheimUi.Muted, 40f);
+            for (int m = 0; m < ArenaSettingsParser.BalancedRewardModes.Length; m++)
+            {
+                int mode = m;
+                var row = Field(ModeLabel(m), "balancedPoints");
+                Cell(row, "vitória", 13, ValheimUi.Muted, 56f);
+                Text(row, _bPoints[m, 0], 70f, v => { _bPoints[mode, 0] = v; _rewardsDirty = true; });
+                Cell(row, "derrota", 13, ValheimUi.Muted, 60f);
+                Text(row, _bPoints[m, 1], 70f, v => { _bPoints[mode, 1] = v; _rewardsDirty = true; });
+                Fill(row);
+            }
+            var pointsCapRow = Field("Máximo por dia", "balancedPointsCap");
+            Text(pointsCapRow, _bPointsCap, 90f, v => { _bPointsCap = v; _rewardsDirty = true; });
+            Cell(pointsCapRow, "0 = sem máximo", 13, ValheimUi.Muted);
+            Gap();
+
+            Heading("Recompensas por partida (coins)");
+            Line("Além dos pontos, pelo correio, a quem termina dentro da arena (empate e vitória sem luta pagam a derrota). " +
+                 "Item é o nome do prefab (ex.: Coins); quantidade 0 = nada. O máximo por dia conta só as recompensas, à parte dos pontos.",
+                13, ValheimUi.Muted, 54f);
+            for (int m = 0; m < ArenaSettingsParser.BalancedRewardModes.Length; m++)
+            {
+                int mode = m;
+                var row = Field(ModeLabel(m), "balancedRewards");
+                Cell(row, "vitória", 13, ValheimUi.Muted, 56f);
+                Text(row, _rewards[m, 0], 120f, v => { _rewards[mode, 0] = v; _rewardsDirty = true; });
+                Text(row, _rewards[m, 1], 60f, v => { _rewards[mode, 1] = v; _rewardsDirty = true; });
+                Cell(row, "derrota", 13, ValheimUi.Muted, 60f);
+                Text(row, _rewards[m, 2], 120f, v => { _rewards[mode, 2] = v; _rewardsDirty = true; });
+                Text(row, _rewards[m, 3], 60f, v => { _rewards[mode, 3] = v; _rewardsDirty = true; });
+                Fill(row);
+            }
+            var rewardsCapRow = Field("Máximo por dia", "balancedRewardsCap");
+            Text(rewardsCapRow, _bRewardsCap, 90f, v => { _bRewardsCap = v; _rewardsDirty = true; });
+            Cell(rewardsCapRow, "0 = sem máximo", 13, ValheimUi.Muted);
+            var saveRow = Field("", "balancedRewards");
+            Tip(Btn(saveRow, "Salvar pontos e recompensas", 230f, SaveRewards), "balancedRewards");
+            Fill(saveRow);
+            Gap();
+
             Heading("O que falta para funcionar");
             var usable = ArenaConfig.ClassDefs(null, checkWorld: true);
             Checks(new[]
@@ -1299,6 +1442,9 @@ namespace NpcValheim.UI
             var cap = Field("Máximo por dia", "cap");
             Text(cap, _cap, 90f, v => { _cap = v; _pointsDirty = true; });
             Cell(cap, "0 = sem máximo", 13, ValheimUi.Muted);
+            var challengeCapRow = Field("Desafios por dia", "challengeCap");
+            Text(challengeCapRow, _challengeCap, 90f, v => { _challengeCap = v; _pointsDirty = true; });
+            Cell(challengeCapRow, "recompensas de desafio por dia, todos juntos · 0 = sem máximo", 13, ValheimUi.Muted);
             Gap();
 
             Heading("Dar pontos a um jogador");

@@ -149,6 +149,15 @@ namespace NpcValheim.Arena
         public readonly List<KeyValuePair<string, int>> Rewards = new List<KeyValuePair<string, int>>();
     }
 
+    /// <summary>One reward of the Arena balanceada: an item and how many, sent by mail. Item null = nothing.</summary>
+    internal struct ArenaReward
+    {
+        public string Item;
+        public int Amount;
+        public bool IsNone => string.IsNullOrEmpty(Item) || Amount <= 0;
+        public override string ToString() => IsNone ? "" : Item + ":" + Amount.ToString(CultureInfo.InvariantCulture);
+    }
+
     /// <summary>One line of the arena vendor.</summary>
     internal sealed class ArenaOffer
     {
@@ -257,7 +266,10 @@ namespace NpcValheim.Arena
         /// <summary>0 = no limit: the challenge ends when the creature or the whole group falls.</summary>
         public float ChallengeTimeLimitSeconds = 0f;
         /// <summary>After a win, how long before the same player is paid by that challenge again.</summary>
-        public float ChallengeCooldownSeconds = 60f * 60f;
+        public float ChallengeCooldownSeconds = 0f;
+        /// <summary>Most challenge rewards (wins paid) a player gets per UTC day, every challenge
+        /// together; 0 = no cap. On top of the cooldown of each challenge.</summary>
+        public int ChallengeRewardsDailyCap = 10;
         /// <summary>PvE rating a player starts with, and the Elo factor of a challenge against it.</summary>
         public int ChallengeStartRating = 1000;
         public float ChallengeRatingK = 32f;
@@ -269,6 +281,20 @@ namespace NpcValheim.Arena
         // (ArenaClasses), not with their own gear.
         public bool BalancedEnabled = true;
         public bool BalancedFfa = true;
+        /// <summary>Arena balanceada: the Arena Points a match pays, by mode (1v1, 2v2, 3v3, ffa),
+        /// exactly as MatchPoints but with values of its own. Missing mode = nothing.</summary>
+        public Dictionary<string, (int Win, int Loss)> BalancedMatchPoints =
+            ArenaSettingsParser.ParseMatchPoints(ArenaSettingsParser.DefaultBalancedMatchPoints, null);
+        /// <summary>Most match points a player earns per UTC day while the match is balanced; 0 = no
+        /// cap. The day's counter is the same as the normal one's (DayPoints): only the cap differs.</summary>
+        public int BalancedMatchPointsDailyCap = 300;
+        /// <summary>Arena balanceada: the item (and amount) by mail a match also pays, by mode, win
+        /// and loss, under the same rules as MatchPoints. Missing mode = nothing.</summary>
+        public Dictionary<string, (ArenaReward Win, ArenaReward Loss)> BalancedRewards =
+            ArenaSettingsParser.ParseBalancedRewards(ArenaSettingsParser.DefaultBalancedRewards, null);
+        /// <summary>Most reward items (the coins) a player is paid per UTC day by the balanced
+        /// matches; 0 = no cap. Its counter is apart from the points' (DayRewards).</summary>
+        public int BalancedRewardsDailyCap = 1500;
         /// <summary>Separado: the balanced rated matches move a rating of their own (the team's
         /// BalancedRating, the member's BalancedPersonal, MMR "b{size}"); Misturado: the same
         /// rating as the normal queue.</summary>
@@ -352,6 +378,67 @@ namespace NpcValheim.Arena
         internal const string DeadcoinsPrefab = "Deadcoins";
 
         internal const string DefaultMatchPoints = "1v1=15/5|2v2=20/8|3v3=25/10|ffa=40/10|pve=10/0";
+
+        internal const string DefaultBalancedMatchPoints = "1v1=15/5|2v2=20/8|3v3=25/10|ffa=40/10";
+
+        internal const string DefaultBalancedRewards = "1v1=Coins:150/Coins:30|2v2=Coins:200/Coins:40|3v3=Coins:250/Coins:50|ffa=Coins:300/Coins:60";
+
+        /// <summary>The modes the balanced rewards know (a challenge is never balanced).</summary>
+        internal static readonly string[] BalancedRewardModes = { "1v1", "2v2", "3v3", "ffa" };
+
+        /// <summary>
+        /// "1v1=Coins:150/Coins:30|ffa=Coins:300/Coins:60" -- win/loss per mode, each side item:amount
+        /// (empty = nothing). Same modes and separators as PorPartida. A bad entry is left out by name.
+        /// </summary>
+        internal static Dictionary<string, (ArenaReward Win, ArenaReward Loss)> ParseBalancedRewards(string raw, List<string> problems)
+        {
+            var result = new Dictionary<string, (ArenaReward, ArenaReward)>(StringComparer.OrdinalIgnoreCase);
+            foreach (var part in (raw ?? "").Split(new[] { '|', ';' }, StringSplitOptions.RemoveEmptyEntries))
+            {
+                var text = part.Trim();
+                if (text.Length == 0) continue;
+                int eq = text.IndexOf('=');
+                string mode = eq > 0 ? MatchPointsKey(text.Substring(0, eq)) : null;
+                var sides = eq > 0 ? text.Substring(eq + 1).Split('/') : new string[0];
+                ArenaReward win = default, loss = default;
+                bool ok = mode != null && sides.Length >= 1 && sides.Length <= 2 &&
+                          TryReward(sides[0], out win) && (sides.Length == 1 || TryReward(sides[1], out loss));
+                if (!ok)
+                {
+                    problems?.Add($"Balanceada/Recompensas: '{text}' ignorado (formato modo=item:qtd/item:qtd, modo 1v1, 2v2, 3v3 ou ffa)");
+                    continue;
+                }
+                if (sides.Length == 1) loss = win;
+                result[mode] = (win, loss);
+            }
+            return result;
+        }
+
+        /// <summary>The balanced PorPartida: ParseMatchPoints without "pve" (a challenge is never balanced).</summary>
+        internal static Dictionary<string, (int Win, int Loss)> ParseBalancedMatchPoints(string raw, List<string> problems)
+        {
+            var result = ParseMatchPoints(raw, problems);
+            if (result.Remove("pve")) problems?.Add("Balanceada/PorPartida: 'pve' ignorado (desafio nunca e balanceado)");
+            return result;
+        }
+
+        internal static bool TryReward(string raw, out ArenaReward reward)
+        {
+            reward = default;
+            raw = (raw ?? "").Trim();
+            if (raw.Length == 0) return true;
+            var pair = raw.Split(':');
+            if (pair.Length != 2 || pair[0].Trim().Length == 0 ||
+                !int.TryParse(pair[1].Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out int amount) || amount < 0 || amount > 100000)
+                return false;
+            if (amount > 0) reward = new ArenaReward { Item = pair[0].Trim(), Amount = amount };
+            return true;
+        }
+
+        internal static string FormatBalancedRewards(Dictionary<string, (ArenaReward Win, ArenaReward Loss)> rewards) =>
+            string.Join("|", rewards.OrderBy(kv => Array.IndexOf(BalancedRewardModes, kv.Key.ToLowerInvariant()) is int i && i >= 0 ? i : 99)
+                .ThenBy(kv => kv.Key, StringComparer.OrdinalIgnoreCase)
+                .Select(kv => kv.Key + "=" + kv.Value.Win + "/" + kv.Value.Loss));
 
         /// <summary>The modes match points know, in the order the cfg and the admin page show them.</summary>
         internal static readonly string[] MatchPointModes = { "1v1", "2v2", "3v3", "ffa", "pve" };

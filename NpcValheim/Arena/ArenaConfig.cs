@@ -76,6 +76,7 @@ namespace NpcValheim.Arena
         internal static ConfigEntry<int> ChallengeMaxPlayers;
         internal static ConfigEntry<float> ChallengeTimeLimitMinutes;
         internal static ConfigEntry<float> ChallengeCooldownMinutes;
+        internal static ConfigEntry<int> ChallengeRewardsDailyCap;
         internal static ConfigEntry<int> ChallengeStartRating;
         internal static ConfigEntry<float> ChallengeRatingK;
         internal static ConfigEntry<string> ChallengeMaps;
@@ -86,6 +87,10 @@ namespace NpcValheim.Arena
         internal static ConfigEntry<bool> BalancedFfa;
         internal static ConfigEntry<BalancedRating> BalancedRatingMode;
         internal static ConfigEntry<float> KitDeadlineSeconds;
+        internal static ConfigEntry<string> BalancedRewards;
+        internal static ConfigEntry<int> BalancedRewardsDailyCap;
+        internal static ConfigEntry<string> BalancedMatchPoints;
+        internal static ConfigEntry<int> BalancedMatchPointsDailyCap;
 
         /// <summary>The kinds of match an arena may host, as the usage text and the layout file
         /// write them.</summary>
@@ -231,9 +236,14 @@ namespace NpcValheim.Arena
             ChallengeTimeLimitMinutes = S(config, challenge, "TimeLimitMinutes", 0f,
                 "Limite de tempo do desafio em minutos (contando a preparacao). Sem matar a criatura ate aqui, o desafio falha. " +
                 "0 = sem limite: o desafio acaba quando a criatura cai ou todo o grupo e derrotado.");
-            ChallengeCooldownMinutes = S(config, challenge, "CooldownMinutes", 60f,
-                "Depois de receber a recompensa de um desafio, quanto tempo ate o mesmo jogador receber de novo desse desafio. " +
+            ChallengeCooldownMinutes = S(config, challenge, "CooldownMinutes", 0f,
+                "Depois de receber a recompensa de um desafio, quanto tempo ate o mesmo jogador receber de novo desse desafio (0 = sem espera; o teto do dia e o RecompensasPorDia). " +
                 "Fica na memoria do servidor: um restart zera.");
+            ChallengeRewardsDailyCap = S(config, challenge, "RecompensasPorDia", 10,
+                "Maximo de recompensas de desafio (vitorias pagas) que um jogador recebe por dia (UTC), somando todos os desafios. " +
+                "0 = sem teto. Vale alem do CooldownMinutes de cada desafio e fica gravado (um restart nao zera). " +
+                "Os Pontos de Arena do desafio (modo pve) seguem o [Arena - Pontos] PorPartidaTetoDiario. " +
+                "Tambem se edita no Painel de Admin, aba Arena > Pontos.");
             ChallengeStartRating = S(config, challenge, "RatingInicial", 1000,
                 "Rating PvE inicial de cada jogador. O rating PvE e so dos desafios, separado de todo rating PvP: " +
                 "vencer um desafio sobe, perder desce, contra a Dificuldade de cada desafio (como se a criatura fosse um " +
@@ -256,6 +266,20 @@ namespace NpcValheim.Arena
             BalancedRatingMode = S(config, balanced, "Rating", BalancedRating.Misturado,
                 "Misturado = a ranqueada balanceada mexe no mesmo rating da ranqueada normal. Separado = rating proprio " +
                 "(do time, pessoal e MMR), com aba propria no Ranking.");
+            BalancedMatchPoints = S(config, balanced, "PorPartida", ArenaSettingsParser.DefaultBalancedMatchPoints,
+                "Pontos de Arena de cada partida balanceada, por modo: modo=vitoria/derrota separados por |. Modos: 1v1, 2v2, 3v3, ffa. " +
+                "Mesma regra de [Arena - Pontos] PorPartida (so quem terminou dentro da arena; empate e vitoria sem luta pagam a derrota), " +
+                "com valores proprios. Tambem se edita no Painel de Admin, aba Arena > Balanceada.");
+            BalancedMatchPointsDailyCap = S(config, balanced, "PorPartidaTetoDiario", 300,
+                "Maximo de Pontos de Arena por partida que um jogador ganha por dia (UTC) quando a partida e balanceada. 0 = sem teto. " +
+                "O contador do dia e o mesmo da normal: o que ele ja ganhou hoje na normal conta aqui (e vice-versa).");
+            BalancedRewards = S(config, balanced, "Recompensas", ArenaSettingsParser.DefaultBalancedRewards,
+                "Recompensa em item (coins) de cada partida balanceada, alem dos Pontos de Arena, por modo: modo=vitoria/derrota separados por |, " +
+                "cada lado item:quantidade (vazio = nada). Modos: 1v1, 2v2, 3v3, ffa. Mesma regra de pagamento dos pontos. O item vai pelo correio. " +
+                "Tambem se edita no Painel de Admin, aba Arena > Balanceada.");
+            BalancedRewardsDailyCap = S(config, balanced, "RecompensasTetoDiario", 1500,
+                "Maximo de itens (coins) das Recompensas que um jogador recebe por dia (UTC). 0 = sem teto. Contador proprio, " +
+                "separado do dos Pontos de Arena.");
             KitDeadlineSeconds = S(config, balanced, "PrazoKit", 20f,
                 "Segundos, depois de entrar, para o jogo vestir o kit da classe e o servidor ver. Sem isso o jogador sai da partida " +
                 "antes de comecar, sem perder rating (10 a 60).");
@@ -608,6 +632,7 @@ namespace NpcValheim.Arena
             t.ChallengeMaxPlayers = Mathf.Clamp(ChallengeMaxPlayers.Value, 1, 10);
             t.ChallengeTimeLimitSeconds = ChallengeTimeLimitMinutes.Value <= 0f ? 0f : Mathf.Clamp(ChallengeTimeLimitMinutes.Value, 1f, 120f) * 60f;
             t.ChallengeCooldownSeconds = Mathf.Max(0f, ChallengeCooldownMinutes.Value) * 60f;
+            t.ChallengeRewardsDailyCap = Mathf.Max(0, ChallengeRewardsDailyCap.Value);
             t.ChallengeStartRating = Mathf.Clamp(ChallengeStartRating.Value, 0, ArenaLayout.MaxDifficulty);
             t.ChallengeRatingK = Mathf.Clamp(ChallengeRatingK.Value, 1f, 200f);
             t.ChallengeMaps = ArenaSettingsParser.ParseNames(ChallengeMaps.Value);
@@ -617,6 +642,19 @@ namespace NpcValheim.Arena
             t.BalancedFfa = BalancedFfa.Value;
             t.BalancedSeparateRating = BalancedRatingMode.Value == BalancedRating.Separado;
             t.KitDeadlineSeconds = Mathf.Clamp(KitDeadlineSeconds.Value, 10f, 60f);
+            t.BalancedMatchPoints = ArenaSettingsParser.ParseBalancedMatchPoints(BalancedMatchPoints.Value, problems);
+            t.BalancedMatchPointsDailyCap = Mathf.Max(0, BalancedMatchPointsDailyCap.Value);
+            t.BalancedRewardsDailyCap = Mathf.Max(0, BalancedRewardsDailyCap.Value);
+            t.BalancedRewards = ArenaSettingsParser.ParseBalancedRewards(BalancedRewards.Value, problems);
+            if (checkWorld && ObjectDB.instance != null)
+                foreach (var pair in t.BalancedRewards)
+                    foreach (var reward in new[] { pair.Value.Win, pair.Value.Loss })
+                    {
+                        if (reward.IsNone) continue;
+                        int max = ItemSpawner.MaxDeliverableAmount(reward.Item);
+                        if (max <= 0) problems.Add($"Balanceada/Recompensas {pair.Key}: '{reward.Item}' nao e um item que o jogo conhece");
+                        else if (reward.Amount > max) problems.Add($"Balanceada/Recompensas {pair.Key}: {reward.Item} x{reward.Amount} e mais do que uma entrega carrega ({max})");
+                    }
             t.Classes = ClassDefs(problems, checkWorld);
             if (t.BalancedEnabled && t.Classes.Count == 0)
                 problems.Add("Arena balanceada: nenhuma classe ligada e sem problemas (Painel de Admin, aba Arena > Balanceada)");

@@ -233,6 +233,8 @@ class Program
             BalancedQueues();
             BalancedKitCheck();
             BalancedRating();
+            BalancedPay();
+            ChallengeDailyCap();
         }
         catch (Exception ex)
         {
@@ -463,6 +465,60 @@ class Program
         var m = e.Matches.Single();
         EnterAll(e, m);
         return (e, h, m);
+    }
+
+    static void BalancedPay()
+    {
+        Section("Arena balanceada: points and rewards of its own, each with its daily cap");
+        var problems = new List<string>();
+        var bp = ArenaSettingsParser.ParseBalancedMatchPoints("1v1=15/5|pve=10/0", problems);
+        Check("the balanced points leave pve out, by name", bp.Count == 1 && bp["1v1"] == (15, 5) && problems.Count == 1, string.Join(" / ", problems));
+
+        var (e, h, _) = NewEngine(BalancedTuning());
+        var t = e.Tuning;
+        t.MatchPoints = ArenaSettingsParser.ParseMatchPoints("1v1=100/100", null);
+        t.MatchPointsDailyCap = 300;
+        t.BalancedMatchPoints = ArenaSettingsParser.ParseBalancedMatchPoints("1v1=15/5", null);
+        t.BalancedMatchPointsDailyCap = 25;
+        t.BalancedRewards = ArenaSettingsParser.ParseBalancedRewards("1v1=Coins:150/Coins:30", null);
+        t.BalancedRewardsDailyCap = 200;
+        int Coins(long who) => h.Items.Where(i => i.To == who && i.Prefab == "Coins").Sum(i => i.Amount);
+        void Duel()
+        {
+            Do(e, A, ArenaEngine.AtBattlemaster, ArenaWire.ActQueueJoin, "1\n0\n\n1\nguerreiro");
+            Do(e, C, ArenaEngine.AtBattlemaster, ArenaWire.ActQueueJoin, "1\n0\n\n1\narqueiro");
+            EnterAll(e, e.MatchOf(A));
+            WearKit(e, h, A);
+            WearKit(e, h, C);
+            Advance(e, h, 61);
+            Do(e, C, "", ArenaWire.ActKo, A.ToString());
+            Advance(e, h, 125);
+        }
+
+        Duel();
+        Check("the balanced table pays the points, not the normal one", e.PlayerRecord(A).Points == 15 && e.PlayerRecord(C).Points == 5,
+            $"A={e.PlayerRecord(A).Points} C={e.PlayerRecord(C).Points}");
+        Check("and the coins by mail on top", Coins(A) == 150 && Coins(C) == 30, $"A={Coins(A)} C={Coins(C)}");
+        Duel();
+        Check("its own points cap stops the win at 25", e.PlayerRecord(A).Points == 25 && e.PlayerRecord(C).Points == 10,
+            $"A={e.PlayerRecord(A).Points} C={e.PlayerRecord(C).Points}");
+        Check("its own coin cap stops the win at 200", Coins(A) == 200 && Coins(C) == 60, $"A={Coins(A)} C={Coins(C)}");
+        Duel();
+        Check("at both caps nothing more", e.PlayerRecord(A).Points == 25 && Coins(A) == 200, $"A={e.PlayerRecord(A).Points} coins {Coins(A)}");
+
+        // A new day: a normal duel first fills the shared points counter past the balanced cap.
+        h.Utc = h.Utc.AddDays(1);
+        Do(e, A, ArenaEngine.AtBattlemaster, ArenaWire.ActQueueJoin, "1\n0\n");
+        Do(e, B, ArenaEngine.AtBattlemaster, ArenaWire.ActQueueJoin, "1\n0\n");
+        EnterAll(e, e.MatchOf(A));
+        Advance(e, h, 61);
+        Do(e, B, "", ArenaWire.ActKo, A.ToString());
+        Advance(e, h, 125);
+        Check("the normal duel pays the normal table", e.PlayerRecord(A).Points == 125, $"A={e.PlayerRecord(A).Points}");
+        Duel();
+        Check("the day's points counter is shared: no balanced points after 100 in the normal", e.PlayerRecord(A).Points == 125,
+            $"A={e.PlayerRecord(A).Points}");
+        Check("the coins count apart, so they still come", Coins(A) == 350, $"A={Coins(A)}");
     }
 
     static void BalancedKitCheck()
@@ -1853,6 +1909,35 @@ class Program
     }
 
     // ------------------------------------------------- 0.1.90: layout, no clock, edge, PvE
+
+    static void ChallengeDailyCap()
+    {
+        Section("challenge: RecompensasPorDia, every challenge together");
+        var t = PveTuning(0f);
+        t.ChallengeRewardsDailyCap = 2;
+        var (e, h, _) = NewEngine(t);
+        int Paid() => h.Items.Count(i => i.To == A && i.Prefab == "Coins");
+        void Win()
+        {
+            var m = StartChallenge(e, h, A);
+            h.Creatures.Remove(m.Id);
+            Advance(e, h, 1.5);
+            Advance(e, h, 121);
+        }
+        Win();
+        Win();
+        Check("two wins, two rewards (no cooldown)", Paid() == 2, $"paid {Paid()}");
+        Win();
+        Check("the third the same day is not paid", Paid() == 2 && h.Got(A, ArenaWire.Notice, "máximo de 2 recompensas"), $"paid {Paid()}");
+        Check("the day's count is kept on the record", e.PlayerRecord(A).DayChallenges == 2);
+        h.Utc = h.Utc.AddDays(1);
+        Win();
+        Check("a new UTC day pays again", Paid() == 3, $"paid {Paid()}");
+        e.Tuning.ChallengeRewardsDailyCap = 0;
+        Win();
+        Win();
+        Check("0 = no cap", Paid() == 5, $"paid {Paid()}");
+    }
 
     static ArenaTuning PveTuning(float limit)
     {
