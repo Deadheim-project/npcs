@@ -439,9 +439,20 @@ namespace NpcValheim.Arena
                         ArenaNet.Send(sender, ArenaWire.Notice, "Teto diário inválido (0 = sem teto).");
                         return;
                     }
+                    // A third line, when there: [Arena - Desafio] RecompensasPorDia.
+                    int challengeCap = ArenaConfig.ChallengeRewardsDailyCap.Value;
+                    if (lines.Length > 2 && lines[2].Trim().Length > 0 &&
+                        (!int.TryParse(lines[2].Trim(), System.Globalization.NumberStyles.Integer,
+                            System.Globalization.CultureInfo.InvariantCulture, out challengeCap) || challengeCap < 0))
+                    {
+                        ArenaNet.Send(sender, ArenaWire.Notice, "Recompensas de desafio por dia inválido (0 = sem teto).");
+                        return;
+                    }
                     ArenaConfig.MatchPoints.Value = ArenaSettingsParser.FormatMatchPoints(points);
                     ArenaConfig.MatchPointsDailyCap.Value = cap;
-                    done = $"Pontos por partida: {ArenaConfig.MatchPoints.Value} · teto diário {(cap > 0 ? cap.ToString() : "nenhum")}.";
+                    ArenaConfig.ChallengeRewardsDailyCap.Value = challengeCap;
+                    done = $"Pontos por partida: {ArenaConfig.MatchPoints.Value} · teto diário {(cap > 0 ? cap.ToString() : "nenhum")} · " +
+                           $"recompensas de desafio por dia {(challengeCap > 0 ? challengeCap.ToString() : "sem teto")}.";
                     break;
                 }
                 case ArenaWire.ActAdminChallengeSet:

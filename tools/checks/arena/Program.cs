@@ -234,6 +234,7 @@ class Program
             BalancedKitCheck();
             BalancedRating();
             BalancedPay();
+            ChallengeDailyCap();
         }
         catch (Exception ex)
         {
@@ -1908,6 +1909,35 @@ class Program
     }
 
     // ------------------------------------------------- 0.1.90: layout, no clock, edge, PvE
+
+    static void ChallengeDailyCap()
+    {
+        Section("challenge: RecompensasPorDia, every challenge together");
+        var t = PveTuning(0f);
+        t.ChallengeRewardsDailyCap = 2;
+        var (e, h, _) = NewEngine(t);
+        int Paid() => h.Items.Count(i => i.To == A && i.Prefab == "Coins");
+        void Win()
+        {
+            var m = StartChallenge(e, h, A);
+            h.Creatures.Remove(m.Id);
+            Advance(e, h, 1.5);
+            Advance(e, h, 121);
+        }
+        Win();
+        Win();
+        Check("two wins, two rewards (no cooldown)", Paid() == 2, $"paid {Paid()}");
+        Win();
+        Check("the third the same day is not paid", Paid() == 2 && h.Got(A, ArenaWire.Notice, "máximo de 2 recompensas"), $"paid {Paid()}");
+        Check("the day's count is kept on the record", e.PlayerRecord(A).DayChallenges == 2);
+        h.Utc = h.Utc.AddDays(1);
+        Win();
+        Check("a new UTC day pays again", Paid() == 3, $"paid {Paid()}");
+        e.Tuning.ChallengeRewardsDailyCap = 0;
+        Win();
+        Win();
+        Check("0 = no cap", Paid() == 5, $"paid {Paid()}");
+    }
 
     static ArenaTuning PveTuning(float limit)
     {

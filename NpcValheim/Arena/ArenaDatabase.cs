@@ -71,6 +71,10 @@ namespace NpcValheim.Arena
         /// Arena balanceada's rewards by mail (apart from the points').</summary>
         public int RewardDay { get; set; }
         public int DayRewards { get; set; }
+        /// <summary>The UTC day (yyyyMMdd) <see cref="DayChallenges"/> counts: how many challenge
+        /// rewards were paid that day, for [Arena - Desafio] RecompensasPorDia.</summary>
+        public int ChallengeDay { get; set; }
+        public int DayChallenges { get; set; }
         public Dictionary<string, int> Mmr { get; set; } = new Dictionary<string, int>();
         public bool HasReturn { get; set; }
         public float ReturnX { get; set; }

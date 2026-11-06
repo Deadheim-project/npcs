@@ -76,6 +76,7 @@ namespace NpcValheim.Arena
         internal static ConfigEntry<int> ChallengeMaxPlayers;
         internal static ConfigEntry<float> ChallengeTimeLimitMinutes;
         internal static ConfigEntry<float> ChallengeCooldownMinutes;
+        internal static ConfigEntry<int> ChallengeRewardsDailyCap;
         internal static ConfigEntry<int> ChallengeStartRating;
         internal static ConfigEntry<float> ChallengeRatingK;
         internal static ConfigEntry<string> ChallengeMaps;
@@ -238,6 +239,11 @@ namespace NpcValheim.Arena
             ChallengeCooldownMinutes = S(config, challenge, "CooldownMinutes", 60f,
                 "Depois de receber a recompensa de um desafio, quanto tempo ate o mesmo jogador receber de novo desse desafio. " +
                 "Fica na memoria do servidor: um restart zera.");
+            ChallengeRewardsDailyCap = S(config, challenge, "RecompensasPorDia", 10,
+                "Maximo de recompensas de desafio (vitorias pagas) que um jogador recebe por dia (UTC), somando todos os desafios. " +
+                "0 = sem teto. Vale alem do CooldownMinutes de cada desafio e fica gravado (um restart nao zera). " +
+                "Os Pontos de Arena do desafio (modo pve) seguem o [Arena - Pontos] PorPartidaTetoDiario. " +
+                "Tambem se edita no Painel de Admin, aba Arena > Pontos.");
             ChallengeStartRating = S(config, challenge, "RatingInicial", 1000,
                 "Rating PvE inicial de cada jogador. O rating PvE e so dos desafios, separado de todo rating PvP: " +
                 "vencer um desafio sobe, perder desce, contra a Dificuldade de cada desafio (como se a criatura fosse um " +
@@ -626,6 +632,7 @@ namespace NpcValheim.Arena
             t.ChallengeMaxPlayers = Mathf.Clamp(ChallengeMaxPlayers.Value, 1, 10);
             t.ChallengeTimeLimitSeconds = ChallengeTimeLimitMinutes.Value <= 0f ? 0f : Mathf.Clamp(ChallengeTimeLimitMinutes.Value, 1f, 120f) * 60f;
             t.ChallengeCooldownSeconds = Mathf.Max(0f, ChallengeCooldownMinutes.Value) * 60f;
+            t.ChallengeRewardsDailyCap = Mathf.Max(0, ChallengeRewardsDailyCap.Value);
             t.ChallengeStartRating = Mathf.Clamp(ChallengeStartRating.Value, 0, ArenaLayout.MaxDifficulty);
             t.ChallengeRatingK = Mathf.Clamp(ChallengeRatingK.Value, 1f, 200f);
             t.ChallengeMaps = ArenaSettingsParser.ParseNames(ChallengeMaps.Value);

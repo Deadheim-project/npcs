@@ -61,6 +61,7 @@ namespace NpcValheim.UI
             ["test"] = ("Testar agora", "Chama este desafio para você (e o seu grupo, se for o líder), de qualquer lugar. Salve e ligue antes. Depois abra a Arena (Tab > Arena) e clique Entrar."),
             ["points"] = ("Pontos por partida", "Quanto cada tipo de partida dá a quem termina dentro da arena. Empate paga a derrota."),
             ["cap"] = ("Máximo por dia", "O máximo de pontos que uma pessoa ganha em partidas por dia. 0 = sem máximo."),
+            ["challengeCap"] = ("Desafios por dia", "Quantas recompensas de desafio (vitórias pagas) uma pessoa recebe por dia, somando todos os desafios, além da espera de cada desafio. 0 = sem máximo."),
             ["grant"] = ("Dar pontos", "Dá (ou tira, com número negativo) pontos de arena a um jogador pelo nome."),
             ["balanced"] = ("Arena balanceada", "Fila separada (ranqueada, escaramuça e FFA) em que o equipamento, a comida e as skills de cada um não contam: todos lutam com o kit de uma classe. O inventário não é tocado e o equipamento volta no fim."),
             ["balancedRewards"] = ("Recompensas da balanceada", "Item (prefab) e quantidade por vitória e por derrota, em cada modo, pelo correio, além dos pontos. Quantidade 0 = nada. Vale já na próxima partida."),
@@ -100,7 +101,7 @@ namespace NpcValheim.UI
         private static int _seenClasses = -1;
 
         private static readonly string[,] _points = new string[5, 2];
-        private static string _cap = "";
+        private static string _cap = "", _challengeCap = "";
         private static bool _pointsDirty;
         private static string _seenPoints;
         // Balanceada > pontos e recompensas: per mode (1v1, 2v2, 3v3, ffa) the Arena Points (win, loss)
@@ -361,7 +362,7 @@ namespace NpcValheim.UI
                 _bRewardsCap = (ArenaConfig.BalancedRewardsDailyCap?.Value ?? 0).ToString(Inv);
             }
 
-            string points = ArenaConfig.MatchPoints?.Value + ":" + ArenaConfig.MatchPointsDailyCap?.Value;
+            string points = ArenaConfig.MatchPoints?.Value + ":" + ArenaConfig.MatchPointsDailyCap?.Value + ":" + ArenaConfig.ChallengeRewardsDailyCap?.Value;
             if (points != _seenPoints && (!_pointsDirty || PointsMatch()))
             {
                 _seenPoints = points;
@@ -374,6 +375,7 @@ namespace NpcValheim.UI
                     _points[m, 1] = p.Loss.ToString(Inv);
                 }
                 _cap = (ArenaConfig.MatchPointsDailyCap?.Value ?? 0).ToString(Inv);
+                _challengeCap = (ArenaConfig.ChallengeRewardsDailyCap?.Value ?? 0).ToString(Inv);
             }
         }
 
@@ -878,7 +880,8 @@ namespace NpcValheim.UI
                 parsed.TryGetValue(ArenaSettingsParser.MatchPointModes[m], out var p);
                 if (_points[m, 0] != p.Win.ToString(Inv) || _points[m, 1] != p.Loss.ToString(Inv)) return false;
             }
-            return _cap == (ArenaConfig.MatchPointsDailyCap?.Value ?? 0).ToString(Inv);
+            return _cap == (ArenaConfig.MatchPointsDailyCap?.Value ?? 0).ToString(Inv) &&
+                   _challengeCap == (ArenaConfig.ChallengeRewardsDailyCap?.Value ?? 0).ToString(Inv);
         }
 
         private void SavePoints()
@@ -899,7 +902,12 @@ namespace NpcValheim.UI
                 Say("Máximo por dia: um número, 0 = sem máximo.");
                 return;
             }
-            Ask(ArenaWire.ActAdminPointsSet, ArenaSettingsParser.FormatMatchPoints(points) + "\n" + cap.ToString(Inv));
+            if (!int.TryParse((_challengeCap ?? "").Trim(), NumberStyles.Integer, Inv, out int challengeCap) || challengeCap < 0)
+            {
+                Say("Recompensas de desafio por dia: um número, 0 = sem máximo.");
+                return;
+            }
+            Ask(ArenaWire.ActAdminPointsSet, ArenaSettingsParser.FormatMatchPoints(points) + "\n" + cap.ToString(Inv) + "\n" + challengeCap.ToString(Inv));
             Say("Salvando os pontos...");
         }
 
@@ -1434,6 +1442,9 @@ namespace NpcValheim.UI
             var cap = Field("Máximo por dia", "cap");
             Text(cap, _cap, 90f, v => { _cap = v; _pointsDirty = true; });
             Cell(cap, "0 = sem máximo", 13, ValheimUi.Muted);
+            var challengeCapRow = Field("Desafios por dia", "challengeCap");
+            Text(challengeCapRow, _challengeCap, 90f, v => { _challengeCap = v; _pointsDirty = true; });
+            Cell(challengeCapRow, "recompensas de desafio por dia, todos juntos · 0 = sem máximo", 13, ValheimUi.Muted);
             Gap();
 
             Heading("Dar pontos a um jogador");

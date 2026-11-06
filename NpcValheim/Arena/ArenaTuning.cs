@@ -267,6 +267,9 @@ namespace NpcValheim.Arena
         public float ChallengeTimeLimitSeconds = 0f;
         /// <summary>After a win, how long before the same player is paid by that challenge again.</summary>
         public float ChallengeCooldownSeconds = 60f * 60f;
+        /// <summary>Most challenge rewards (wins paid) a player gets per UTC day, every challenge
+        /// together; 0 = no cap. On top of the cooldown of each challenge.</summary>
+        public int ChallengeRewardsDailyCap = 10;
         /// <summary>PvE rating a player starts with, and the Elo factor of a challenge against it.</summary>
         public int ChallengeStartRating = 1000;
         public float ChallengeRatingK = 32f;

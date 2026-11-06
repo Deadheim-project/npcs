@@ -1203,6 +1203,9 @@ namespace NpcValheim.Arena
         private void PayChallenge(ArenaMatch match)
         {
             var def = match.Challenge;
+            int today = Today();
+            int cap = _t.ChallengeRewardsDailyCap;
+            var changed = new List<ArenaPlayerRecord>();
             foreach (var seat in match.Seats.Where(s => s.Present))
             {
                 string key = CooldownKey(seat.PlayerId, def);
@@ -1213,11 +1216,27 @@ namespace NpcValheim.Arena
                     continue;
                 }
                 if (def.Rewards.Count == 0) continue;
+                // RecompensasPorDia: every challenge together, per UTC day, kept on the record.
+                var p = Player(seat.PlayerId, seat.Name);
+                if (p.ChallengeDay != today)
+                {
+                    p.ChallengeDay = today;
+                    p.DayChallenges = 0;
+                }
+                if (cap > 0 && p.DayChallenges >= cap)
+                {
+                    Say(seat.PlayerId, $"Você já recebeu o máximo de {cap} recompensas de desafio hoje.");
+                    continue;
+                }
+                p.DayChallenges++;
+                changed.Add(p);
                 _challengeCooldowns[key] = _host.Now + _t.ChallengeCooldownSeconds;
                 foreach (var reward in def.Rewards)
                     _host.MailItem(seat.PlayerId, "Desafio: " + def.Name, reward.Key, reward.Value);
-                Say(seat.PlayerId, $"Recompensa do desafio \"{def.Name}\" enviada pelo correio.");
+                Say(seat.PlayerId, $"Recompensa do desafio \"{def.Name}\" enviada pelo correio" +
+                    (cap > 0 ? $" ({p.DayChallenges}/{cap} hoje)." : "."));
             }
+            if (changed.Count > 0) _db.SavePlayers(changed);
         }
 
         /// <summary>
