@@ -236,8 +236,8 @@ namespace NpcValheim.Arena
             ChallengeTimeLimitMinutes = S(config, challenge, "TimeLimitMinutes", 0f,
                 "Limite de tempo do desafio em minutos (contando a preparacao). Sem matar a criatura ate aqui, o desafio falha. " +
                 "0 = sem limite: o desafio acaba quando a criatura cai ou todo o grupo e derrotado.");
-            ChallengeCooldownMinutes = S(config, challenge, "CooldownMinutes", 60f,
-                "Depois de receber a recompensa de um desafio, quanto tempo ate o mesmo jogador receber de novo desse desafio. " +
+            ChallengeCooldownMinutes = S(config, challenge, "CooldownMinutes", 0f,
+                "Depois de receber a recompensa de um desafio, quanto tempo ate o mesmo jogador receber de novo desse desafio (0 = sem espera; o teto do dia e o RecompensasPorDia). " +
                 "Fica na memoria do servidor: um restart zera.");
             ChallengeRewardsDailyCap = S(config, challenge, "RecompensasPorDia", 10,
                 "Maximo de recompensas de desafio (vitorias pagas) que um jogador recebe por dia (UTC), somando todos os desafios. " +

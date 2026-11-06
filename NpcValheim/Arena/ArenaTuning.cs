@@ -266,7 +266,7 @@ namespace NpcValheim.Arena
         /// <summary>0 = no limit: the challenge ends when the creature or the whole group falls.</summary>
         public float ChallengeTimeLimitSeconds = 0f;
         /// <summary>After a win, how long before the same player is paid by that challenge again.</summary>
-        public float ChallengeCooldownSeconds = 60f * 60f;
+        public float ChallengeCooldownSeconds = 0f;
         /// <summary>Most challenge rewards (wins paid) a player gets per UTC day, every challenge
         /// together; 0 = no cap. On top of the cooldown of each challenge.</summary>
         public int ChallengeRewardsDailyCap = 10;
