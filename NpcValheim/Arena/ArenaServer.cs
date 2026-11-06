@@ -599,11 +599,28 @@ namespace NpcValheim.Arena
                 }
                 case ArenaWire.ActAdminBalancedRewardsSet:
                 {
-                    // "1v1=Coins:150/Coins:30|...": the rewards of the Arena balanceada, per mode.
-                    var rewards = ArenaSettingsParser.ParseBalancedRewards(payload.Trim(), problems);
+                    // "points\npointsCap\nrewards\nrewardsCap": the Arena balanceada's Arena Points per
+                    // mode ("1v1=15/5|..."), their daily cap, its rewards by mail ("1v1=Coins:150/Coins:30|...")
+                    // and their daily cap (0 = none).
+                    var lines = payload.Split('\n');
+                    if (lines.Length < 4)
+                    {
+                        ArenaNet.Send(sender, ArenaWire.Notice, "Pedido incompleto: atualize o mod.");
+                        return;
+                    }
+                    var balancedPoints = ArenaSettingsParser.ParseBalancedMatchPoints(lines[0].Trim(), problems);
+                    var rewards = ArenaSettingsParser.ParseBalancedRewards(lines[2].Trim(), problems);
                     if (problems.Count > 0)
                     {
                         ArenaNet.Send(sender, ArenaWire.Notice, problems[0]);
+                        return;
+                    }
+                    if (!int.TryParse(lines[1].Trim(), System.Globalization.NumberStyles.Integer,
+                            System.Globalization.CultureInfo.InvariantCulture, out int pointsCap) || pointsCap < 0 ||
+                        !int.TryParse(lines[3].Trim(), System.Globalization.NumberStyles.Integer,
+                            System.Globalization.CultureInfo.InvariantCulture, out int rewardsCap) || rewardsCap < 0)
+                    {
+                        ArenaNet.Send(sender, ArenaWire.Notice, "Teto diário inválido (0 = sem teto).");
                         return;
                     }
                     foreach (var pair in rewards)
@@ -619,8 +636,12 @@ namespace NpcValheim.Arena
                                 return;
                             }
                         }
+                    ArenaConfig.BalancedMatchPoints.Value = ArenaSettingsParser.FormatMatchPoints(balancedPoints);
+                    ArenaConfig.BalancedMatchPointsDailyCap.Value = pointsCap;
                     ArenaConfig.BalancedRewards.Value = ArenaSettingsParser.FormatBalancedRewards(rewards);
-                    done = $"Recompensas da Arena balanceada: {ArenaConfig.BalancedRewards.Value}.";
+                    ArenaConfig.BalancedRewardsDailyCap.Value = rewardsCap;
+                    done = $"Arena balanceada: pontos {ArenaConfig.BalancedMatchPoints.Value} (teto {(pointsCap > 0 ? pointsCap.ToString() : "nenhum")}) · " +
+                           $"recompensas {ArenaConfig.BalancedRewards.Value} (teto {(rewardsCap > 0 ? rewardsCap.ToString() : "nenhum")}).";
                     break;
                 }
                 case ArenaWire.ActAdminClassRemove:

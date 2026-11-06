@@ -149,7 +149,6 @@ namespace NpcValheim.Arena
         public readonly List<KeyValuePair<string, int>> Rewards = new List<KeyValuePair<string, int>>();
     }
 
-    /// <summary>One line of the arena vendor.</summary>
     /// <summary>One reward of the Arena balanceada: an item and how many, sent by mail. Item null = nothing.</summary>
     internal struct ArenaReward
     {
@@ -159,6 +158,7 @@ namespace NpcValheim.Arena
         public override string ToString() => IsNone ? "" : Item + ":" + Amount.ToString(CultureInfo.InvariantCulture);
     }
 
+    /// <summary>One line of the arena vendor.</summary>
     internal sealed class ArenaOffer
     {
         public string Prefab;
@@ -278,11 +278,20 @@ namespace NpcValheim.Arena
         // (ArenaClasses), not with their own gear.
         public bool BalancedEnabled = true;
         public bool BalancedFfa = true;
-        /// <summary>Arena balanceada: what a match pays, by mode (1v1, 2v2, 3v3, ffa), in the same
-        /// shape and under the same rules as MatchPoints -- but as an item (and amount) sent by mail,
-        /// win and loss. Missing mode = nothing.</summary>
+        /// <summary>Arena balanceada: the Arena Points a match pays, by mode (1v1, 2v2, 3v3, ffa),
+        /// exactly as MatchPoints but with values of its own. Missing mode = nothing.</summary>
+        public Dictionary<string, (int Win, int Loss)> BalancedMatchPoints =
+            ArenaSettingsParser.ParseMatchPoints(ArenaSettingsParser.DefaultBalancedMatchPoints, null);
+        /// <summary>Most match points a player earns per UTC day while the match is balanced; 0 = no
+        /// cap. The day's counter is the same as the normal one's (DayPoints): only the cap differs.</summary>
+        public int BalancedMatchPointsDailyCap = 300;
+        /// <summary>Arena balanceada: the item (and amount) by mail a match also pays, by mode, win
+        /// and loss, under the same rules as MatchPoints. Missing mode = nothing.</summary>
         public Dictionary<string, (ArenaReward Win, ArenaReward Loss)> BalancedRewards =
             ArenaSettingsParser.ParseBalancedRewards(ArenaSettingsParser.DefaultBalancedRewards, null);
+        /// <summary>Most reward items (the coins) a player is paid per UTC day by the balanced
+        /// matches; 0 = no cap. Its counter is apart from the points' (DayRewards).</summary>
+        public int BalancedRewardsDailyCap = 1500;
         /// <summary>Separado: the balanced rated matches move a rating of their own (the team's
         /// BalancedRating, the member's BalancedPersonal, MMR "b{size}"); Misturado: the same
         /// rating as the normal queue.</summary>
@@ -367,6 +376,8 @@ namespace NpcValheim.Arena
 
         internal const string DefaultMatchPoints = "1v1=15/5|2v2=20/8|3v3=25/10|ffa=40/10|pve=10/0";
 
+        internal const string DefaultBalancedMatchPoints = "1v1=15/5|2v2=20/8|3v3=25/10|ffa=40/10";
+
         internal const string DefaultBalancedRewards = "1v1=Coins:150/Coins:30|2v2=Coins:200/Coins:40|3v3=Coins:250/Coins:50|ffa=Coins:300/Coins:60";
 
         /// <summary>The modes the balanced rewards know (a challenge is never balanced).</summary>
@@ -397,6 +408,14 @@ namespace NpcValheim.Arena
                 if (sides.Length == 1) loss = win;
                 result[mode] = (win, loss);
             }
+            return result;
+        }
+
+        /// <summary>The balanced PorPartida: ParseMatchPoints without "pve" (a challenge is never balanced).</summary>
+        internal static Dictionary<string, (int Win, int Loss)> ParseBalancedMatchPoints(string raw, List<string> problems)
+        {
+            var result = ParseMatchPoints(raw, problems);
+            if (result.Remove("pve")) problems?.Add("Balanceada/PorPartida: 'pve' ignorado (desafio nunca e balanceado)");
             return result;
         }
 

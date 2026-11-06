@@ -1221,31 +1221,62 @@ namespace NpcValheim.Arena
         }
 
         /// <summary>
-        /// Arena balanceada: the same rule as PayMatchPoints (whoever finished inside the arena, the
-        /// winners' reward or the losers', a draw or a walk-over pays the loss) but with the table of
-        /// its own (BalancedRewards) and as an item by mail, like the challenges' rewards. It pays no
-        /// Arena Points, so the daily cap does not apply.
+        /// Arena balanceada, on top of its Arena Points: the same rule as PayMatchPoints (whoever
+        /// finished inside the arena, the winners' reward or the losers', a draw or a walk-over pays
+        /// the loss) with the table of its own (BalancedRewards), as an item by mail like the
+        /// challenges' rewards, up to a daily cap of its own (RecompensasTetoDiario, counted apart
+        /// from the points in DayRewards).
         /// </summary>
         private void PayBalancedRewards(ArenaMatch match, int winner)
         {
             string mode = ArenaSettingsParser.MatchPointsMode(false, match.Size);
             if (!_t.BalancedRewards.TryGetValue(mode, out var pay) || (pay.Win.IsNone && pay.Loss.IsNone)) return;
-            bool walkover = winner != ArenaSide.None &&
-                            !match.Seats.Any(s => s.Side != winner && s.State == SeatState.Entered && !s.Offline && !s.Alive);
-            var paid = new List<string>();
+            bool walkover = Walkover(match, winner);
+            int today = Today();
+            int cap = _t.BalancedRewardsDailyCap;
+            var changed = new List<ArenaPlayerRecord>();
             foreach (var seat in match.Seats.Where(s => s.State == SeatState.Entered && !s.Offline))
             {
                 bool won = winner != ArenaSide.None && winner == seat.Side;
                 bool win = won && !walkover;
                 var reward = win ? pay.Win : pay.Loss;
                 if (reward.IsNone) continue;
-                _host.MailItem(seat.PlayerId, "Arena balanceada: " + (win ? "vitória" : "participação"), reward.Item, reward.Amount);
-                Say(seat.PlayerId, $"Recompensa da Arena balanceada ({reward.Amount}x {reward.Item}) enviada pelo correio" +
-                    (won && walkover ? " (vitória sem luta paga como derrota)." : "."));
-                paid.Add(seat.Name);
+                var p = Player(seat.PlayerId, seat.Name);
+                if (p.RewardDay != today)
+                {
+                    p.RewardDay = today;
+                    p.DayRewards = 0;
+                }
+                int amount = reward.Amount;
+                if (cap > 0) amount = Math.Min(amount, Math.Max(0, cap - p.DayRewards));
+                bool capped = amount < reward.Amount;
+                if (amount <= 0)
+                {
+                    Say(seat.PlayerId, $"Você já recebeu o máximo de {cap} de recompensa da Arena balanceada hoje.");
+                    continue;
+                }
+                p.DayRewards += amount;
+                changed.Add(p);
+                _host.MailItem(seat.PlayerId, "Arena balanceada: " + (win ? "vitória" : "participação"), reward.Item, amount);
+                string note = won && walkover ? " (vitória sem luta paga como derrota)"
+                    : capped ? $" (teto diário de {cap} atingido)" : "";
+                Say(seat.PlayerId, $"Recompensa da Arena balanceada ({amount}x {reward.Item}) enviada pelo correio{note}.");
             }
-            if (paid.Count > 0) _host.Log($"Arena: partida #{match.Id} balanceada ({mode}) pagou recompensa a {string.Join(", ", paid)}");
+            if (changed.Count > 0)
+            {
+                _db.SavePlayers(changed);
+                _host.Log($"Arena: partida #{match.Id} balanceada ({mode}) pagou recompensa a {string.Join(", ", changed.Select(c => c.Name))}");
+            }
         }
+
+        /// <summary>A PvP win nobody on the other side was knocked out for (they fled, declined or
+        /// dropped): it pays the loss, so two friends trading walk-overs cannot farm the win.</summary>
+        private static bool Walkover(ArenaMatch match, int winner) =>
+            !match.IsChallenge && winner != ArenaSide.None &&
+            !match.Seats.Any(s => s.Side != winner && s.State == SeatState.Entered && !s.Offline && !s.Alive);
+
+        private int Today() =>
+            int.Parse(_host.UtcNow.ToString("yyyyMMdd", CultureInfo.InvariantCulture), CultureInfo.InvariantCulture);
 
         private void DespawnCreature(ArenaMatch match)
         {
@@ -1993,17 +2024,18 @@ namespace NpcValheim.Arena
         private void PayMatchPoints(ArenaMatch match, int winner)
         {
             if (match.StartedAt <= 0 || (match.IsChallenge && !match.CreatureSpawned)) return;
-            if (match.Balanced && !match.IsChallenge)
-            {
-                PayBalancedRewards(match, winner);
-                return;
-            }
+            // Arena balanceada: the same points, by the same rule, from a table and a daily cap of
+            // its own ([Arena - Balanceada] PorPartida / PorPartidaTetoDiario; the day's counter is
+            // shared), and its rewards by mail on top.
+            bool balanced = match.Balanced && !match.IsChallenge;
+            if (balanced) PayBalancedRewards(match, winner);
+            var table = balanced ? _t.BalancedMatchPoints : _t.MatchPoints;
+            int dailyCap = balanced ? _t.BalancedMatchPointsDailyCap : _t.MatchPointsDailyCap;
             string mode = ArenaSettingsParser.MatchPointsMode(match.IsChallenge, match.Size);
-            if (!_t.MatchPoints.TryGetValue(mode, out var pay) || (pay.Win == 0 && pay.Loss == 0)) return;
-            bool walkover = !match.IsChallenge && winner != ArenaSide.None &&
-                            !match.Seats.Any(s => s.Side != winner && s.State == SeatState.Entered && !s.Offline && !s.Alive);
+            if (!table.TryGetValue(mode, out var pay) || (pay.Win == 0 && pay.Loss == 0)) return;
+            bool walkover = Walkover(match, winner);
 
-            int today = int.Parse(_host.UtcNow.ToString("yyyyMMdd", CultureInfo.InvariantCulture), CultureInfo.InvariantCulture);
+            int today = Today();
             var changed = new List<ArenaPlayerRecord>();
             foreach (var seat in match.Seats.Where(s => s.State == SeatState.Entered && !s.Offline))
             {
@@ -2016,14 +2048,14 @@ namespace NpcValheim.Arena
                 bool won = winner != ArenaSide.None && winner == seat.Side;
                 int due = won && !walkover ? pay.Win : pay.Loss;
                 int amount = due;
-                if (_t.MatchPointsDailyCap > 0) amount = Math.Min(amount, Math.Max(0, _t.MatchPointsDailyCap - p.DayPoints));
+                if (dailyCap > 0) amount = Math.Min(amount, Math.Max(0, dailyCap - p.DayPoints));
                 bool capped = amount < due;
                 amount = Math.Min(amount, Math.Max(0, _t.MaxPoints - p.Points));
                 if (amount <= 0)
                 {
                     if (due <= 0) continue;
                     Say(seat.PlayerId, capped
-                        ? $"Você já ganhou o máximo de {_t.MatchPointsDailyCap} Pontos de Arena por partida hoje."
+                        ? $"Você já ganhou o máximo de {dailyCap} Pontos de Arena por partida hoje."
                         : $"Seu saldo está no teto de {_t.MaxPoints} Pontos de Arena: gaste na Loja do Mestre da Arena para voltar a ganhar.");
                     continue;
                 }
@@ -2031,13 +2063,13 @@ namespace NpcValheim.Arena
                 p.DayPoints += amount;
                 changed.Add(p);
                 string note = won && walkover ? " (vitória sem luta paga como derrota)"
-                    : capped ? $" (teto diário de {_t.MatchPointsDailyCap} atingido)" : "";
+                    : capped ? $" (teto diário de {dailyCap} atingido)" : "";
                 Say(seat.PlayerId, $"+{amount} Pontos de Arena{note}. Saldo: {p.Points}.");
             }
             if (changed.Count > 0)
             {
                 _db.SavePlayers(changed);
-                _host.Log($"Arena: partida #{match.Id} ({mode}) pagou pontos a {string.Join(", ", changed.Select(c => c.Name))}");
+                _host.Log($"Arena: partida #{match.Id} ({mode}{(balanced ? " balanceada" : "")}) pagou pontos a {string.Join(", ", changed.Select(c => c.Name))}");
             }
         }
 

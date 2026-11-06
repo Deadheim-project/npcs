@@ -87,6 +87,9 @@ namespace NpcValheim.Arena
         internal static ConfigEntry<BalancedRating> BalancedRatingMode;
         internal static ConfigEntry<float> KitDeadlineSeconds;
         internal static ConfigEntry<string> BalancedRewards;
+        internal static ConfigEntry<int> BalancedRewardsDailyCap;
+        internal static ConfigEntry<string> BalancedMatchPoints;
+        internal static ConfigEntry<int> BalancedMatchPointsDailyCap;
 
         /// <summary>The kinds of match an arena may host, as the usage text and the layout file
         /// write them.</summary>
@@ -257,11 +260,20 @@ namespace NpcValheim.Arena
             BalancedRatingMode = S(config, balanced, "Rating", BalancedRating.Misturado,
                 "Misturado = a ranqueada balanceada mexe no mesmo rating da ranqueada normal. Separado = rating proprio " +
                 "(do time, pessoal e MMR), com aba propria no Ranking.");
+            BalancedMatchPoints = S(config, balanced, "PorPartida", ArenaSettingsParser.DefaultBalancedMatchPoints,
+                "Pontos de Arena de cada partida balanceada, por modo: modo=vitoria/derrota separados por |. Modos: 1v1, 2v2, 3v3, ffa. " +
+                "Mesma regra de [Arena - Pontos] PorPartida (so quem terminou dentro da arena; empate e vitoria sem luta pagam a derrota), " +
+                "com valores proprios. Tambem se edita no Painel de Admin, aba Arena > Balanceada.");
+            BalancedMatchPointsDailyCap = S(config, balanced, "PorPartidaTetoDiario", 300,
+                "Maximo de Pontos de Arena por partida que um jogador ganha por dia (UTC) quando a partida e balanceada. 0 = sem teto. " +
+                "O contador do dia e o mesmo da normal: o que ele ja ganhou hoje na normal conta aqui (e vice-versa).");
             BalancedRewards = S(config, balanced, "Recompensas", ArenaSettingsParser.DefaultBalancedRewards,
-                "Recompensa de cada partida balanceada, por modo: modo=vitoria/derrota separados por |, cada lado item:quantidade " +
-                "(vazio = nada). Modos: 1v1, 2v2, 3v3, ffa. Mesma regra de pagamento da normal (so quem terminou dentro da arena; empate e " +
-                "vitoria sem luta pagam a derrota), mas valores proprios. O item vai pelo correio. A balanceada nao paga Pontos de Arena. " +
+                "Recompensa em item (coins) de cada partida balanceada, alem dos Pontos de Arena, por modo: modo=vitoria/derrota separados por |, " +
+                "cada lado item:quantidade (vazio = nada). Modos: 1v1, 2v2, 3v3, ffa. Mesma regra de pagamento dos pontos. O item vai pelo correio. " +
                 "Tambem se edita no Painel de Admin, aba Arena > Balanceada.");
+            BalancedRewardsDailyCap = S(config, balanced, "RecompensasTetoDiario", 1500,
+                "Maximo de itens (coins) das Recompensas que um jogador recebe por dia (UTC). 0 = sem teto. Contador proprio, " +
+                "separado do dos Pontos de Arena.");
             KitDeadlineSeconds = S(config, balanced, "PrazoKit", 20f,
                 "Segundos, depois de entrar, para o jogo vestir o kit da classe e o servidor ver. Sem isso o jogador sai da partida " +
                 "antes de comecar, sem perder rating (10 a 60).");
@@ -623,6 +635,9 @@ namespace NpcValheim.Arena
             t.BalancedFfa = BalancedFfa.Value;
             t.BalancedSeparateRating = BalancedRatingMode.Value == BalancedRating.Separado;
             t.KitDeadlineSeconds = Mathf.Clamp(KitDeadlineSeconds.Value, 10f, 60f);
+            t.BalancedMatchPoints = ArenaSettingsParser.ParseBalancedMatchPoints(BalancedMatchPoints.Value, problems);
+            t.BalancedMatchPointsDailyCap = Mathf.Max(0, BalancedMatchPointsDailyCap.Value);
+            t.BalancedRewardsDailyCap = Mathf.Max(0, BalancedRewardsDailyCap.Value);
             t.BalancedRewards = ArenaSettingsParser.ParseBalancedRewards(BalancedRewards.Value, problems);
             if (checkWorld && ObjectDB.instance != null)
                 foreach (var pair in t.BalancedRewards)

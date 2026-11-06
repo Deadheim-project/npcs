@@ -67,6 +67,10 @@ namespace NpcValheim.Arena
         /// <summary>The UTC day (yyyyMMdd) <see cref="DayPoints"/> counts, for the daily cap of match points.</summary>
         public int PointsDay { get; set; }
         public int DayPoints { get; set; }
+        /// <summary>The UTC day (yyyyMMdd) <see cref="DayRewards"/> counts, for the daily cap of the
+        /// Arena balanceada's rewards by mail (apart from the points').</summary>
+        public int RewardDay { get; set; }
+        public int DayRewards { get; set; }
         public Dictionary<string, int> Mmr { get; set; } = new Dictionary<string, int>();
         public bool HasReturn { get; set; }
         public float ReturnX { get; set; }
