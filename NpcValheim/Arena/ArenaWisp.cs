@@ -149,7 +149,7 @@ namespace NpcValheim.Arena
         }
 
         /// <summary>The local wisp is moved by hand (Follow): the game's own physics for it stops.</summary>
-        [HarmonyPatch(typeof(Character), "FixedUpdate")]
+        [HarmonyPatch(typeof(Character), "CustomFixedUpdate")]
         private static class FixedPatch
         {
             private static bool Prefix(Character __instance) =>
