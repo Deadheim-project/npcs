@@ -49,13 +49,19 @@ namespace NpcValheim.Arena
         {
             if (ZNet.instance == null || !ZNet.instance.IsServer()) return;
             // Nothing that has to happen at an NPC may come this way...
-            if (action == ArenaWire.ActCharterBuy || action == ArenaWire.ActCharterTurnIn || action == ArenaWire.ActVendorBuy) return;
-            // ...except joining a queue, which an Aesir (VIP) may do from the TAB panel. The VIP is
-            // checked here on the server, and `where` is set here: the client cannot claim it.
+            if (action == ArenaWire.ActCharterBuy || action == ArenaWire.ActCharterTurnIn ||
+                action == ArenaWire.ActVendorBuy) return;
+            // ...except looking for a match (queue, FFA, challenge): a perk of the Aesir, from the
+            // Tab > Arena panel ("Buscar"). The server checks the VIP list itself, so a client
+            // that fakes the tab gets nothing; everyone else still has to go to the Battlemaster.
             if (action == ArenaWire.ActQueueJoin || action == ArenaWire.ActChallengeJoin || action == ArenaWire.ActFfaJoin)
             {
-                if (!UI.VipShopShortcut.SenderIsVip(sender)) return;
-                ArenaServer.Handle(sender, ArenaEngine.AtVip, action, payload);
+                if (!UI.VipShopShortcut.SenderIsVip(sender))
+                {
+                    Send(sender, ArenaWire.Notice, "Buscar partida pelo Tab é exclusivo Aesir. Fale com o Mestre de Batalha.");
+                    return;
+                }
+                ArenaServer.Handle(sender, ArenaEngine.AtBattlemaster, action, payload);
                 return;
             }
             ArenaServer.Handle(sender, "", action, payload);

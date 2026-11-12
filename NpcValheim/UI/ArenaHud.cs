@@ -48,8 +48,10 @@ namespace NpcValheim.UI
                 ("Times", new ArenaTeamsView()),
                 ("Ranking", new ArenaLadderView()),
             };
-            // The Aesir (VIP) queues from here, without the Mestre da Arena; the server checks the VIP again.
-            if (VipList.VipListApi.IsLocalPlayerVip()) pages.Insert(1, ("Fila", new ArenaQueueView()));
+            // Aesir: look for a match from here, without going to the Battlemaster. The server
+            // checks the VIP list again (ArenaNet.OnRequest).
+            if (VipList.VipListApi.IsLocalPlayerVip())
+                pages.Insert(1, ("Buscar", new ArenaQueueView()));
             UiRoot.OpenStandalone(PanelTitle, pages, Player.m_localPlayer);
         }
 
