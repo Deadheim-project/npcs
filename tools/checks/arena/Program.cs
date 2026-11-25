@@ -448,6 +448,26 @@ class Program
         var bal = e.Matches.FirstOrDefault(x => x.Balanced);
         Check("the balanced FFA fills on its own, with each one's class",
             bal != null && bal.IsFfa && bal.Seats.Count == 3 && bal.Seats.All(s => s.ClassId == "assassino") && e.QueueOf(D) != null);
+        // The whole balanced FFA, as a client plays it: enter, kits worn, gates open, a knockout, a winner.
+        ffa = FfaTuning();
+        ffa.Classes = ArenaClasses.Defaults();
+        (e, h, _) = NewEngine(ffa);
+        foreach (var p in new[] { A, B, C }) Do(e, p, ArenaEngine.AtBattlemaster, ArenaWire.ActFfaJoin, "1\nassassino");
+        Do(e, A, ArenaEngine.AtBattlemaster, ArenaWire.ActFfaJoin, "1\nassassino");
+        Check("a player already in the balanced FFA queue cannot join it twice", e.QueueOf(A) != null && h.Got(A, ArenaWire.Alert, "já está na fila"));
+        Advance(e, h, 61);
+        bal = e.Matches.FirstOrDefault(x => x.Balanced);
+        Check("the balanced FFA has each player once", bal != null && bal.Seats.Select(x => x.PlayerId).Distinct().Count() == 3);
+        if (bal != null)
+        {
+            EnterAll(e, bal);
+            foreach (var p in new[] { A, B, C }) WearKit(e, h, p);
+            Advance(e, h, 61);
+            Check("the balanced FFA starts once every kit is worn", bal.Status == MatchStatus.InProgress && bal.Seats.All(x => x.KitOk), bal.Status.ToString());
+            Do(e, A, "", ArenaWire.ActKo, B.ToString());
+            Do(e, C, "", ArenaWire.ActKo, B.ToString());
+            Check("the last one standing wins the balanced FFA", bal.Status != MatchStatus.InProgress && bal.Winner == bal.Seat(B).Side, bal.Status + " winner " + bal.Winner);
+        }
         ffa = FfaTuning();
         ffa.Classes = ArenaClasses.Defaults();
         ffa.BalancedFfa = false;
@@ -600,7 +620,9 @@ class Program
         string ladder = h.Last(A, ArenaWire.Ladder);
         Check("the balanced ladder lists the teams by it", ladder.StartsWith("L\t101") && ladder.Contains($"T\t1\t{team.Name}\t{team.BalancedRating}\t1\t1"), ladder);
         Check("its tab has a name", ArenaRules.BracketName(ArenaRules.BalancedLadder(2)) == "Bal. 2v2" && ArenaRules.BracketOfLadder(102) == 2);
-        Check("the team frame carries the balanced rating", h.Last(A, ArenaWire.State).Contains($"\t{team.BalancedRating}\nM"), h.Last(A, ArenaWire.State));
+        Check("the team frame carries the balanced rating and its place", h.Last(A, ArenaWire.State).Contains($"\t{team.BalancedRating}\t1\nM"), h.Last(A, ArenaWire.State));
+        Check("and each member's balanced personal", h.Last(A, ArenaWire.State).Contains($"\t{team.Member(A).BalancedPersonal}\n") ||
+                                                     h.Last(A, ArenaWire.State).EndsWith($"\t{team.Member(A).BalancedPersonal}"), h.Last(A, ArenaWire.State));
 
         (e, h, m) = BalancedDuel(rated: true, separate: true);
         WearKit(e, h, A);
@@ -1697,6 +1719,27 @@ class Program
         Do(e, A, ArenaEngine.AtVendor, ArenaWire.ActVendorBuy, "WeaponKit4\n200");
         Check("both at 40+: sold", h.Items.Count == 2 && e.PlayerRecord(A).Points == 200);
         Check("the requirement is min(personal, team), best team", e.BestPurchaseRating(A, 2) == 45);
+
+        // Rating = Separado: the balanced ranked counts for the vendor too, the better of the two.
+        team.BalancedRating = 300;
+        team.BalancedStarted = true;
+        team.Member(A).BalancedPersonal = 320;
+        team.Member(A).BalancedStarted = true;
+        Check("balanced rating ignored while it is not apart", e.BestPurchaseRating(A, 2) == 45);
+        var apartTuning = Tuning();
+        apartTuning.BalancedSeparateRating = true;
+        e.SetTuning(apartTuning);
+        Check("balanced apart: min(balanced personal, balanced team) counts", e.BestPurchaseRating(A, 2) == 300);
+        string state = e.BuildState(A);
+        Check("the state sends the balanced rating, its place and the balanced personal",
+            state.Contains("\t300\t1\n") && state.Contains("\t320"), state);
+        team.BalancedRating = 10;
+        Check("the normal rating still counts when it is the better", e.BestPurchaseRating(A, 2) == 45);
+        team.BalancedRating = 0;
+        team.BalancedStarted = false;
+        team.Member(A).BalancedPersonal = 0;
+        team.Member(A).BalancedStarted = false;
+        e.SetTuning(Tuning());
 
         Section("Deadcoins for Arena Points");
         var t = Tuning();

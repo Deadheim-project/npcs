@@ -1021,13 +1021,16 @@ namespace NpcValheim.Arena
         private void JoinFfa(ArenaPlayerRecord me, bool balanced = false, string classId = "")
         {
             long id = me.PlayerId;
-            string refusal = QueueRefusal(id);
+            // The queue/match check comes first and is kept: the balanced branch below used to overwrite it with null,
+            // letting a player already in a queue or match join the balanced FFA a second time.
+            string refusal = null;
             if (!_t.FfaEnabled) refusal = "O FFA está desligado neste servidor.";
             else if (_t.Maps.Count == 0) refusal = "Nenhuma arena foi configurada ainda. Fale com um admin.";
             else if (!_t.Maps.Any(m => _t.MapServes(m, ArenaRules.FfaSize)))
                 refusal = "Nenhuma arena aceita FFA neste servidor. Fale com um admin.";
             else if (balanced && !_t.BalancedFfa) refusal = "O FFA balanceado está desligado neste servidor.";
             else if (balanced) refusal = BalancedRefusal(id, classId);
+            refusal = refusal ?? QueueRefusal(id);
             if (refusal != null) { Say(id, refusal, alert: true); return; }
             var classes = new Dictionary<long, string>();
             if (balanced) classes[id] = _t.ClassOf(classId).Id;
@@ -1956,6 +1959,9 @@ namespace NpcValheim.Arena
                 // The creature comes in with the gates opening, at the Green start, so nothing
                 // can hurt the group during the preparation.
                 var map = match.Map;
+                // Whatever the last challenge left in this arena (a creature that outlived its
+                // match, wounded) goes before the new one comes in.
+                _host.ClearMonsters(map);
                 // The players who came in: a creature of the Bestiário has more health for each.
                 match.CreatureSpawned = _host.SpawnCreature(match.Id, match.Challenge, map.SpawnOf(ArenaSide.Green), map.YawOf(ArenaSide.Green),
                     match.Seats.Count(s => s.Present));
@@ -2689,16 +2695,29 @@ namespace NpcValheim.Arena
             SendState(id);
         }
 
+        /// <summary>With the balanced rating apart ([Arena - Balanceada] Rating = Separado), a
+        /// team's balanced rating counts too, by the same min(personal, team) rule: the better of
+        /// the two wins. Otherwise a player who only plays the balanced ranked never reaches a
+        /// requirement while their normal rating sits still.</summary>
         internal int BestPurchaseRating(long playerId, int minBracket)
         {
             int best = 0;
             foreach (var team in _teams.Values.Where(t => t.Size >= minBracket))
             {
                 var m = team.Member(playerId);
-                if (m != null) best = Math.Max(best, ArenaRules.PurchaseRating(m.PersonalRating, team.Rating));
+                if (m == null) continue;
+                best = Math.Max(best, ArenaRules.PurchaseRating(m.PersonalRating, team.Rating));
+                if (_t.BalancedSeparateRating && team.BalancedStarted)
+                    best = Math.Max(best, ArenaRules.PurchaseRating(PersonalRating(team, m, true), team.BalancedRating));
             }
             return best;
         }
+
+        /// <summary>The team's place on its bracket's balanced ladder (as SendBalancedLadder
+        /// counts it), -1 while it has not played the balanced ranked or the rating is not apart.</summary>
+        private int BalancedRankOf(ArenaTeamRecord team) =>
+            !_t.BalancedSeparateRating || !team.BalancedStarted ? -1
+            : 1 + _teams.Values.Count(t => t.Size == team.Size && t.BalancedStarted && t.BalancedRating > team.BalancedRating);
 
         // ------------------------------------------------------------------------ messages
 
@@ -2784,14 +2803,16 @@ namespace NpcValheim.Arena
 
             foreach (var team in _teams.Values.Where(t => t.Member(playerId) != null).OrderBy(t => t.Size))
             {
-                // The balanced rating last, -1 while it is not apart.
+                // The balanced rating and its place last, -1 while it is not apart (appended, so
+                // an older client still reads the rest).
                 lines.Add(Record("T", I(team.Id), I(team.Size), team.Name, L(team.CaptainId), I(team.Rating), I(RankOf(team)),
                     I(team.WeekGames), I(team.WeekWins), I(team.SeasonGames), I(team.SeasonWins),
                     I(PlayerRecord(playerId)?.MmrOf(team.Size, _t.StartMatchmakerRating) ?? _t.StartMatchmakerRating),
-                    I(_t.BalancedSeparateRating ? TeamRating(team, true) : -1)));
+                    I(_t.BalancedSeparateRating ? TeamRating(team, true) : -1), I(BalancedRankOf(team))));
                 foreach (var m in team.Members)
                     lines.Add(Record("M", I(team.Id), L(m.PlayerId), m.Name, I(m.PersonalRating), I(m.WeekGames), I(m.WeekWins),
-                        I(m.SeasonGames), I(m.SeasonWins), _host.IsOnline(m.PlayerId) ? "1" : "0"));
+                        I(m.SeasonGames), I(m.SeasonWins), _host.IsOnline(m.PlayerId) ? "1" : "0",
+                        I(_t.BalancedSeparateRating ? PersonalRating(team, m, true) : -1)));
             }
 
             foreach (var charter in _charters.Values.Where(c => c.OwnerId == playerId).OrderBy(c => c.Size))

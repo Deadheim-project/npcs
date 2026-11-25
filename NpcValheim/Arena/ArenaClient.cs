@@ -179,7 +179,7 @@ namespace NpcValheim.Arena
                     break;
 
                 case ArenaWire.Feed:
-                    FeedLines.Add(payload);
+                    FeedLines.Add(L.Server(payload));
                     while (FeedLines.Count > 6) FeedLines.RemoveAt(0);
                     player?.Message(MessageHud.MessageType.TopLeft, payload, 0, null);
                     break;

@@ -113,12 +113,33 @@ namespace NpcValheim.UI
         protected TextMeshProUGUI Line(string text, int size = 15, Color? color = null, float height = 24f,
             bool display = false, TextAlignmentOptions align = TextAlignmentOptions.Left)
         {
-            var row = Row(List, height);
+            var row = Row(List, FitHeight(text, size, height));
             _rows.Add(row.gameObject);
             var label = ValheimUi.CreateLabel(row, text, size, color ?? ValheimUi.Beige, align, display);
             Flexible(label.gameObject);
             return label;
         }
+
+        /// <summary>
+        /// A line is as tall as its text needs. A fixed height let a long line wrap into the one
+        /// below it (the English texts run longer than the Portuguese ones), which is what made
+        /// the join screen look piled up. The height asked for stays as the minimum.
+        /// </summary>
+        private float FitHeight(string text, int size, float minimum)
+        {
+            if (string.IsNullOrEmpty(text) || text.IndexOf("<size", System.StringComparison.OrdinalIgnoreCase) >= 0) return minimum;
+            float width = List is RectTransform rect && rect.rect.width > 120f ? rect.rect.width - 24f : 620f;
+            // Average glyph width is about 0.5 of the font size; wide enough to be safe on the
+            // cautious side, so a line never ends up shorter than its text.
+            float perLine = Mathf.Max(12f, width / (size * 0.52f));
+            int lines = 0;
+            foreach (var part in text.Split('\n'))
+                lines += Mathf.Max(1, Mathf.CeilToInt(StripTags(part).Length / perLine));
+            return Mathf.Max(minimum, lines * (size + 6f) + 4f);
+        }
+
+        private static string StripTags(string text) =>
+            System.Text.RegularExpressions.Regex.Replace(text ?? "", "<[^>]+>", "");
 
         protected TextMeshProUGUI LiveLine(Func<string> text, int size = 15, Color? color = null, float height = 24f)
         {
@@ -189,7 +210,7 @@ namespace NpcValheim.UI
         protected void Ask(string action, string payload = "")
         {
             bool sent = ArenaNpc != null ? ArenaNpc.RequestArena(action, payload) : ArenaNet.Request(action, payload);
-            if (!sent) Say("O pedido não chegou ao servidor.");
+            if (!sent) Say(L.T("O pedido não chegou ao servidor.", "The request did not reach the server."));
         }
 
         protected static string Clock(int seconds)
@@ -201,23 +222,40 @@ namespace NpcValheim.UI
         protected static string Signed(int value) => value > 0 ? "+" + value : value.ToString(CultureInfo.InvariantCulture);
 
         protected static string SideText(int side) =>
-            side == ArenaSide.Gold ? "<color=#ffd140>Ouro</color>" : side == ArenaSide.Green ? "<color=#73db6b>Verde</color>" : "-";
+            side == ArenaSide.Gold ? L.T("<color=#ffd140>Ouro</color>", "<color=#ffd140>Gold</color>") : side == ArenaSide.Green ? L.T("<color=#73db6b>Verde</color>", "<color=#73db6b>Green</color>") : "-";
 
-        protected static string Kind(bool rated) => rated ? "Ranqueada" : "Escaramuça";
+        protected static string Kind(bool rated) => rated ? L.T("Ranqueada", "Ranked") : L.T("Escaramuça", "Skirmish");
 
         /// <summary>A queue as people read it: "2v2 Ranqueada", "FFA", "2v2 Escaramuça balanceada".</summary>
         protected static string QueueName(int size, bool rated, bool balanced = false) =>
-            (size == ArenaRules.FfaSize ? "FFA (todos contra todos)" : $"{ArenaRules.BracketName(size)} {Kind(rated)}") +
-            (balanced ? size == ArenaRules.FfaSize ? " balanceado" : " balanceada" : "");
+            (size == ArenaRules.FfaSize ? L.T("FFA (todos contra todos)", "FFA (free for all)") : $"{ArenaRules.BracketName(size)} {Kind(rated)}") +
+            (balanced ? size == ArenaRules.FfaSize ? L.T(" balanceado", " balanced") : L.T(" balanceada", " balanced") : "");
 
         /// <summary>A class's name as the server sent the classes, or its id while they have not arrived.</summary>
-        internal static string ClassName(string id) => ArenaClasses.Find(id)?.Name ?? id ?? "";
+        internal static string ClassName(string id) => L.Server(ArenaClasses.Find(id)?.Name ?? id ?? "");
 
         /// <summary>My personal rating in a team, from the snapshot.</summary>
         protected static int PersonalIn(ArenaTeamView team)
         {
             var me = team?.Members.FirstOrDefault(m => m.PlayerId == ArenaClient.Snapshot.PlayerId);
             return me?.Personal ?? 0;
+        }
+
+        /// <summary>My personal rating in the team's Arena balanceada, -1 while it is not apart.</summary>
+        protected static int BalancedPersonalIn(ArenaTeamView team)
+        {
+            var me = team?.Members.FirstOrDefault(m => m.PlayerId == ArenaClient.Snapshot.PlayerId);
+            return me?.BalancedPersonal ?? -1;
+        }
+
+        /// <summary>"  ·  balanceada 431 (#3)" when the balanced rating is apart, empty otherwise:
+        /// next to the normal rating, so a player who only plays balanced sees what moves.</summary>
+        protected static string BalancedTail(ArenaTeamView team)
+        {
+            if (team == null || team.BalancedRating < 0) return "";
+            return team.BalancedRank > 0
+                ? L.T("  ·  balanceada {0} (#{1})", "  -  balanced {0} (#{1})", team.BalancedRating, team.BalancedRank)
+                : L.T("  ·  balanceada {0}", "  -  balanced {0}", team.BalancedRating);
         }
 
         // ------------------------------------------------------- shared blocks
@@ -231,48 +269,48 @@ namespace NpcValheim.UI
             if (match != null)
             {
                 Heading(match.IsChallenge
-                    ? $"Desafio: {match.Challenge} · {match.Map}"
-                    : $"Partida: {match.Map} · {QueueName(match.Size, match.Rated, match.Balanced)}");
+                    ? L.T("Desafio: {0} · {1}", "Challenge: {0} - {1}", match.Challenge, match.Map)
+                    : L.T("Partida: {0} · {1}", "Match: {0} - {1}", match.Map, QueueName(match.Size, match.Rated, match.Balanced)));
                 if (match.Balanced)
                     Line(match.Phase == "invited"
-                            ? $"Arena balanceada · você: <color=#ffe300>{ClassName(match.ClassId)}</color>. Ao entrar, você luta com o kit da classe."
-                            : $"Partida balanceada: você luta de <color=#ffe300>{ClassName(match.ClassId)}</color>. Seu equipamento volta no fim.",
+                            ? L.T("Arena balanceada · você: <color=#ffe300>{0}</color>. Ao entrar, você luta com o kit da classe.", "Balanced arena - you: <color=#ffe300>{0}</color>. When you enter, you fight with the class kit.", ClassName(match.ClassId))
+                            : L.T("Partida balanceada: você luta de <color=#ffe300>{0}</color>. Seu equipamento volta no fim.", "Balanced match: you fight as <color=#ffe300>{0}</color>. Your gear comes back at the end.", ClassName(match.ClassId)),
                         15, ValheimUi.Beige, 24f);
                 switch (match.Phase)
                 {
                     case "invited":
-                        LiveLine(() => (match.IsChallenge ? "O desafio está pronto!"
-                                           : match.Size == ArenaRules.FfaSize ? "O FFA está pronto! Cada um por si."
-                                           : $"A arena está pronta! Você é do time {SideText(match.Side)}.") +
-                                       $" Expira em {ArenaClient.SecondsLeft()}s.", 16, ValheimUi.Yellow);
+                        LiveLine(() => (match.IsChallenge ? L.T("O desafio está pronto!", "The challenge is ready!")
+                                           : match.Size == ArenaRules.FfaSize ? L.T("O FFA está pronto! Cada um por si.", "The FFA is ready! Every man for himself.")
+                                           : L.T("A arena está pronta! Você é do time {0}.", "The arena is ready! You are on team {0}.", SideText(match.Side))) +
+                                       L.T(" Expira em {0}s.", " Expires in {0}s.", ArenaClient.SecondsLeft()), 16, ValheimUi.Yellow);
                         var row = ButtonRow();
-                        Btn(row, "Entrar", 160f, () =>
+                        Btn(row, L.T("Entrar", "Enter"), 160f, () =>
                         {
                             ArenaClient.RequestEnter();
-                            Say("Entrando na arena...");
+                            Say(L.T("Entrando na arena...", "Entering the arena..."));
                         }, 16);
-                        Cell(row, "Na ranqueada, deixar expirar conta como derrota.", 13, ValheimUi.Muted);
+                        Cell(row, L.T("Na ranqueada, deixar expirar conta como derrota.", "In ranked, letting it expire counts as a defeat."), 13, ValheimUi.Muted);
                         break;
                     case "prep":
-                        LiveLine(() => $"Preparação: os portões abrem em {Clock(ArenaClient.SecondsLeft())}." +
-                                       (match.IsChallenge ? " A criatura chega quando abrirem."
-                                           : match.Size == ArenaRules.FfaSize ? " Todos contra todos: vence o último de pé."
-                                           : $" Você é do time {SideText(match.Side)}."), 16, ValheimUi.Yellow);
+                        LiveLine(() => L.T("Preparação: os portões abrem em {0}.", "Preparation: the gates open in {0}.", Clock(ArenaClient.SecondsLeft())) +
+                                       (match.IsChallenge ? L.T(" A criatura chega quando abrirem.", " The creature arrives when they open.")
+                                           : match.Size == ArenaRules.FfaSize ? L.T(" Todos contra todos: vence o último de pé.", " Free for all: the last one standing wins.")
+                                           : L.T(" Você é do time {0}.", " You are on team {0}.", SideText(match.Side))), 16, ValheimUi.Yellow);
                         Score(match);
-                        LeaveButton("Sair da arena");
+                        LeaveButton(L.T("Sair da arena", "Leave the arena"));
                         break;
                     case "live":
                         Score(match);
-                        LiveLine(() => (ArenaClient.SecondsLeft() < 0 ? "Sem limite de tempo"
-                                           : $"{(match.IsChallenge ? "Tempo restante" : "Tempo até o empate")}: {Clock(ArenaClient.SecondsLeft())}") +
+                        LiveLine(() => (ArenaClient.SecondsLeft() < 0 ? L.T("Sem limite de tempo", "No time limit")
+                                           : L.T("{0}: {1}", "{0}: {1}", match.IsChallenge ? L.T("Tempo restante", "Time left") : L.T("Tempo até o empate", "Time until draw"), Clock(ArenaClient.SecondsLeft()))) +
                                        (match.Mine == "ko"
-                                           ? $"   ·   <color=#ee6b57>você foi derrotado</color> ([{ArenaSpectate.LeaveKey}] volta agora)"
+                                           ? L.T("   ·   <color=#ee6b57>você foi derrotado</color> ([{0}] volta agora)", "   -   <color=#ee6b57>you were defeated</color> ([{0}] return now)", ArenaSpectate.LeaveKey)
                                            : ""), 15);
-                        LeaveButton(match.Rated ? "Abandonar (conta como derrota)" : "Abandonar a partida");
+                        LeaveButton(match.Rated ? L.T("Abandonar (conta como derrota)", "Forfeit (counts as a defeat)") : L.T("Abandonar a partida", "Forfeit the match"));
                         break;
                     default:
-                        LiveLine(() => $"Partida encerrada. Volta para onde estava em {Clock(ArenaClient.SecondsLeft())}.", 15);
-                        LeaveButton("Sair agora");
+                        LiveLine(() => L.T("Partida encerrada. Volta para onde estava em {0}.", "Match over. Back to where you were in {0}.", Clock(ArenaClient.SecondsLeft())), 15);
+                        LeaveButton(L.T("Sair agora", "Leave now"));
                         break;
                 }
                 Gap();
@@ -281,38 +319,38 @@ namespace NpcValheim.UI
             var queue = s.Queue;
             if (queue != null)
             {
-                Heading("Fila");
+                Heading(L.T("Fila", "Queue"));
                 if (queue.Status == "confirm")
-                    Line("Confirmando o grupo...", 15, ValheimUi.Yellow);
+                    Line(L.T("Confirmando o grupo...", "Confirming the group..."), 15, ValheimUi.Yellow);
                 else
                 {
                     int since = queue.Waited;
                     float at = ArenaClient.SnapshotAt;
-                    LiveLine(() => $"Na fila: {QueueName(queue.Size, queue.Rated, queue.Balanced)} · esperando {Clock(since + Mathf.FloorToInt(Time.realtimeSinceStartup - at))}", 15, ValheimUi.Yellow);
+                    LiveLine(() => L.T("Na fila: {0} · esperando {1}", "In queue: {0} - waiting {1}", QueueName(queue.Size, queue.Rated, queue.Balanced), Clock(since + Mathf.FloorToInt(Time.realtimeSinceStartup - at))), 15, ValheimUi.Yellow);
                 }
                 var row = ButtonRow();
-                Btn(row, "Sair da fila", 160f, () => Ask(ArenaWire.ActQueueLeave));
+                Btn(row, L.T("Sair da fila", "Leave queue"), 160f, () => Ask(ArenaWire.ActQueueLeave));
                 Gap();
             }
 
             if (s.SignRequests.Count > 0 || s.Invite != null)
             {
-                Heading("Pedidos para você");
+                Heading(L.T("Pedidos para você", "Requests for you"));
                 foreach (var req in s.SignRequests)
                 {
                     var r = req;
                     var row = ButtonRow(40f);
-                    Cell(row, $"{r.OwnerName} pede a sua assinatura na carta \"{r.TeamName}\" ({ArenaRules.BracketName(r.Size)})", 15);
-                    Btn(row, "Assinar", 110f, () => Ask(ArenaWire.ActCharterSign, $"{r.Owner}\n{r.Size}\n1"));
-                    Btn(row, "Recusar", 110f, () => Ask(ArenaWire.ActCharterSign, $"{r.Owner}\n{r.Size}\n0"));
+                    Cell(row, L.T("{0} pede a sua assinatura na carta \"{1}\" ({2})", "{0} asks for your signature on the charter \"{1}\" ({2})", r.OwnerName, r.TeamName, ArenaRules.BracketName(r.Size)), 15);
+                    Btn(row, L.T("Assinar", "Sign"), 110f, () => Ask(ArenaWire.ActCharterSign, $"{r.Owner}\n{r.Size}\n1"));
+                    Btn(row, L.T("Recusar", "Decline"), 110f, () => Ask(ArenaWire.ActCharterSign, $"{r.Owner}\n{r.Size}\n0"));
                 }
                 if (s.Invite != null)
                 {
                     var inv = s.Invite;
                     var row = ButtonRow(40f);
-                    Cell(row, $"{inv.From} convidou você para o time \"{inv.TeamName}\" ({ArenaRules.BracketName(inv.Size)})", 15);
-                    Btn(row, "Aceitar", 110f, () => Ask(ArenaWire.ActTeamAnswer, $"{inv.TeamId}\n1"));
-                    Btn(row, "Recusar", 110f, () => Ask(ArenaWire.ActTeamAnswer, $"{inv.TeamId}\n0"));
+                    Cell(row, L.T("{0} convidou você para o time \"{1}\" ({2})", "{0} invited you to the team \"{1}\" ({2})", inv.From, inv.TeamName, ArenaRules.BracketName(inv.Size)), 15);
+                    Btn(row, L.T("Aceitar", "Accept"), 110f, () => Ask(ArenaWire.ActTeamAnswer, $"{inv.TeamId}\n1"));
+                    Btn(row, L.T("Recusar", "Decline"), 110f, () => Ask(ArenaWire.ActTeamAnswer, $"{inv.TeamId}\n0"));
                 }
                 Gap();
             }
@@ -321,7 +359,7 @@ namespace NpcValheim.UI
 
             if (ArenaClient.FeedLines.Count > 0 && match != null)
             {
-                Heading("Na arena");
+                Heading(L.T("Na arena", "In the arena"));
                 foreach (var line in ArenaClient.FeedLines) Line(line, 14, ValheimUi.Muted, 20f);
             }
         }
@@ -330,11 +368,11 @@ namespace NpcValheim.UI
         {
             if (match.Size == ArenaRules.FfaSize)
             {
-                Line($"Todos contra todos: {match.GoldAlive}/{match.GoldTotal} de pé", 17, ValheimUi.Beige, 28f);
+                Line(L.T("Todos contra todos: {0}/{1} de pé", "Free for all: {0}/{1} alive", match.GoldAlive, match.GoldTotal), 17, ValheimUi.Beige, 28f);
                 return;
             }
-            Line($"<color=#ffd140>{match.GoldName}</color>  {match.GoldAlive}/{match.GoldTotal} de pé     ×     " +
-                 $"<color=#73db6b>{match.GreenName}</color>  {match.GreenAlive}/{match.GreenTotal} de pé", 17, ValheimUi.Beige, 28f);
+            Line(L.T("<color=#ffd140>{0}</color>  {1}/{2} de pé     ×     ", "<color=#ffd140>{0}</color>  {1}/{2} alive     x     ", match.GoldName, match.GoldAlive, match.GoldTotal) +
+                 L.T("<color=#73db6b>{0}</color>  {1}/{2} de pé", "<color=#73db6b>{0}</color>  {1}/{2} alive", match.GreenName, match.GreenAlive, match.GreenTotal), 17, ValheimUi.Beige, 28f);
         }
 
         private void LeaveButton(string text)
@@ -349,11 +387,11 @@ namespace NpcValheim.UI
         {
             bool ffa = !r.IsChallenge && r.Size == ArenaRules.FfaSize;
             string outcome = r.IsChallenge
-                ? r.Winner == ArenaSide.Gold ? $"{r.Challenge} foi derrotado!" : r.Winner == ArenaSide.Green ? $"{r.Challenge} venceu" : "O desafio terminou sem vencedor"
-                : r.Winner == ArenaSide.None ? "Empate"
-                : ffa ? $"Vitória de {r.Players.FirstOrDefault(p => p.Side == r.Winner)?.Name ?? "?"}"
-                : $"Vitória do time {SideText(r.Winner)}";
-            Heading(r.IsChallenge ? $"Resultado · Desafio {r.Challenge} · {r.Map}" : $"Resultado · {r.Map} · {QueueName(r.Size, r.Rated, r.Balanced)}");
+                ? r.Winner == ArenaSide.Gold ? L.T("{0} foi derrotado!", "{0} was defeated!", r.Challenge) : r.Winner == ArenaSide.Green ? L.T("{0} venceu", "{0} won", r.Challenge) : L.T("O desafio terminou sem vencedor", "The challenge ended with no winner")
+                : r.Winner == ArenaSide.None ? L.T("Empate", "Draw")
+                : ffa ? L.T("Vitória de {0}", "Victory for {0}", r.Players.FirstOrDefault(p => p.Side == r.Winner)?.Name ?? "?")
+                : L.T("Vitória do time {0}", "Victory for team {0}", SideText(r.Winner));
+            Heading(r.IsChallenge ? L.T("Resultado · Desafio {0} · {1}", "Result - Challenge {0} - {1}", r.Challenge, r.Map) : L.T("Resultado · {0} · {1}", "Result - {0} - {1}", r.Map, QueueName(r.Size, r.Rated, r.Balanced)));
             Line($"{outcome}  ·  {Clock(r.Duration)}" + (r.Record ? "  ·  <color=#73db6b>novo recorde do desafio!</color>" : ""), 17, ValheimUi.Yellow, 28f);
             foreach (var side in r.Sides)
             {
@@ -363,13 +401,13 @@ namespace NpcValheim.UI
                 Line($"{SideText(side.Side)}: {side.TeamName}{rating}", 15, ValheimUi.Beige, 26f);
             }
             var header = ButtonRow(24f);
-            Cell(header, "Jogador", 13, ValheimUi.Muted);
-            if (r.Balanced) Cell(header, "Classe", 13, ValheimUi.Muted, 150f);
-            if (!ffa) Cell(header, "Time", 13, ValheimUi.Muted, 80f);
-            Cell(header, "Abates", 13, ValheimUi.Muted, 70f);
-            Cell(header, "Situação", 13, ValheimUi.Muted, 110f);
-            if (r.Rated) Cell(header, "Pessoal", 13, ValheimUi.Muted, 130f);
-            else if (r.IsChallenge) Cell(header, "Rating PvE", 13, ValheimUi.Muted, 130f);
+            Cell(header, L.T("Jogador", "Player"), 13, ValheimUi.Muted);
+            if (r.Balanced) Cell(header, L.T("Classe", "Class"), 13, ValheimUi.Muted, 150f);
+            if (!ffa) Cell(header, L.T("Time", "Team"), 13, ValheimUi.Muted, 80f);
+            Cell(header, L.T("Abates", "Kills"), 13, ValheimUi.Muted, 70f);
+            Cell(header, L.T("Situação", "Status"), 13, ValheimUi.Muted, 110f);
+            if (r.Rated) Cell(header, L.T("Pessoal", "Personal"), 13, ValheimUi.Muted, 130f);
+            else if (r.IsChallenge) Cell(header, L.T("Rating PvE", "PvE Rating"), 13, ValheimUi.Muted, 130f);
             var players = ffa
                 ? r.Players.OrderByDescending(p => p.Side == r.Winner).ThenByDescending(p => p.Kos)
                 : r.Players.OrderBy(p => p.Side).ThenByDescending(p => p.Kos);
@@ -378,10 +416,10 @@ namespace NpcValheim.UI
                 var row = ButtonRow(24f);
                 Cell(row, p.Name, 15);
                 // A kit that diverged during the fight is marked for everyone to see.
-                if (r.Balanced) Cell(row, p.Class + (p.KitDiverged ? " <color=#ee6b57>(kit divergiu)</color>" : ""), 15, null, 150f);
+                if (r.Balanced) Cell(row, p.Class + (p.KitDiverged ? L.T(" <color=#ee6b57>(kit divergiu)</color>", " <color=#ee6b57>(kit mismatch)</color>") : ""), 15, null, 150f);
                 if (!ffa) Cell(row, SideText(p.Side), 15, null, 80f);
                 Cell(row, p.Kos.ToString(CultureInfo.InvariantCulture), 15, null, 70f);
-                Cell(row, p.Status, 15, null, 110f);
+                Cell(row, L.Server(p.Status), 15, null, 110f);
                 // A challenge sends the PvE rating in the personal rating's place.
                 if (r.Rated || r.IsChallenge)
                     Cell(row, p.PersonalBefore >= 0 ? $"{p.PersonalBefore + p.PersonalChange} ({Signed(p.PersonalChange)})" : "-", 15, null, 130f);
@@ -398,18 +436,18 @@ namespace NpcValheim.UI
         protected override void Rebuild()
         {
             var s = ArenaClient.Snapshot;
-            Line($"<color=#9a9188>Pontos de Arena:</color> {s.Points}", 17, ValheimUi.Yellow, 28f);
-            Line($"<color=#9a9188>Rating PvE (desafios):</color> {s.PveRating}" +
-                 (s.PveGames > 0 ? $"   <size=13><color=#9a9188>{s.PveWins} vitória(s) em {s.PveGames} desafio(s)</color></size>" : ""),
+            Line(L.T("<color=#9a9188>Pontos de Arena:</color> {0}", "<color=#9a9188>Arena Points:</color> {0}", s.Points), 17, ValheimUi.Yellow, 28f);
+            Line(L.T("<color=#9a9188>Rating PvE (desafios):</color> {0}", "<color=#9a9188>PvE Rating (challenges):</color> {0}", s.PveRating) +
+                 (s.PveGames > 0 ? L.T("   <size=13><color=#9a9188>{0} vitória(s) em {1} desafio(s)</color></size>", "   <size=13><color=#9a9188>{0} win(s) in {1} challenge(s)</color></size>", s.PveWins, s.PveGames) : ""),
                 15, ValheimUi.Beige, 24f);
             Gap();
             StatusBlocks(withResult: true);
             if (s.Match == null && s.Queue == null && s.SignRequests.Count == 0 && s.Invite == null && ArenaClient.LastResult == null)
             {
-                Line("Nada pendente.", 15, ValheimUi.Muted);
-                Line("Para jogar: fale com o Mestre da Arena. No 1v1 basta entrar na fila; para 2v2 e 3v3, crie o time na aba Criar time.", 14, ValheimUi.Muted, 44f);
+                Line(L.T("Nada pendente.", "Nothing pending."), 15, ValheimUi.Muted);
+                Line(L.T("Para jogar: fale com o Mestre da Arena. No 1v1 basta entrar na fila; para 2v2 e 3v3, crie o time na aba Criar time.", "To play: talk to the Arena Master. In 1v1 just join the queue; for 2v2 and 3v3, create the team in the Create team tab."), 14, ValheimUi.Muted, 44f);
                 if (SoloOn)
-                    Line("No 1v1 não precisa de time: fale com o Mestre da Arena e entre na fila sozinho.", 14, ValheimUi.Muted, 22f);
+                    Line(L.T("No 1v1 não precisa de time: fale com o Mestre da Arena e entre na fila sozinho.", "1v1 needs no team: talk to the Arena Master and join the queue alone."), 14, ValheimUi.Muted, 22f);
             }
         }
     }
@@ -431,17 +469,17 @@ namespace NpcValheim.UI
             layout.childControlHeight = true;
             layout.childForceExpandWidth = false;
 
-            var hint = ValheimUi.CreateLabel(form, "Convidar (capitão):", 15, ValheimUi.Muted, TextAlignmentOptions.Left);
+            var hint = ValheimUi.CreateLabel(form, L.T("Convidar (capitão):", "Invite (captain):"), 15, ValheimUi.Muted, TextAlignmentOptions.Left);
             ValheimUi.SetWidth(hint.gameObject, 150f);
             _invite = ValheimUi.CreateInputField(form, "", 0f, 34f);
             Flexible(_invite.gameObject);
-            var send = ValheimUi.CreateButton(form, "Convidar", 130f, 34f, 14);
+            var send = ValheimUi.CreateButton(form, L.T("Convidar", "Invite"), 130f, 34f, 14);
             send.onClick.AddListener(() =>
             {
                 var name = (_invite.text ?? "").Trim();
-                if (name.Length == 0) { Say("Escreva o nome do jogador."); return; }
+                if (name.Length == 0) { Say(L.T("Escreva o nome do jogador.", "Type the player name.")); return; }
                 Ask(ArenaWire.ActTeamInvite, $"{Size}\n{name}");
-                Say($"Convidando {name} para o time {ArenaRules.BracketName(Size)}...");
+                Say(L.T("Convidando {0} para o time {1}...", "Inviting {0} to the {1} team...", name, ArenaRules.BracketName(Size)));
             });
 
             CreateList(Vector2.zero, new Vector2(0f, -46f));
@@ -449,7 +487,7 @@ namespace NpcValheim.UI
 
         protected override void Rebuild()
         {
-            BracketSelector("Time:");
+            BracketSelector(L.T("Time:", "Team:"));
             var s = ArenaClient.Snapshot;
             var team = s.TeamOf(Size);
             bool solo = IsSolo(Size);
@@ -457,33 +495,38 @@ namespace NpcValheim.UI
             {
                 if (solo)
                 {
-                    Line("Você ainda não jogou a 1v1 ranqueada.", 16, ValheimUi.Muted, 28f);
-                    Line("No 1v1 não tem time para montar: entre na fila sozinho com o Mestre da Arena e o seu rating começa ali.", 14, ValheimUi.Muted, 40f);
+                    Line(L.T("Você ainda não jogou a 1v1 ranqueada.", "You have not played ranked 1v1 yet."), 16, ValheimUi.Muted, 28f);
+                    Line(L.T("No 1v1 não tem time para montar: entre na fila sozinho com o Mestre da Arena e o seu rating começa ali.", "1v1 has no team to build: join the queue alone with the Arena Master and your rating starts there."), 14, ValheimUi.Muted, 40f);
                     return;
                 }
-                Line($"Você não tem time {ArenaRules.BracketName(Size)}.", 16, ValheimUi.Muted, 28f);
-                Line("Crie o time na aba Criar time: compre a carta e colete as assinaturas.", 14, ValheimUi.Muted);
+                Line(L.T("Você não tem time {0}.", "You have no {0} team.", ArenaRules.BracketName(Size)), 16, ValheimUi.Muted, 28f);
+                Line(L.T("Crie o time na aba Criar time: compre a carta e colete as assinaturas.", "Create the team in the Create team tab: buy the charter and collect the signatures."), 14, ValheimUi.Muted);
                 return;
             }
 
             bool captain = team.CaptainId == s.PlayerId && !solo;
             Heading($"{team.Name} · {ArenaRules.BracketName(team.Size)}");
-            Line($"Rating {team.Rating}   ·   Posição #{team.Rank}   ·   MMR {team.Mmr}", 16, ValheimUi.Yellow, 26f);
-            Line($"Semana: {team.WeekGames} jogos, {team.WeekWins} vitórias   ·   Temporada: {team.SeasonGames} jogos, {team.SeasonWins} vitórias", 14, ValheimUi.Beige);
+            Line(L.T("Rating {0}   ·   Posição #{1}   ·   MMR {2}", "Rating {0}   -   Rank #{1}   -   MMR {2}", team.Rating, team.Rank, team.Mmr), 16, ValheimUi.Yellow, 26f);
+            if (team.BalancedRating >= 0)
+                Line(team.BalancedRank > 0
+                    ? L.T("Arena balanceada: rating {0}   ·   Posição #{1}  (ranking separado, aba Ranking)", "Balanced arena: rating {0}   -   Rank #{1}  (separate ladder, Ladder tab)", team.BalancedRating, team.BalancedRank)
+                    : L.T("Arena balanceada: rating {0}  (ranking separado; começa na primeira ranqueada balanceada)", "Balanced arena: rating {0}  (separate ladder; starts at the first balanced ranked)", team.BalancedRating),
+                    15, ValheimUi.Yellow, 24f);
+            Line(L.T("Semana: {0} jogos, {1} vitórias   ·   Temporada: {2} jogos, {3} vitórias", "Week: {0} games, {1} wins   -   Season: {2} games, {3} wins", team.WeekGames, team.WeekWins, team.SeasonGames, team.SeasonWins), 14, ValheimUi.Beige);
             Gap();
 
             var header = ButtonRow(24f);
-            Cell(header, "Membro", 13, ValheimUi.Muted);
-            Cell(header, "Pessoal", 13, ValheimUi.Muted, 80f);
-            Cell(header, "Semana", 13, ValheimUi.Muted, 90f);
-            Cell(header, "Temporada", 13, ValheimUi.Muted, 100f);
+            Cell(header, L.T("Membro", "Member"), 13, ValheimUi.Muted);
+            Cell(header, L.T("Pessoal", "Personal"), 13, ValheimUi.Muted, 80f);
+            Cell(header, L.T("Semana", "Week"), 13, ValheimUi.Muted, 90f);
+            Cell(header, L.T("Temporada", "Season"), 13, ValheimUi.Muted, 100f);
             if (captain) Cell(header, "", 13, null, 236f);
 
             foreach (var m in team.Members.OrderByDescending(m => m.PlayerId == team.CaptainId).ThenByDescending(m => m.Personal))
             {
                 var member = m;
                 var row = ButtonRow(36f);
-                string mark = member.PlayerId == team.CaptainId ? " <color=#ffd140>(capitão)</color>" : "";
+                string mark = member.PlayerId == team.CaptainId ? L.T(" <color=#ffd140>(capitão)</color>", " <color=#ffd140>(captain)</color>") : "";
                 string online = member.Online ? "<color=#73db6b>●</color> " : "<color=#6b6560>●</color> ";
                 Cell(row, online + member.Name + mark, 15);
                 Cell(row, member.Personal.ToString(CultureInfo.InvariantCulture), 15, null, 80f);
@@ -493,8 +536,8 @@ namespace NpcValheim.UI
                 {
                     if (member.PlayerId != team.CaptainId)
                     {
-                        Btn(row, "Capitão", 110f, () => Ask(ArenaWire.ActTeamCaptain, $"{Size}\n{member.PlayerId}"));
-                        Btn(row, "Remover", 110f, () => Ask(ArenaWire.ActTeamKick, $"{Size}\n{member.PlayerId}"));
+                        Btn(row, L.T("Capitão", "Captain"), 110f, () => Ask(ArenaWire.ActTeamCaptain, $"{Size}\n{member.PlayerId}"));
+                        Btn(row, L.T("Remover", "Remove"), 110f, () => Ask(ArenaWire.ActTeamKick, $"{Size}\n{member.PlayerId}"));
                     }
                     else
                     {
@@ -504,19 +547,19 @@ namespace NpcValheim.UI
                 }
             }
             Gap();
-            Line("Pontos de Arena vêm de cada partida terminada dentro da arena (vitória vale mais que derrota).", 13, ValheimUi.Muted, 22f);
+            Line(L.T("Pontos de Arena vêm de cada partida terminada dentro da arena (vitória vale mais que derrota).", "Arena Points come from every match finished inside the arena (a win is worth more than a loss)."), 13, ValheimUi.Muted, 22f);
 
             if (solo) return;
             var actions = ButtonRow();
             if (captain)
             {
-                Btn(actions, "Desfazer o time", 200f, () => Ask(ArenaWire.ActTeamDisband, Size.ToString()));
+                Btn(actions, L.T("Desfazer o time", "Disband the team"), 200f, () => Ask(ArenaWire.ActTeamDisband, Size.ToString()));
                 if (team.Members.Count > 1)
-                    Cell(actions, "Para sair, passe a capitania antes.", 13, ValheimUi.Muted);
+                    Cell(actions, L.T("Para sair, passe a capitania antes.", "To leave, hand over the captaincy first."), 13, ValheimUi.Muted);
             }
             else
             {
-                Btn(actions, "Sair do time", 200f, () => Ask(ArenaWire.ActTeamLeave, Size.ToString()));
+                Btn(actions, L.T("Sair do time", "Leave the team"), 200f, () => Ask(ArenaWire.ActTeamLeave, Size.ToString()));
             }
         }
     }
@@ -529,27 +572,27 @@ namespace NpcValheim.UI
 
         protected override void OnBuild()
         {
-            _name = FormRow("Nome do time:", -40f, "Comprar carta", () =>
+            _name = FormRow(L.T("Nome do time:", "Team name:"), -40f, L.T("Comprar carta", "Buy charter"), () =>
             {
                 int cost = ArenaConfig.CostOf(Size);
                 var name = (_name.text ?? "").Trim();
-                if (name.Length < 2) { Say("Escreva o nome do time."); return; }
+                if (name.Length < 2) { Say(L.T("Escreva o nome do time.", "Type the team name.")); return; }
                 var player = Player.m_localPlayer;
                 if (player == null) return;
                 if (!MarketplaceNpc.TryPay(player, cost))
                 {
-                    Say($"A carta {ArenaRules.BracketName(Size)} custa {cost} moedas.");
+                    Say(L.T("A carta {0} custa {1} moedas.", "The {0} charter costs {1} coins.", ArenaRules.BracketName(Size), cost));
                     return;
                 }
                 // Paid first, from the bag, as at the merchant: the server keeps what the
                 // charter costs and sends back the rest, or all of it if it refuses.
                 Ask(ArenaWire.ActCharterBuy, $"{Size}\n{name}\n{cost}");
-                Say("Comprando a carta...");
+                Say(L.T("Comprando a carta...", "Buying the charter..."));
             });
-            _signer = FormRow("Pedir assinatura a:", -84f, "Pedir", () =>
+            _signer = FormRow(L.T("Pedir assinatura a:", "Ask signature from:"), -84f, L.T("Pedir", "Ask"), () =>
             {
                 var name = (_signer.text ?? "").Trim();
-                if (name.Length == 0) { Say("Escreva o nome do jogador."); return; }
+                if (name.Length == 0) { Say(L.T("Escreva o nome do jogador.", "Type the player name.")); return; }
                 Ask(ArenaWire.ActCharterOffer, $"{Size}\n{name}");
             });
             CreateList(Vector2.zero, new Vector2(0f, -90f));
@@ -581,8 +624,8 @@ namespace NpcValheim.UI
 
         protected override void Rebuild()
         {
-            BracketSelector("Carta:");
-            if (SoloOn) Line("O 1v1 não precisa de carta: entre na fila sozinho com o Mestre da Arena.", 13, ValheimUi.Muted, 22f);
+            BracketSelector(L.T("Carta:", "Charter:"));
+            if (SoloOn) Line(L.T("O 1v1 não precisa de carta: entre na fila sozinho com o Mestre da Arena.", "1v1 needs no charter: join the queue alone with the Arena Master."), 13, ValheimUi.Muted, 22f);
             var s = ArenaClient.Snapshot;
             int cost = ArenaConfig.CostOf(Size);
             int required = ArenaRules.RequiredSignatures(Size, ArenaConfig.SignaturesRequired?.Value ?? -1);
@@ -591,40 +634,40 @@ namespace NpcValheim.UI
 
             if (team != null)
             {
-                Line($"Você já está no time \"{team.Name}\" ({ArenaRules.BracketName(Size)}).", 16, ValheimUi.Beige, 28f);
-                Line("Um jogador tem no máximo um time de cada tamanho.", 14, ValheimUi.Muted);
+                Line(L.T("Você já está no time \"{0}\" ({1}).", "You are already on the team \"{0}\" ({1}).", team.Name, ArenaRules.BracketName(Size)), 16, ValheimUi.Beige, 28f);
+                Line(L.T("Um jogador tem no máximo um time de cada tamanho.", "A player can have at most one team of each size."), 14, ValheimUi.Muted);
             }
             else if (charter != null)
             {
-                Heading($"Carta \"{charter.Name}\" · {ArenaRules.BracketName(Size)}");
-                Line($"Assinaturas: {charter.Signatures}/{charter.Required}" +
+                Heading(L.T("Carta \"{0}\" · {1}", "Charter \"{0}\" - {1}", charter.Name, ArenaRules.BracketName(Size)));
+                Line(L.T("Assinaturas: {0}/{1}", "Signatures: {0}/{1}", charter.Signatures, charter.Required) +
                      (string.IsNullOrEmpty(charter.Signers) ? "" : $"  ({charter.Signers})"), 16,
                     charter.Signatures >= charter.Required ? ValheimUi.Yellow : ValheimUi.Beige, 26f);
-                Line("Peça a assinatura acima: quem assina vira membro fundador do time.", 14, ValheimUi.Muted);
+                Line(L.T("Peça a assinatura acima: quem assina vira membro fundador do time.", "Ask for signatures above: whoever signs becomes a founding member of the team."), 14, ValheimUi.Muted);
                 var row = ButtonRow();
-                var register = Btn(row, "Registrar o time", 200f, () => Ask(ArenaWire.ActCharterTurnIn, Size.ToString()));
+                var register = Btn(row, L.T("Registrar o time", "Register the team"), 200f, () => Ask(ArenaWire.ActCharterTurnIn, Size.ToString()));
                 register.interactable = charter.Signatures >= charter.Required;
-                Btn(row, "Rasgar a carta", 170f, () => Ask(ArenaWire.ActCharterAbandon, Size.ToString()));
+                Btn(row, L.T("Rasgar a carta", "Tear up the charter"), 170f, () => Ask(ArenaWire.ActCharterAbandon, Size.ToString()));
             }
             else
             {
-                Heading($"Carta de time {ArenaRules.BracketName(Size)}");
-                Line($"Custa {cost} moedas. Escreva o nome acima e clique Comprar carta.", 15, ValheimUi.Beige);
-                Line($"Depois colete {required} assinatura(s) de outros jogadores e volte para registrar o time. " +
-                     $"O time aceita até {ArenaRules.MaxMembers(Size)} membros; você é o capitão.", 14, ValheimUi.Muted, 40f);
+                Heading(L.T("Carta de time {0}", "{0} team charter", ArenaRules.BracketName(Size)));
+                Line(L.T("Custa {0} moedas. Escreva o nome acima e clique Comprar carta.", "Costs {0} coins. Type the name above and click Buy charter.", cost), 15, ValheimUi.Beige);
+                Line(L.T("Depois colete {0} assinatura(s) de outros jogadores e volte para registrar o time. ", "Then collect {0} signature(s) from other players and come back to register the team.", required) +
+                     L.T("O time aceita até {0} membros; você é o capitão.", "The team takes up to {0} members; you are the captain.", ArenaRules.MaxMembers(Size)), 14, ValheimUi.Muted, 40f);
             }
 
             if (s.SignRequests.Count > 0)
             {
                 Gap();
-                Heading("Pedem a sua assinatura");
+                Heading(L.T("Pedem a sua assinatura", "Signatures requested"));
                 foreach (var req in s.SignRequests)
                 {
                     var r = req;
                     var row = ButtonRow(40f);
                     Cell(row, $"{r.OwnerName}: \"{r.TeamName}\" ({ArenaRules.BracketName(r.Size)})", 15);
-                    Btn(row, "Assinar", 110f, () => Ask(ArenaWire.ActCharterSign, $"{r.Owner}\n{r.Size}\n1"));
-                    Btn(row, "Recusar", 110f, () => Ask(ArenaWire.ActCharterSign, $"{r.Owner}\n{r.Size}\n0"));
+                    Btn(row, L.T("Assinar", "Sign"), 110f, () => Ask(ArenaWire.ActCharterSign, $"{r.Owner}\n{r.Size}\n1"));
+                    Btn(row, L.T("Recusar", "Decline"), 110f, () => Ask(ArenaWire.ActCharterSign, $"{r.Owner}\n{r.Size}\n0"));
                 }
             }
         }
@@ -650,41 +693,44 @@ namespace NpcValheim.UI
 
         protected override void Rebuild()
         {
-            BracketSelector("Arena:");
+            BracketSelector(L.T("Arena:", "Arena:"));
             var s = ArenaClient.Snapshot;
             var team = s.TeamOf(Size);
             var group = ArenaGroups.Members();
             bool grouped = group.Count > 1;
 
             bool solo = IsSolo(Size);
-            Heading($"Arena {ArenaRules.BracketName(Size)}");
+            Heading(L.T("Arena {0}", "{0} Arena", ArenaRules.BracketName(Size)));
             Line(solo
-                    ? team != null ? $"Seu rating 1v1: {team.Rating}  ·  posição #{team.Rank}" : "1v1: você entra sozinho, sem time. O rating começa na primeira ranqueada."
+                    ? team != null ? L.T("Seu rating 1v1: {0}  ·  posição #{1}", "Your 1v1 rating: {0}  -  rank #{1}", team.Rating, team.Rank) + BalancedTail(team) : L.T("1v1: você entra sozinho, sem time. O rating começa na primeira ranqueada.", "1v1: you enter alone, without a team. Your rating starts at the first ranked match.")
                     : team != null
-                        ? $"Seu time: \"{team.Name}\"  ·  rating {team.Rating}  ·  seu pessoal {PersonalIn(team)}"
-                        : $"Você não tem time {ArenaRules.BracketName(Size)} (aba Criar time).", 15, ValheimUi.Beige);
+                        ? L.T("Seu time: \"{0}\"  ·  rating {1}  ·  seu pessoal {2}", "Your team: \"{0}\"  -  rating {1}  -  your personal {2}", team.Name, team.Rating, PersonalIn(team)) + BalancedTail(team)
+                        : L.T("Você não tem time {0} (aba Criar time).", "You have no {0} team (Create team tab).", ArenaRules.BracketName(Size)), 15, ValheimUi.Beige);
             Line(!ArenaGroups.Installed
-                    ? "Sem o mod Groups: só dá para entrar sozinho."
+                    ? L.T("Sem o mod Groups: só dá para entrar sozinho.", "Without the Groups mod: you can only join alone.")
                     : grouped
-                        ? $"Grupo ({group.Count}): {string.Join(", ", group.Select(m => m.Name))}" + (ArenaGroups.IsLeader() ? "" : "  ·  só o líder entra na fila")
-                        : "Sem grupo: forme o grupo (Groups) para a ranqueada.",
+                        ? L.T("Grupo ({0}): {1}", "Group ({0}): {1}", group.Count, string.Join(", ", group.Select(m => m.Name))) + (ArenaGroups.IsLeader() ? "" : L.T("  ·  só o líder entra na fila", "  -  only the leader joins the queue"))
+                        : L.T("Sem grupo: forme o grupo (Groups) para a ranqueada.", "No group: form a group (Groups) for ranked."),
                 14, ValheimUi.Muted);
 
             bool busy = s.Queue != null || s.Match != null;
+            Gap(10f);
             bool balanced = BalancedBlock(team, solo);
-            string tail = balanced ? " balanceada" : "";
+            string tail = balanced ? L.T(" balanceada", " balanced") : "";
             bool classMissing = balanced && BalancedChoice.ClassId.Length == 0;
+            Gap(10f);
+            Heading(L.T("Entrar na fila", "Join the queue"));
             var row = ButtonRow(40f);
-            var rated = Btn(row, "Entrar: Ranqueada" + tail, balanced ? 270f : 210f, () => Join(true), 15);
+            var rated = Btn(row, L.T("Entrar: Ranqueada", "Join: Ranked") + tail, balanced ? 270f : 210f, () => Join(true), 15);
             rated.interactable = !busy && (team != null || solo) && !(solo && grouped) && !classMissing;
-            var skirmish = Btn(row, "Entrar: Escaramuça" + tail, balanced ? 270f : 210f, () => Join(false), 15);
+            var skirmish = Btn(row, L.T("Entrar: Escaramuça", "Join: Skirmish") + tail, balanced ? 270f : 210f, () => Join(false), 15);
             skirmish.interactable = !busy && (ArenaConfig.Skirmish?.Value ?? true) && !classMissing;
             Line(solo
-                    ? "1v1: entre sem grupo. Ranqueada vale rating; escaramuça, não."
-                    : $"Ranqueada: grupo de exatamente {Size} do mesmo time, rating em jogo. Escaramuça: sozinho ou em grupo, sem rating.",
+                    ? L.T("1v1: entre sem grupo. Ranqueada vale rating; escaramuça, não.", "1v1: join without a group. Ranked counts for rating; skirmish does not.")
+                    : L.T("Ranqueada: grupo de exatamente {0} do mesmo time, rating em jogo. Escaramuça: sozinho ou em grupo, sem rating.", "Ranked: group of exactly {0} from the same team, rating at stake. Skirmish: alone or in a group, no rating.", Size),
                 13, ValheimUi.Muted, 22f);
             if (balanced && grouped)
-                Line("Na balanceada, cada um do grupo escolhe a própria classe no painel dele antes de você entrar na fila.", 13, ValheimUi.Muted, 22f);
+                Line(L.T("Na balanceada, cada um do grupo escolhe a própria classe no painel dele antes de você entrar na fila.", "In balanced, each group member picks their own class on their own panel before you join the queue."), 13, ValheimUi.Muted, 22f);
             Gap();
             FfaBlock(busy, balanced, classMissing);
             if (!balanced) ChallengeBlock(busy, group.Count);
@@ -705,23 +751,23 @@ namespace NpcValheim.UI
             ArenaClassesNet.AskIfMissing();
             bool on = BalancedChoice.On;
             var check = ButtonRow(36f);
-            var box = Btn(check, (on ? "[X]" : "[  ]") + "  Arena balanceada", 230f, () =>
+            var box = Btn(check, (on ? "[X]" : "[  ]") + L.T("  Arena balanceada", "  Balanced arena"), 230f, () =>
             {
                 BalancedChoice.On = !BalancedChoice.On;
                 Invalidate();
             }, 15);
             var boxLabel = box.GetComponentInChildren<TextMeshProUGUI>();
             if (boxLabel != null) boxLabel.color = on ? ValheimUi.Yellow : ValheimUi.Orange;
-            ValheimUi.AddTooltip(box.gameObject, "Arena balanceada",
-                "Fila separada em que o seu equipamento, a sua comida e as suas skills não contam: todos lutam com o kit de uma classe. " +
-                "O seu inventário não é tocado e o seu equipamento volta no fim da partida.");
-            Cell(check, on ? "o seu equipamento não conta: você luta com o kit da classe" : "", 13, ValheimUi.Muted);
+            ValheimUi.AddTooltip(box.gameObject, L.T("Arena balanceada", "Balanced arena"),
+                L.T("Fila separada em que o seu equipamento, a sua comida e as suas skills não contam: todos lutam com o kit de uma classe. ", "Separate queue where your gear, food and skills do not count: everyone fights with a class kit.") +
+                L.T("O seu inventário não é tocado e o seu equipamento volta no fim da partida.", "Your inventory is not touched and your gear comes back at the end of the match."));
+            Cell(check, on ? L.T("o seu equipamento não conta: você luta com o kit da classe", "your gear does not count: you fight with the class kit") : "", 13, ValheimUi.Muted);
             if (!on) return false;
 
             var classes = ArenaClasses.All.Where(c => c.On).ToList();
             if (classes.Count == 0)
             {
-                Line(ArenaClasses.Loaded ? "O servidor ainda não tem classes ligadas." : "Carregando as classes...", 14, ValheimUi.Muted);
+                Line(ArenaClasses.Loaded ? L.T("O servidor ainda não tem classes ligadas.", "The server has no classes enabled yet.") : L.T("Carregando as classes...", "Loading classes..."), 14, ValheimUi.Muted);
                 return true;
             }
             string chosen = BalancedChoice.ClassId;
@@ -730,7 +776,7 @@ namespace NpcValheim.UI
             {
                 var cls = c;
                 bool mine = string.Equals(cls.Id, chosen, StringComparison.OrdinalIgnoreCase);
-                var card = Btn(cards, cls.Name, ClassCardWidth, () =>
+                var card = Btn(cards, L.Server(cls.Name), ClassCardWidth, () =>
                 {
                     BalancedChoice.ClassId = cls.Id;
                     Invalidate();
@@ -742,18 +788,18 @@ namespace NpcValheim.UI
             var pick = classes.FirstOrDefault(c => string.Equals(c.Id, chosen, StringComparison.OrdinalIgnoreCase));
             if (pick == null)
             {
-                Line("Escolha a sua classe para entrar na fila balanceada.", 15, ValheimUi.Yellow);
+                Line(L.T("Escolha a sua classe para entrar na fila balanceada.", "Pick your class to join the balanced queue."), 15, ValheimUi.Yellow);
                 return true;
             }
 
-            if (pick.Description.Length > 0) Line(pick.Description, 14, ValheimUi.Beige, 40f);
+            if (pick.Description.Length > 0) Line(L.Server(pick.Description), 14, ValheimUi.Beige, 40f);
             string armor = string.Join(", ", pick.Armor().Where(a => a.Item != null).Select(a => ItemNames.Display(a.Item.Prefab)));
-            Line($"Vida {pick.Health:0} · Vigor {pick.Stamina:0}" + (pick.Eitr > 0 ? $" · Eitr {pick.Eitr:0}" : "") +
+            Line(L.T("Vida {0:0} · Vigor {1:0}", "Health {0:0} - Stamina {1:0}", pick.Health, pick.Stamina) + (pick.Eitr > 0 ? L.T(" · Eitr {0:0}", " - Eitr {0:0}", pick.Eitr) : "") +
                  (armor.Length > 0 ? $"  ·  <color=#9a9188>{armor}</color>" : ""), 14, ValheimUi.Beige, 24f);
             string skills = string.Join(", ", pick.Skills.OrderByDescending(kv => kv.Value).Select(kv => $"{SkillName(kv.Key)} {kv.Value}"));
-            Line($"Skills: {(skills.Length > 0 ? skills + $" · as outras {pick.SkillLevel}" : $"todas {pick.SkillLevel}")}", 13, ValheimUi.Muted, 22f);
+            Line(L.T("Skills: {0}", "Skills: {0}", skills.Length > 0 ? skills + L.T(" · as outras {0}", " - others {0}", pick.SkillLevel) : L.T("todas {0}", "all {0}", pick.SkillLevel)), 13, ValheimUi.Muted, 22f);
 
-            Line("Cinto (teclas 1 a 8 na partida):", 13, ValheimUi.Muted, 20f);
+            Line(L.T("Cinto (teclas 1 a 8 na partida):", "Belt (keys 1 to 8 in the match):"), 13, ValheimUi.Muted, 20f);
             var belt = ButtonRow(BeltSlot + 4f);
             for (int i = 0; i < ArenaClasses.MaxBelt; i++)
             {
@@ -763,15 +809,15 @@ namespace NpcValheim.UI
                 if (i >= pick.Belt.Count) continue;
                 var item = pick.Belt[i];
                 var icon = ValheimUi.CreateItemIcon(slot, item.Prefab, BeltSlot - 8f);
-                ValheimUi.AddTooltip(icon.gameObject, ItemNames.Display(item.Prefab) + (item.Quality > 1 ? $" (nível {item.Quality})" : ""),
-                    $"Tecla {i + 1}" + (pick.Start.Contains(item.Prefab, StringComparer.OrdinalIgnoreCase) ? " · começa equipado" : ""));
+                ValheimUi.AddTooltip(icon.gameObject, ItemNames.Display(item.Prefab) + (item.Quality > 1 ? L.T(" (nível {0})", " (level {0})", item.Quality) : ""),
+                    L.T("Tecla {0}", "Key {0}", i + 1) + (pick.Start.Contains(item.Prefab, StringComparer.OrdinalIgnoreCase) ? L.T(" · começa equipado", " - starts equipped") : ""));
             }
             Fill(belt);
 
             if (team != null && team.BalancedRating >= 0 && !solo)
-                Line($"Rating balanceado do time: {team.BalancedRating}", 14, ValheimUi.Beige, 22f);
+                Line(L.T("Rating balanceado do time: {0}", "Team balanced rating: {0}", team.BalancedRating), 14, ValheimUi.Beige, 22f);
             else if (team != null && team.BalancedRating >= 0)
-                Line($"Seu rating 1v1 balanceado: {team.BalancedRating}", 14, ValheimUi.Beige, 22f);
+                Line(L.T("Seu rating 1v1 balanceado: {0}", "Your balanced 1v1 rating: {0}", team.BalancedRating), 14, ValheimUi.Beige, 22f);
             return true;
         }
 
@@ -787,14 +833,14 @@ namespace NpcValheim.UI
             if (balanced && !(ArenaConfig.BalancedFfa?.Value ?? false)) return;
             int max = Mathf.Clamp(ArenaConfig.FfaMaxPlayers?.Value ?? 8, 2, 16);
             int min = Mathf.Clamp(ArenaConfig.FfaMinPlayers?.Value ?? 3, 2, max);
-            Heading(balanced ? "FFA balanceado (todos contra todos)" : "FFA (todos contra todos)");
-            Line($"Cada um por si, de {min} a {max} jogadores. Vence o último de pé. Você entra sozinho, mesmo em grupo. Sem rating.",
+            Heading(balanced ? L.T("FFA balanceado (todos contra todos)", "Balanced FFA (free for all)") : L.T("FFA (todos contra todos)", "FFA (free for all)"));
+            Line(L.T("Cada um por si, de {0} a {1} jogadores. Vence o último de pé. Você entra sozinho, mesmo em grupo. Sem rating.", "Every man for himself, {0} to {1} players. Last one standing wins. You join alone, even in a group. No rating.", min, max),
                 14, ValheimUi.Muted);
             var row = ButtonRow(40f);
-            var go = Btn(row, balanced ? "Entrar: FFA balanceado" : "Entrar: FFA", balanced ? 270f : 210f, () =>
+            var go = Btn(row, balanced ? L.T("Entrar: FFA balanceado", "Join: Balanced FFA") : L.T("Entrar: FFA", "Join: FFA"), balanced ? 270f : 210f, () =>
             {
                 Ask(ArenaWire.ActFfaJoin, balanced ? "1\n" + BalancedChoice.ClassId : "");
-                Say(balanced ? "Entrando na fila do FFA balanceado..." : "Entrando na fila do FFA...");
+                Say(balanced ? L.T("Entrando na fila do FFA balanceado...", "Joining the balanced FFA queue...") : L.T("Entrando na fila do FFA...", "Joining the FFA queue..."));
             }, 15);
             go.interactable = !busy && !classMissing;
             Gap();
@@ -809,20 +855,20 @@ namespace NpcValheim.UI
             if (challenges.Count == 0) return;
             int max = Mathf.Clamp(ArenaConfig.ChallengeMaxPlayers?.Value ?? 3, 1, 10);
 
-            Heading("Desafio");
-            Line($"Você e o seu grupo (até {max}) contra uma criatura forte. Sem rating; a recompensa vai pelo correio.", 14, ValheimUi.Muted);
+            Heading(L.T("Desafio", "Challenge"));
+            Line(L.T("Você e o seu grupo (até {0}) contra uma criatura forte. Sem rating; a recompensa vai pelo correio.", "You and your group (up to {0}) against a strong creature. No rating; the reward goes by mail.", max), 14, ValheimUi.Muted);
             foreach (var c in challenges)
             {
                 var def = c;
                 var row = ButtonRow(40f);
-                string stars = def.Level > 1 ? $" (nível {def.Level})" : "";
-                string reward = def.Rewards.Count == 0 ? "sem recompensa"
+                string stars = def.Level > 1 ? L.T(" (nível {0})", " (level {0})", def.Level) : "";
+                string reward = def.Rewards.Count == 0 ? L.T("sem recompensa", "no reward")
                     : string.Join(", ", def.Rewards.Select(r => $"{r.Value}x {ItemNames.Display(r.Key)}"));
                 Cell(row, $"{def.Name}{stars}  ·  {reward}", 15);
-                var go = Btn(row, "Desafiar", 140f, () => JoinChallenge(def.Name), 15);
+                var go = Btn(row, L.T("Desafiar", "Challenge"), 140f, () => JoinChallenge(def.Name), 15);
                 go.interactable = !busy && groupSize <= max;
             }
-            if (groupSize > max) Line($"O seu grupo tem {groupSize}: o desafio aceita até {max}.", 13, ValheimUi.Muted, 22f);
+            if (groupSize > max) Line(L.T("O seu grupo tem {0}: o desafio aceita até {1}.", "Your group has {0}: the challenge accepts up to {1}.", groupSize, max), 13, ValheimUi.Muted, 22f);
             Gap();
         }
 
@@ -831,13 +877,13 @@ namespace NpcValheim.UI
             var group = ArenaGroups.Members();
             if (group.Count > 1 && !ArenaGroups.IsLeader())
             {
-                Say("Só o líder do grupo pode chamar o desafio.");
+                Say(L.T("Só o líder do grupo pode chamar o desafio.", "Only the group leader can call the challenge."));
                 return;
             }
             long me = ZDOMan.GetSessionID();
             string peers = string.Join(",", group.Where(m => m.Peer != me).Select(m => m.Peer.ToString(CultureInfo.InvariantCulture)));
             Ask(ArenaWire.ActChallengeJoin, $"{name}\n{peers}");
-            Say("Chamando o desafio...");
+            Say(L.T("Chamando o desafio...", "Calling the challenge..."));
         }
 
         private void Join(bool rated)
@@ -845,14 +891,14 @@ namespace NpcValheim.UI
             var group = ArenaGroups.Members();
             if (group.Count > 1 && !ArenaGroups.IsLeader())
             {
-                Say("Só o líder do grupo pode entrar na fila.");
+                Say(L.T("Só o líder do grupo pode entrar na fila.", "Only the group leader can join the queue."));
                 return;
             }
             long me = ZDOMan.GetSessionID();
             string peers = string.Join(",", group.Where(m => m.Peer != me).Select(m => m.Peer.ToString(CultureInfo.InvariantCulture)));
             bool balanced = (ArenaConfig.BalancedEnabled?.Value ?? false) && BalancedChoice.On;
             Ask(ArenaWire.ActQueueJoin, $"{Size}\n{(rated ? 1 : 0)}\n{peers}" + (balanced ? $"\n1\n{BalancedChoice.ClassId}" : ""));
-            Say(balanced ? "Entrando na fila balanceada..." : "Entrando na fila...");
+            Say(balanced ? L.T("Entrando na fila balanceada...", "Joining the balanced queue...") : L.T("Entrando na fila...", "Joining the queue..."));
         }
     }
 
@@ -884,32 +930,32 @@ namespace NpcValheim.UI
 
         protected override void Rebuild()
         {
-            BracketSelector("Ranking:");
+            BracketSelector(L.T("Ranking:", "Ranking:"));
             bool pve = Size == ArenaRules.PveLadder;
             if (!ArenaClient.Ladders.TryGetValue(Size, out var rows))
             {
-                Line("Carregando...", 15, ValheimUi.Muted);
+                Line(L.T("Carregando...", "Loading..."), 15, ValheimUi.Muted);
                 return;
             }
             if (pve)
-                Line("Rating PvE: sobe ao vencer um desafio, mais quanto mais difícil ele for; desce ao perder. Separado do PvP.", 13, ValheimUi.Muted, 22f);
+                Line(L.T("Rating PvE: sobe ao vencer um desafio, mais quanto mais difícil ele for; desce ao perder. Separado do PvP.", "PvE Rating: goes up when you win a challenge, more the harder it is; goes down when you lose. Separate from PvP."), 13, ValheimUi.Muted, 22f);
             if (ArenaRules.IsBalancedLadder(Size))
-                Line("Arena balanceada: o rating das ranqueadas com o kit das classes, separado do rating normal.", 13, ValheimUi.Muted, 22f);
+                Line(L.T("Arena balanceada: o rating das ranqueadas com o kit das classes, separado do rating normal.", "Balanced arena: the rating of ranked matches with the class kits, separate from the normal rating."), 13, ValheimUi.Muted, 22f);
             if (rows.Count == 0)
             {
-                Line(pve ? "Ninguém jogou um desafio ainda."
-                    : ArenaRules.IsBalancedLadder(Size) ? "Ninguém jogou essa ranqueada balanceada ainda."
-                    : IsSolo(Size) ? "Ninguém jogou a 1v1 ranqueada ainda." : $"Nenhum time {ArenaRules.BracketName(Size)} ainda.",
+                Line(pve ? L.T("Ninguém jogou um desafio ainda.", "Nobody has played a challenge yet.")
+                    : ArenaRules.IsBalancedLadder(Size) ? L.T("Ninguém jogou essa ranqueada balanceada ainda.", "Nobody has played this balanced ranked yet.")
+                    : IsSolo(Size) ? L.T("Ninguém jogou a 1v1 ranqueada ainda.", "Nobody has played ranked 1v1 yet.") : L.T("Nenhum time {0} ainda.", "No {0} team yet.", ArenaRules.BracketName(Size)),
                     15, ValheimUi.Muted);
                 if (pve) BestTimes();
                 return;
             }
             var header = ButtonRow(24f);
             Cell(header, "#", 13, ValheimUi.Muted, 50f);
-            Cell(header, pve || IsSolo(ArenaRules.BracketOfLadder(Size)) ? "Jogador" : "Time", 13, ValheimUi.Muted);
-            Cell(header, "Rating", 13, ValheimUi.Muted, 90f);
-            Cell(header, "Jogos", 13, ValheimUi.Muted, 80f);
-            Cell(header, "Vitórias", 13, ValheimUi.Muted, 90f);
+            Cell(header, pve || IsSolo(ArenaRules.BracketOfLadder(Size)) ? L.T("Jogador", "Player") : L.T("Time", "Team"), 13, ValheimUi.Muted);
+            Cell(header, L.T("Rating", "Rating"), 13, ValheimUi.Muted, 90f);
+            Cell(header, L.T("Jogos", "Games"), 13, ValheimUi.Muted, 80f);
+            Cell(header, L.T("Vitórias", "Wins"), 13, ValheimUi.Muted, 90f);
             Cell(header, "%", 13, ValheimUi.Muted, 60f);
             foreach (var r in rows)
             {
@@ -929,10 +975,10 @@ namespace NpcValheim.UI
         private void BestTimes()
         {
             Gap();
-            Heading("Melhores tempos dos desafios");
+            Heading(L.T("Melhores tempos dos desafios", "Best challenge times"));
             if (ArenaClient.BestTimes.Count == 0)
             {
-                Line("Nenhum desafio vencido ainda.", 14, ValheimUi.Muted);
+                Line(L.T("Nenhum desafio vencido ainda.", "No challenge won yet."), 14, ValheimUi.Muted);
                 return;
             }
             foreach (var group in ArenaClient.BestTimes.GroupBy(b => b.Challenge))
@@ -965,15 +1011,15 @@ namespace NpcValheim.UI
             var offers = ArenaSettingsParser.ParseOffers(ArenaConfig.VendorItems?.Value, null)
                 .Where(o => ArenaConfig.MaxOfferAmount(o.Prefab) > 0).ToList();
 
-            Line($"<color=#9a9188>Seus Pontos de Arena:</color> {s.Points}", 18, ValheimUi.Yellow, 30f);
+            Line(L.T("<color=#9a9188>Seus Pontos de Arena:</color> {0}", "<color=#9a9188>Your Arena Points:</color> {0}", s.Points), 18, ValheimUi.Yellow, 30f);
             Line(offers.Any(o => o.IsDeadcoins)
-                ? "Os itens chegam pela Caixa Postal; Deadcoins vão direto para o seu saldo. Pontos de Arena vêm de cada partida."
-                : "Os itens chegam pela Caixa Postal. Pontos de Arena vêm de cada partida.", 13, ValheimUi.Muted, 22f);
+                ? L.T("Os itens chegam pela Caixa Postal; Deadcoins vão direto para o seu saldo. Pontos de Arena vêm de cada partida.", "Items arrive via the Mailbox; Deadcoins go straight to your balance. Arena Points come from every match.")
+                : L.T("Os itens chegam pela Caixa Postal. Pontos de Arena vêm de cada partida.", "Items arrive via the Mailbox. Arena Points come from every match."), 13, ValheimUi.Muted, 22f);
             Gap();
 
             if (offers.Count == 0)
             {
-                Line("A loja da arena não tem nada à venda.", 15, ValheimUi.Muted);
+                Line(L.T("A loja da arena não tem nada à venda.", "The arena shop has nothing for sale."), 15, ValheimUi.Muted);
                 return;
             }
 
@@ -989,36 +1035,42 @@ namespace NpcValheim.UI
                     int best = BestRating(s, o.Bracket);
                     meets = best >= o.Rating;
                     string where = o.Bracket > 1 ? $" ({ArenaRules.BracketName(o.Bracket)}+)" : "";
-                    requirement = $"   <color={(meets ? "#73db6b" : "#ee6b57")}>requer rating {o.Rating}{where}</color>";
+                    requirement = L.T("   <color={0}>requer rating {1}{2}</color>", "   <color={0}>requires rating {1}{2}</color>", (meets ? "#73db6b" : "#ee6b57"), o.Rating, where);
                 }
                 if (o.PveRating > 0)
                 {
                     bool pveOk = s.PveRating >= o.PveRating;
                     meets &= pveOk;
-                    requirement += $"   <color={(pveOk ? "#73db6b" : "#ee6b57")}>requer rating PvE {o.PveRating}</color>";
+                    requirement += L.T("   <color={0}>requer rating PvE {1}</color>", "   <color={0}>requires PvE rating {1}</color>", (pveOk ? "#73db6b" : "#ee6b57"), o.PveRating);
                 }
-                Cell(row, $"{o.Amount}x {ArenaConfig.OfferName(o.Prefab)}{(o.Quality > 1 ? $" (nível {o.Quality})" : "")}\n<size=13><color=#9a9188>{o.Points} pontos</color>{requirement}</size>", 15);
-                var buy = Btn(row, "Comprar", 120f, () => Buy(o));
+                Cell(row, L.T("{0}x {1}{2}\n<size=13><color=#9a9188>{3} pontos</color>{4}</size>", "{0}x {1}{2}\n<size=13><color=#9a9188>{3} points</color>{4}</size>", o.Amount, ArenaConfig.OfferName(o.Prefab), o.Quality > 1 ? L.T(" (nível {0})", " (level {0})", o.Quality) : "", o.Points, requirement), 15);
+                var buy = Btn(row, L.T("Comprar", "Buy"), 120f, () => Buy(o));
                 buy.interactable = meets && s.Points >= o.Points;
             }
         }
 
         /// <summary>Same rule the server checks: the lower of personal and team rating, best
-        /// across my teams of that bracket or larger.</summary>
+        /// across my teams of that bracket or larger, the balanced rating counting too when it is
+        /// apart (a server that does not send the balanced personal leaves it out).</summary>
         private static int BestRating(ArenaSnapshot s, int bracket)
         {
             int best = 0;
             foreach (var team in s.Teams.Where(t => t.Size >= bracket))
+            {
                 best = Math.Max(best, ArenaRules.PurchaseRating(PersonalIn(team), team.Rating));
+                int balancedPersonal = BalancedPersonalIn(team);
+                if (team.BalancedRating >= 0 && balancedPersonal >= 0)
+                    best = Math.Max(best, ArenaRules.PurchaseRating(balancedPersonal, team.BalancedRating));
+            }
             return best;
         }
 
         private void Buy(ArenaOffer offer)
         {
-            if (Time.unscaledTime - _sentAt < 2f) { Say("Aguarde a compra anterior."); return; }
+            if (Time.unscaledTime - _sentAt < 2f) { Say(L.T("Aguarde a compra anterior.", "Wait for the previous purchase.")); return; }
             _sentAt = Time.unscaledTime;
             Ask(ArenaWire.ActVendorBuy, $"{offer.Prefab}\n{offer.Points}");
-            Say($"Comprando {offer.Amount}x {ArenaConfig.OfferName(offer.Prefab)}...");
+            Say(L.T("Comprando {0}x {1}...", "Buying {0}x {1}...", offer.Amount, ArenaConfig.OfferName(offer.Prefab)));
         }
     }
 }

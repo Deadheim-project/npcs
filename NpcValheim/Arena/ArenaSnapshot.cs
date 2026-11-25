@@ -19,6 +19,9 @@ namespace NpcValheim.Arena
         public int Mmr;
         /// <summary>The team's rating in the Arena balanceada, -1 while it is the same as the normal one.</summary>
         public int BalancedRating = -1;
+        /// <summary>The team's place on the balanced ladder, -1 before its first balanced ranked
+        /// (or from a server that does not send it).</summary>
+        public int BalancedRank = -1;
         public readonly List<ArenaMemberView> Members = new List<ArenaMemberView>();
     }
 
@@ -32,6 +35,8 @@ namespace NpcValheim.Arena
         public int SeasonGames;
         public int SeasonWins;
         public bool Online;
+        /// <summary>The member's personal rating in the Arena balanceada, -1 while it is not apart.</summary>
+        public int BalancedPersonal = -1;
     }
 
     internal sealed class ArenaCharterView
@@ -133,7 +138,7 @@ namespace NpcValheim.Arena
                         {
                             Id = Int(f, 1), Size = Int(f, 2), Name = Str(f, 3), CaptainId = Long(f, 4), Rating = Int(f, 5),
                             Rank = Int(f, 6), WeekGames = Int(f, 7), WeekWins = Int(f, 8), SeasonGames = Int(f, 9),
-                            SeasonWins = Int(f, 10), Mmr = Int(f, 11), BalancedRating = Int(f, 12, -1),
+                            SeasonWins = Int(f, 10), Mmr = Int(f, 11), BalancedRating = Int(f, 12, -1), BalancedRank = Int(f, 13, -1),
                         });
                         break;
                     case "M":
@@ -142,6 +147,7 @@ namespace NpcValheim.Arena
                         {
                             PlayerId = Long(f, 2), Name = Str(f, 3), Personal = Int(f, 4), WeekGames = Int(f, 5),
                             WeekWins = Int(f, 6), SeasonGames = Int(f, 7), SeasonWins = Int(f, 8), Online = Str(f, 9) == "1",
+                            BalancedPersonal = Int(f, 10, -1),
                         });
                         break;
                     case "C":
